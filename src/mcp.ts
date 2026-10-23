@@ -17,16 +17,16 @@ export function createServer(): McpServer {
     inputSchema: paths, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   }, args => guarded(() => buildProject({ ...args, modelOnly: true })));
   server.registerTool('sgd_build', {
-    description: 'Run TLC and generate TypeScript and Rust linters after the finite model check succeeds.',
+    description: 'Run TLC and generate TypeScript and Rust artifacts. Project v2 finite-owned generates state authorities from full concrete states; v1 generates declaration or import diagnostics.',
     inputSchema: paths, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   }, args => guarded(() => buildProject(args)));
   server.registerTool('sgd_compile', {
-    description: 'Compile action-labeled DOT into language-specific linters. A DOT import remains unverified.',
+    description: 'Compile action-labeled DOT into v1 language-specific diagnostics. Imported DOT is unverified and cannot generate v2 finite-owned state authority.',
     inputSchema: { project: paths.project, dot: z.string().describe('Absolute path to action-labeled TLC DOT.'), out: paths.out },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   }, args => guarded(() => compileProject(args)));
   server.registerTool('sgd_inspect', {
-    description: 'Read projected states, actions, edges, and finite graph scope from an automaton JSON file.',
+    description: 'Read the typed automaton and finite scope. Exact finite IR retains all supported scalar variables; v1 projected IR contains one selected state variable.',
     inputSchema: { ir: z.string().describe('Absolute path to automaton.json.') }, annotations: { readOnlyHint: true },
   }, args => guarded(() => loadAutomaton(args.ir)));
   server.registerTool('sgd_visualize', {

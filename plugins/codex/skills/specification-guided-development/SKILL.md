@@ -1,160 +1,162 @@
 ---
 name: specification-guided-development
-description: Model architecture and behavior in TLA+. Compile TLC graphs into TypeScript or Rust linters and develop under those checks. Use when adopting or changing Specification Guided Development.
+description: Model architecture and behavior in TLA+. Generate finite state owners or TypeScript and Rust source diagnostics from TLC graphs. Use when adopting or changing Specification Guided Development.
 ---
 
-# Develop under checks compiled from TLA+
-
-Use this workflow for specification-driven development with Specification Guided Development.
-The model defines permitted behavior.
-The compiler produces linter source code from the TLC automaton.
-The agent implements application code under the generated checks.
+# Develop from a checked TLA+ model
 
 Read [the modeling guide](references/modeling.md) before you create or change a model.
-Read only the relevant examples in that guide.
+Select the profile that matches the required guarantee.
+Project v2 `finite-owned` generates code that owns the modeled state of one live object.
+Project v1 generates diagnostics for declared transition triples or mapped imports.
 
-## Establish the contract
+## Select the contract
 
-1. Read the user's request and the project's current requirements.
-2. Identify the architecture boundaries and the behavior that must remain true.
-3. Identify observable states, actions, and failure cases.
-4. Define a finite model scope and list the assumptions that make the model finite.
-5. Separate the model's intended guarantees from the checks this compiler can generate.
+Read the user's request and the project's current requirements.
+Record the selected model, its invariants, its finite bounds, and the application code that uses the generated artifacts.
+Identify the actual state owner before you claim that the model controls runtime behavior.
 
 Use TLA+ for application policy.
-Use project JSON only to select files, code bindings, and language targets.
+Use project JSON for model paths, language targets, and supported bindings.
 Do not duplicate allowed edges in project JSON.
 
-Architecture models describe permitted dependencies between modules.
-Behavior models describe permitted state changes and their action names.
-Use separate projects when these models need different state projections or bindings.
-Use an optional `parent` model and state to display containment.
-Do not describe containment as a refinement proof.
+For actual finite state changes, select v2 `finite-owned`.
+Keep every modeled variable in the exact automaton.
+Do not replace the generated owner with handwritten state or a parallel mutable copy.
+A matching declaration beside an independent state assignment does not enforce the model.
 
-The current compiler supports two bindings.
-A transition binding checks three literal strings in a selected call or macro.
-A dependency binding checks imports between mapped modules.
-Do not claim that either binding verifies arbitrary business logic.
+For module dependencies or literal transition declarations, select the corresponding v1 binding.
+Use separate projects for architecture diagnostics and finite state ownership.
+An optional v1 `parent` link displays containment in Pele.
+Containment does not establish formal refinement.
 
-## Model and inspect
+## Model and review
 
-1. Write or update the TLA+ module and its TLC configuration.
-2. Include the invariants that matter to the user's request.
-3. Choose the state variable that the compiler will project.
-4. Create project JSON that matches the supported schema.
-5. Run TLC through `sgd_model` or the CLI `model` command.
-6. Read the model-checking result before you compile the DOT graph.
-7. Inspect the automaton through `sgd_inspect` or `inspect`.
-8. Use `sgd_visualize` or `visualize` to review the graph with the user when useful.
+1. Write the TLA+ module and its TLC configuration.
+2. Include the invariants and failure behavior required by the contract.
+3. Create project JSON for the selected profile.
+4. Run `sgd_model` to check the model without generating language code.
+5. Read the TLC result and inspect the exported automaton with `sgd_inspect`.
+6. Use `sgd_visualize` for a Pele diagram when a graph helps review the behavior.
 
-Stop on a model error, an incomplete run, or an unsupported graph.
-Fix the model or state the unsupported case.
+Stop on a model error, incomplete exploration, or unsupported construct.
+Fix the cause or report the unsupported case.
 Do not invent a successful TLC result.
+Review the initial states, guarded actions, terminal states, and unexpected cycles against the user's requirement.
+A diagram does not check application behavior.
 
-Review the initial states, permitted edges, terminal states, and unexpected cycles.
-Compare these results with the requested behavior.
-A diagram helps review the graph.
-A diagram does not check the implementation.
+## Generate and use a finite state owner
 
-## Compile and implement
+Use `sgd_build` with a v2 project to run TLC and generate the owner.
+The finite-owned runner verifies the pinned JAR and isolates the model source closure before exploration.
+`sgd_compile` rejects v2 projects because imported DOT does not prove a complete verified run.
 
-Use `sgd_compile` to compile an existing DOT graph.
-Use `sgd_build` or the CLI `build` command to run TLC and compilation together.
-Keep generated linter source separate from application source.
 Use an empty directory for the first generation.
-Preserve the generated `.sgd-generated.json` inventory.
-Regeneration removes obsolete owned files when targets or profiles change.
-Use `build --check` or `compile --check` to compare stable generated artifacts.
-TLC logs and run receipts are excluded from byte comparisons.
+Keep the generated `.sgd-generated.json` inventory.
+Read the generated target's README for its package name and build commands.
+Preserve the generated source boundary when integrating the package.
 
-For a transition binding, inspect the automaton's permitted edges before you edit application code.
-Use the configured function name in TypeScript.
-Use the configured function name in Rust when architecture checks cover the same file.
-The transition-only profile also accepts the configured macro name.
-The checked construct takes three literal strings in this order:
+For TypeScript, use the generated `create<ClassName>()` factory and `send(event)` method.
+Read the full state through `read()`.
+The owner keeps its state in a closure and returns frozen copies.
+If a boundary accepts an owner as input, use `is<ClassName>()` to authenticate the live object.
+A TypeScript interface alone accepts structurally equivalent objects.
+The authenticator recognizes only owners created by the same loaded generated module instance.
+
+For Rust, keep the generated library as a separate Cargo dependency.
+Use `<ClassName>::new()`, `read()`, and `send(Event)`.
+The separate crate keeps the actual state private.
+Use safe Rust in the calling application.
+Do not add mutable state access, arbitrary-state constructors, or restore paths to the generated API.
+
+Handle a rejected action without changing application state to the requested target.
+Each factory call creates a new independent object at Init.
+Record how the application creates and retains these objects.
+Do not claim persistent entity history or reset prevention from this API.
+
+## Generate v1 source diagnostics
+
+Use `sgd_build` for TLC and generation together.
+Use `sgd_compile` only for v1 diagnostics from existing DOT.
+Treat that imported graph as unverified.
+
+A transition binding checks a selected call or macro with three literal strings in this order:
 
 ```text
 source state, action name, target state
 ```
 
-These constructs declare permitted edges.
-They do not prove that runtime state follows the declared edges.
-Test the actual implementation through its native tests.
+These declarations do not control actual runtime state.
+The transition-only Rust profile accepts the configured macro name.
+When dependency checks cover the same file, use the configured function name instead.
 
-For a dependency binding, map every relevant model state to application module paths.
-Use an exact file path or a directory path.
-A mapping for `src/handler` does not own `src/handler.ts` or `src/handler.rs`.
-Run the generated checker with `--root PROJECT_ROOT FILE [FILE ...]`.
-Include every source file that the contract covers.
-Do not omit a source file to hide a violation.
-Preserve the generated checker's supported import syntax.
-The Rust profile rejects opaque macros, macro definitions, and custom attributes in checked files.
-Keep support macros and native tests in separate files or crates.
-Report these exclusions from the syntax profile.
+For a dependency binding, map the relevant model states to application files or directories.
+A mapping for `src/handler` does not include `src/handler.ts` or `src/handler.rs`.
+Run the generated checker with `--root PROJECT_ROOT FILE [FILE ...]` and include every file covered by the contract.
+Do not omit files to hide violations.
+The Rust dependency profile rejects opaque macros, macro definitions, and custom attributes in checked files.
+Keep support macros and native tests in separate files or crates, and report those exclusions.
 
-Implement the feature after the model and bindings describe the intended contract.
-Run the generated linter after relevant changes.
-Also run native type checks, builds, and tests.
+## Verify the integration
 
-The compiler repository builds and type-checks with TypeScript 7.0.2.
-Generated checks use the same native version through `typescript/unstable/sync` and `typescript/unstable/ast`.
-Keep the exact 7.0.2 pin while this integration uses those unstable APIs.
-Do not silently replace the native API with an earlier compiler API.
-If parser dependencies are unavailable, use the generated `typescript/package.json`.
-Run `npm install --prefix OUT/typescript` within the user's authorized setup scope.
+Run native type checks, builds, and behavior tests after integration.
+For finite-owned, exercise a permitted action and an action disabled in the current full state.
+Confirm that rejection preserves both state and revision.
+Check that application code cannot directly replace the generated owner's state.
+For the approval example, reject `Submit` before `Approve`, then accept `Approve` followed by `Submit`.
+The initial and approved concrete states both have `phase = "New"`.
+Checking only `phase` loses the approval distinction.
 
-## Check the checks
+For v1 diagnostics, use a real permitted source construct and a forbidden source construct.
+Confirm that the forbidden construct produces a diagnostic and a failing exit status.
+Use temporary files for negative checks, then remove them.
+Report the supplied files and supported constructs covered by the check.
 
-Use at least one real permitted example and one forbidden example.
-Change an edge or import in a temporary source file.
-Check that the generated checker reports the forbidden construct and exits unsuccessfully.
-Remove temporary files after the check.
-
-A passing linter run covers only its supplied files and supported constructs.
-Report that scope when you describe the result.
+Preserve exact TypeScript 7.0.2 for builds and native syntax analysis.
+The v1 TypeScript checker uses `typescript/unstable/sync` and `typescript/unstable/ast`.
+If dependencies are missing, use the generated `typescript/package.json` within the user's authorized setup scope.
+Do not replace these APIs with an earlier compiler API.
 
 ## Change a requirement
 
-If code violates the model, first identify the cause.
-The cause can be an implementation error, a model error, or a changed requirement.
-Fix the cause that the evidence supports.
-
+Distinguish an implementation error, a model error, and a changed requirement before editing the contract.
+For a requirement change, state the affected invariant and the expected behavior.
+Update TLA+ and regenerate within the authorized scope.
 Do not weaken the model only to make existing code pass.
-For a changed requirement, explain the affected invariant and the new expected behavior.
-Update the model and regenerate the checks within the user's authorized scope.
-Preserve unrelated requirements.
+Do not edit generated code to change application policy.
 
-Do not edit generated linter code to change application policy.
-Change the TLA+ source and regenerate.
-If the compiler itself is wrong, fix the compiler and test that correction.
+Use `build --check` to detect stale stable artifacts.
+V1 also supports `compile --check`.
+The compiler checks stable provenance fields but excludes TLC log bytes and volatile run details from byte comparisons.
+Regeneration removes obsolete owned files when targets or profiles change.
 
-## Execution
+## Execute through the native plugin
 
-Prefer this plugin's MCP tools when available.
+Prefer this plugin's MCP tools.
 Tool argument schemas are authoritative.
-Use absolute project, JAR, graph, IR, and output paths in tool calls.
+Use absolute project, JAR, graph, IR, and output paths.
 
-The plugin includes `scripts/run.mjs`.
-For a CLI fallback, resolve that script from this skill's installed plugin directory.
+For a CLI fallback, resolve `scripts/run.mjs` from this skill's installed plugin directory.
 Run `node /absolute/plugin/path/scripts/run.mjs <command>`.
-Do not assume the plugin's source repository remains beside its installed cache.
-Do not install packages or change global agent configuration as a hidden setup step.
+Do not assume that the source repository remains beside the installed plugin cache.
+If the runtime is missing, follow the launcher's setup instruction within the authorized scope.
 
-If the runtime is missing, report the launcher's setup instruction.
-The plugin runtime contains a native binary for its recorded platform and architecture.
-If the host differs, use a matching archive or rebuild the plugin on that host.
+Use the archive for the host's platform and architecture, or rebuild on that host.
 Do not bypass the launcher's platform check.
-Java and a user-selected `tla2tools.jar` are required for TLC.
-Rust checks also require the Rust toolchain and their declared Cargo dependencies.
+TLC requires Java and the pinned `tla2tools.jar`.
+Rust artifacts require the Rust toolchain and their declared Cargo dependencies.
+Keep Codex and Claude Code installations independent.
+Do not change global agent configuration as a hidden setup or test step.
 
-## Limits to preserve
+## Report the actual boundary
 
-TLC explores the selected finite model.
-The compiler projects one nonempty TLA+ string state variable.
-Other selected value types are unsupported.
-A projected edge means that at least one explored concrete transition permits that edge.
-Other state variables and their guards do not survive that projection.
+Finite-owned protects transitions of one live object through the generated API in a trusted JavaScript realm or a safe Rust caller.
+The exact graph retains supported scalar variables and their observed action guards within the explored finite scope.
+The generated API has no data parameters or automatic connection to database fields.
+Do not claim that a modeled value represents live external data without a separate verified integration contract.
+Trust the generated source, its dependencies, and the platform primitives.
 
-For example, an approval edge observed when `balance >= amount` does not enforce that guard in application code.
-Keep tests or runtime checks for the guard.
-Do not describe a generated linter as a proof of full TLA+ refinement, liveness, transaction atomicity, or complete source coverage.
+Persistent identity, restart, restore, database effects, effect atomicity, liveness, and complete application coverage require separate contracts.
+A successful native build does not prove these properties or production readiness.
+V1 projections discard other variables and their guards.
+Neither profile establishes full application refinement or formal hierarchy refinement.

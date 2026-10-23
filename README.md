@@ -1,7 +1,7 @@
 # Specification Guided Development
 
-Compile a TLC state graph into linter source code for TypeScript and Rust.
-Use the bundled agent skills to model architecture and behavior in TLA+, then develop under the generated checks.
+Compile verified TLA+ finite models into state authorities and source checks for TypeScript 7 and Rust.
+Use the bundled agent skills to model architecture and behavior, then develop with generated ownership and diagnostics.
 The package name is `specification-guided-development` and the CLI name is `sgd`.
 The source-checkout examples below invoke that CLI with `node dist/cli.js`.
 
@@ -10,26 +10,29 @@ Requirements
   -> TLA+ model and TLC configuration
   -> TLC model checking and DOT state graph
   -> typed automaton
-  -> generated TypeScript or Rust linter
-  -> application development and source checks
+  -> generated TypeScript or Rust state authority / linter
+  -> application integration and native verification
 ```
 
 Specification Guided Development is an initial compiler for this workflow.
 The [production goal](docs/production-goal.md) is successful and sustainable adoption in Parangsae.
-The model supplies permitted edges.
-A binding maps model names to a supported source construct.
-The compiler emits the checker program for that model and language.
+Project v2 retains full concrete state and generates an owner that permits only modeled transitions.
+Project v1 projects one string variable and generates declaration or import diagnostics.
+The [finite-owned guide](docs/finite-owned.md) describes the new source-checkout milestone; the published v0.1.0 archives contain the earlier diagnostic prototype.
 
 ## What works
 
-The first version supports two bindings in both languages:
+The current source supports these profiles:
 
 | Binding | TypeScript | Rust | Checked property |
 | --- | --- | --- | --- |
+| Finite owned state (project v2) | Closure-owned state with a frozen facade and snapshots | Separate crate with private authority state | Each successful dispatch follows the edge from the exact full current state |
 | Transition | A configured function call with three string literals | A configured function call or macro with three string literals | The declared source state, action, and target state form a permitted edge |
 | Dependency | Imports between mapped module paths | Imports between mapped module paths | The source module may directly depend on the target module |
 
-Transition constructs declare edges.
+The finite-owned profile preserves guards over all supported scalar variables in the explored graph.
+Its boundary is one live object; persistent identity, recovery, effects, and application-wide coverage remain work toward the production goal.
+Transition constructs in project v1 declare edges.
 They do not verify that the application's runtime state follows those edges.
 Dependency checks permit imports within the same mapped module and ignore action names.
 Each checker covers the source files supplied to its command.
@@ -56,7 +59,19 @@ The [TypeScript 7.0 announcement](https://devblogs.microsoft.com/typescript/anno
 This implementation explicitly uses the version-pinned unstable native API.
 
 Set `TLA2TOOLS_JAR` to the absolute path of your JAR.
-Build the included order model:
+Build a full-state authority and inspect its guard states with Pele:
+
+```sh
+node dist/cli.js build --project examples/approval/project.json --jar "$TLA2TOOLS_JAR" --out .runtime/approval
+node dist/cli.js visualize --ir .runtime/approval/automaton.json --out .runtime/approval/view
+```
+
+The generated TypeScript API is `createApprovalMachine().read()/send(event)`.
+The Rust crate exports `ApprovalMachine::new/read/send(Event)`.
+Both reject `Submit` until `Approve` changes the full concrete state.
+Read [the finite-owned guide](docs/finite-owned.md) for native builds, integration, supported semantics, and limits.
+
+For declaration diagnostics, build the included v1 order model:
 
 ```sh
 node dist/cli.js build \
@@ -111,6 +126,7 @@ node dist/cli.js compile \
 ```
 
 An imported DOT graph does not establish that TLC completed successfully.
+`compile` accepts only project v1 diagnostics; it rejects v2 executable authority generation.
 The generated verification metadata records that distinction.
 Use `build` when the result must include this tool's TLC completion evidence.
 
@@ -127,9 +143,9 @@ The intended method starts before lint integration:
 
 1. Translate the requested architecture and behavior into finite TLA+ models.
 2. Check invariants and inspect the reachable state graph.
-3. Select a projection and bind its names to source constructs.
-4. Compile the graph into language-specific linter code.
-5. Implement the feature under those checks.
+3. Select the supported profile and record the actual application state owner and code binding.
+4. Generate a full-state authority for behavior, or diagnostics for declared edges and dependencies.
+5. Integrate the generated owner and checks into the feature.
 6. Check a forbidden example, then run native tests and builds.
 7. Repeat the loop when a requirement changes.
 
@@ -200,15 +216,19 @@ See [plugin setup](docs/plugins.md) for cache checks and troubleshooting.
 ## Understand the guarantee
 
 TLC explores a configured finite model.
-The compiler projects one nonempty TLA+ string variable from the reachable states.
-An emitted edge means that at least one explored concrete transition permits that edge.
-Guards over discarded variables do not survive this projection.
+Project v2 preserves all supported scalar variables and dispatches from the owner's exact concrete node.
+Its controlled build rejects unsupported reductions, overrides, compound state, and ambiguous executable choices.
+The state owner does not automatically bind live input or database values, protect unrelated application state, prevent creation of another owner, or make external effects atomic.
+
+Project v1 projects one nonempty TLA+ string variable from the reachable states.
+An emitted diagnostic edge means that at least one explored concrete transition permits that edge.
+Guards over discarded variables do not survive that projection.
 
 For example, observing an `Approve` edge while `balance >= amount` does not generate a checker for that numeric guard.
-The application still needs the guard and tests for its behavior.
-The current bindings do not prove full refinement, liveness, transaction atomicity, or arbitrary runtime call paths.
+The v1 application still needs the guard and tests for its behavior.
+Neither profile proves full application refinement, liveness, transaction atomicity, or arbitrary runtime call paths.
 
-The compiler rejects unsupported graph structures and ambiguous projections.
+Each profile rejects graph structures and values outside its documented subset.
 The generated checks reject unsupported syntax in constructs that their profiles inspect.
 Read the reported file and syntax scope before treating a passing run as evidence.
 

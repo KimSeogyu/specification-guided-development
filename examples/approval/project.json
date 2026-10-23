@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "profile": "finite-owned",
+  "name": "Approval",
+  "spec": "Approval.tla",
+  "config": "Approval.cfg",
+  "targets": ["typescript", "rust"],
+  "binding": { "className": "ApprovalMachine" }
+}

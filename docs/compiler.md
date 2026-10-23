@@ -1,7 +1,8 @@
 # Compiler contract
 
-Specification Guided Development consumes a TLC DOT state graph and emits source checkers.
-It also runs TLC when a project and a local TLA+ tools JAR are supplied.
+Specification Guided Development has two distinct profiles. Project v2 `finite-owned` runs controlled TLC verification, preserves full scalar valuations, and generates private state authorities. Read [the finite-owned contract](finite-owned.md) for that profile.
+
+The remainder of this document describes project v1, which consumes a projected TLC DOT state graph and emits declaration or import diagnostics. It also runs TLC when a project and a local TLA+ tools JAR are supplied. Those diagnostics do not own runtime state.
 
 ## Project format
 

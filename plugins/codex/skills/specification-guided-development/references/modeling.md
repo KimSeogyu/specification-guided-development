@@ -1,59 +1,148 @@
-# Model architecture and behavior
+# Model the contract that the application uses
 
-This guide describes the Specification Guided Development modeling profile.
-Use a finite model with a scalar string variable for the selected state.
-Keep action names stable because transition bindings use those names.
+## Own a finite state machine
 
-## Start with the behavior
+Use project v2 `finite-owned` when the generated API must control actual modeled state.
+The compiler retains every supported state variable in an `exact-finite` automaton.
+A node contains a complete concrete valuation, rather than one selected string variable.
 
-Write a short contract before the TLA+ module.
-Name the operation, its permitted starting states, and its observable result.
-List failures that must leave the state unchanged.
-Include concurrency or retry behavior when the requirement depends on either.
+The executable profile has these limits:
 
-Model enough state to test the required invariant.
-Use finite constants for quantities, actors, and resources.
-State the chosen bounds when you report the result.
+- Each variable has one scalar type across all nodes: string, boolean, or exact decimal integer.
+- TLC finds exactly one initial concrete state.
+- Action labels are named, unparameterized TLA+ operators.
+- Each concrete node and action has at most one distinct successor.
+- Compound values, model values, parameterized action labels, and nondeterministic successors are unsupported.
+- Configuration reductions, transformed labels, and operator overrides are unsupported.
 
-This small model describes a submission flow:
+Keep local model modules in one flat directory with regular, non-symlink `.tla` files.
+The runner discovers the local closure through SANY, checks copied sources, and explores that isolated snapshot.
+Do not place Java override artifacts in the model directory.
+The supported pinned standard modules are `Naturals`, `Integers`, `Sequences`, and `FiniteSets`.
+If a model exceeds this profile, report the limitation instead of projecting away the unsupported state.
+
+Write a short application contract before the model.
+Name the state owner, permitted actions, observed results, failure behavior, and finite bounds.
+State which application operations use the generated owner.
+Concurrency, persistence, and external effects need their own explicit contracts.
+
+This approval model preserves a guard that a phase-only projection loses:
 
 ```tla
----- MODULE Submission ----
-VARIABLE state
+---- MODULE Approval ----
+VARIABLES phase, approved
+vars == <<phase, approved>>
 
-Init == state = "Draft"
+Init == /\ phase = "New"
+        /\ approved = FALSE
 
-Submit ==
-  /\ state = "Draft"
-  /\ state' = "Submitted"
+Approve == /\ phase = "New"
+           /\ ~approved
+           /\ approved' = TRUE
+           /\ UNCHANGED phase
 
-Approve ==
-  /\ state = "Submitted"
-  /\ state' = "Approved"
+Submit == /\ phase = "New"
+          /\ approved
+          /\ phase' = "Submitted"
+          /\ UNCHANGED approved
 
-Wait ==
-  /\ state = "Approved"
-  /\ UNCHANGED state
+Wait == /\ phase = "Submitted"
+        /\ UNCHANGED vars
 
-Next == Submit \/ Approve \/ Wait
+Next == Approve \/ Submit \/ Wait
+Spec == Init /\ [][Next]_vars
 
-Spec == Init /\ [][Next]_state
-
-TypeOK == state \in {"Draft", "Submitted", "Approved"}
+TypeOK == /\ phase \in {"New", "Submitted"}
+          /\ approved \in BOOLEAN
+ApprovedBeforeSubmission == phase = "Submitted" => approved
 ====
 ```
 
-The TLC configuration selects the specification and its invariant:
+The TLC configuration selects both invariants:
 
 ```text
 SPECIFICATION Spec
-INVARIANT TypeOK
+INVARIANTS TypeOK ApprovedBeforeSubmission
 ```
 
-The terminal `Wait` action makes the final state explicit.
-Do not disable deadlock checks only to hide an unexpected terminal state.
+The executable project selects language targets and the generated type name:
 
-The transition project selects the state variable and a source construct:
+```json
+{
+  "version": 2,
+  "profile": "finite-owned",
+  "name": "Approval",
+  "spec": "Approval.tla",
+  "config": "Approval.cfg",
+  "targets": ["typescript", "rust"],
+  "binding": { "className": "ApprovalMachine" }
+}
+```
+
+Call `sgd_build` with absolute paths to the project, pinned JAR, and output directory.
+The equivalent CLI command is:
+
+```sh
+node /absolute/plugin/path/scripts/run.mjs build --project /app/model/project.json --jar /tools/tla2tools.jar --out /app/generated
+```
+
+Inspect `/app/generated/automaton.json` to review all concrete variables.
+The generated `verification.json` records the completed finite run and its source closure.
+Do not use `sgd_compile` for v2.
+That tool rejects imported DOT as a source of executable authority.
+
+Build the generated TypeScript package before importing its JavaScript:
+
+```sh
+npm install --prefix /app/generated/typescript
+npm run build --prefix /app/generated/typescript
+```
+
+Use the generated owner in application code:
+
+```typescript
+import { createApprovalMachine } from "./generated/typescript/dist/machine.js";
+
+const approval = createApprovalMachine();
+const rejected = approval.send("Submit");
+if (rejected.ok) throw new Error("Submit must require approval");
+if (rejected.reason !== "disabled") throw new Error("Unexpected rejection");
+const approved = approval.send("Approve");
+if (!approved.ok) throw new Error("Approve must succeed at Init");
+const submitted = approval.send("Submit");
+if (!submitted.ok) throw new Error("Submit must succeed after approval");
+```
+
+For Rust, read the generated README for the crate name and add that crate as a path dependency.
+Keep the generated library separate from application modules.
+Use `ApprovalMachine::new()` and `send(Event)` through that dependency.
+`Event::from_model_name` maps exact model action names to typed events.
+
+Both targets expose full copied snapshots through `read()`.
+Snapshot values use tagged string, boolean, or integer values.
+Integer values and the checked u64 revision serialize as decimal strings.
+A successful send returns the before and after snapshots.
+A named self-loop such as terminal `Wait` is a public successful event and increments revision. Here terminal means that lifecycle state no longer changes; it does not mean that every send is rejected.
+A rejected send preserves both the current state and revision.
+The TypeScript snapshot and API facade are frozen.
+The Rust owner has private fields and returns owned snapshot copies.
+Neither target exposes restore or arbitrary-state construction.
+
+The API accepts named events without data parameters.
+The generated state begins at Init and changes only through concrete graph edges.
+A finite modeled balance does not automatically track a live database balance.
+Describe any external data relationship and its checks separately.
+
+The factory still creates a new independent object at Init each time.
+Define persistent business identity and restart behavior separately before using the API for a stored entity.
+An action receipt does not make a database write or external request atomic.
+Do not copy values into a second mutable state object and describe that object as protected by the generated owner.
+
+## Check declared edges with v1
+
+Use project v1 for literal transition diagnostics.
+Select a nonempty scalar string state variable for projection.
+The model supplies allowed edges, and the binding selects a call or macro name:
 
 ```json
 {
@@ -64,47 +153,39 @@ The transition project selects the state variable and a source construct:
   "stateVariable": "state",
   "targets": ["typescript", "rust"],
   "parent": { "model": "architecture", "state": "Service" },
-  "binding": {
-    "kind": "transition",
-    "function": "transition"
-  }
+  "binding": { "kind": "transition", "function": "transition" }
 }
 ```
 
-The source constructs describe edges:
+The corresponding source constructs declare an edge:
 
 ```typescript
 transition("Draft", "Submit", "Submitted");
-transition("Submitted", "Approve", "Approved");
 ```
 
 ```rust
 transition!("Draft", "Submit", "Submitted");
-transition!("Submitted", "Approve", "Approved");
 ```
 
-The following edge is forbidden:
+The checker compares those literal triples with the projected graph.
+The declarations do not own runtime state storage or guards.
+A permitted declaration can accompany an incorrect direct state assignment.
 
-```text
-Draft, Approve, Approved
-```
+Suppose the full model has `state`, `balance`, and `amount`.
+If approval requires `balance >= amount`, a projection of `state` retains an approval edge for some explored values.
+That edge does not enforce the discarded balance guard.
+Use finite-owned when the full modeled scalar state fits its executable profile.
+Otherwise preserve the limitation and test application guards explicitly.
 
-The generated checker compares these literal triples with the projected automaton.
-Your application still needs runtime state storage, guard checks, and actual behavior tests.
-A permitted declaration can accompany an incorrect implementation.
-
-The optional `parent` field links this model to `architecture.Service`.
-Visualize both automata to display that containment.
+The optional v1 `parent` links the model to `architecture.Service` for display in Pele.
 The link does not establish formal refinement.
 
-## Model architecture with the dependency binding
+## Check module dependencies with v1
 
-Treat model states as module names.
-Treat an observed edge as a permitted direct dependency.
-For example, a path through model states `Api`, `Service`, and `Store` permits those adjacent dependencies.
-An `Api` to `Store` import fails unless the graph also contains that edge.
-
-Use a separate project with this binding:
+Treat model states as module names and observed edges as permitted direct imports.
+A path through `Api`, `Service`, and `Store` permits adjacent dependencies.
+An `Api` to `Store` import needs its own edge.
+Use this binding in a separate v1 architecture project:
 
 ```json
 {
@@ -125,57 +206,23 @@ Use a separate project with this binding:
 }
 ```
 
-The binding maps names to relative module paths.
-The model supplies allowed edges.
-The dependency checker ignores action names.
-Imports within one mapped module are permitted.
+The binding maps model names to relative application paths.
+The TLA+ model supplies allowed edges.
+The dependency checker ignores action names and permits imports within one mapped module.
+A permitted import does not establish runtime execution order.
+Record the supplied files and syntax exclusions when reporting coverage.
 
-A dependency edge does not require an application to call both modules at runtime.
-A runtime workflow needs a behavior model and implementation checks that cover its execution.
-Keep unsupported imports visible instead of silently expanding the claimed coverage.
+## Regenerate after a requirement change
 
-## Review projection loss
+Update the model and rerun TLC before generating artifacts for a changed requirement.
+Check both the permitted behavior and the expected rejection in the actual application integration.
+Keep the generated output inventory so regeneration can remove obsolete owned files.
+Use `build --check` to compare stable artifacts and stable provenance fields without replacing files.
+V1 diagnostic projects also support `compile --check`.
+TLC log bytes and volatile run details are outside the byte comparison.
 
-Suppose the full model has `state`, `balance`, and `amount`.
-An action permits approval only when `balance >= amount`.
-TLC can establish that the finite model obeys the invariant.
-
-If the compiler projects only `state`, the emitted approval edge combines concrete states.
-The edge means that approval is possible for some explored balance and amount.
-The generated edge check cannot recover the discarded guard.
-
-Choose one of these responses:
-
-- Keep the guard in application code and test the boundary cases.
-- Include the relevant distinction in the selected string state.
-- Describe the guard as outside the generated check's guarantee.
-
-Adding a state distinction increases the graph size.
-Do not hide a large or incomplete exploration by using a smaller model without explaining the changed scope.
-
-## Use the development loop
-
-1. Model a user-visible requirement.
-2. Check the finite model with TLC.
-3. Inspect and visualize the projected graph.
-4. Compile fresh linter source.
-5. Implement the feature under the generated checks.
-6. Run the linter and native tests.
-7. Demonstrate that a forbidden example fails.
-
-When the requirement changes, repeat the loop.
-A stale graph or edited generated checker breaks the link to the model.
-
-Preserve the generated output inventory during this loop.
-Use an empty output directory before the first generation.
-The compiler removes obsolete owned files after target or profile changes.
-Use `--check` to detect stale stable artifacts without replacing them.
-TLC logs and run receipts are outside the byte comparison.
-
-The repository uses TypeScript 7.0.2 for builds and type checks.
-The generated TypeScript checker uses the same native compiler through its unstable sync and AST APIs.
-The exact 7.0.2 version pin is required for this integration.
-The generated TypeScript checker's emitted `package.json` declares its parser dependencies.
-If needed, install those dependencies with `npm install --prefix OUT/typescript`.
-Native plugin archives also include the host platform and architecture in their names.
-Use a matching archive or package a source checkout on the destination host.
+Preserve the exact TypeScript 7.0.2 pin.
+Read the generated package's README before native compilation or checker invocation.
+Use a native plugin archive that matches the host platform and architecture.
+A source checkout is not required beside an installed plugin cache.
+Keep native Codex and Claude Code installations independent, and leave global agent configuration unchanged during verification.
