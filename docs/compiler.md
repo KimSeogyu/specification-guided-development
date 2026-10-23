@@ -107,6 +107,8 @@ The native API provides the AST and resolved module symbols used by the supporte
 These entry points are unstable, so the emitted package pins `typescript` to exactly `7.0.2`.
 The [TypeScript 7.0 announcement](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/#running-side-by-side-with-typescript-60) distinguishes the unavailable stable legacy API.
 The generated checker does not claim that its native API is stable or that source checks replace application type checking.
+The native API terminates its child process on close and can write `context canceled` to stderr during shutdown.
+Read the checker's JSON diagnostics and exit status to determine the result.
 
 Visualization writes `index.html`, `structure.svg`, `structure.mmd`, and `models.json`.
 The HTML viewer supports model selection, zoom, and transition-row filtering.

@@ -34,8 +34,9 @@ function fixture(t: TestContext, input: BackendInput, files: Record<string, stri
   const run = (...args: string[]) => {
     const result = spawnSync(process.execPath, [path.join(root, 'checker.mjs'), ...args], { encoding: 'utf8', cwd: projectDirectory });
     if (result.error) throw result.error;
-    assert.equal(result.stderr, '', result.stderr);
     const decoded: unknown = JSON.parse(result.stdout);
+    // Native 7 closes its API child with SIGTERM. Linux can log cancellation after the final reply.
+    if (result.stderr) assert.match(result.stderr, /^(?:context canceled\r?\n)+$/);
     return { status: result.status, diagnostics: z.array(DiagnosticSchema).parse(decoded) };
   };
   return { root, write, run, check: (...files: string[]) => run('--root', root, ...files) };
