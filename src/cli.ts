@@ -12,7 +12,8 @@ const help = `sgd 0.1.0
   visualize --ir FILE [--ir FILE ...] --out DIR
   mcp
 
-build runs TLC before generation. compile imports DOT without a verification claim.
+build runs TLC before generation. Project v2 finite-owned generates private state authorities.
+compile imports DOT for v1 diagnostics only; it cannot generate executable authority.
 visualize renders offline Pele SVG and HTML from the same automata.
 `;
 

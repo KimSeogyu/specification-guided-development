@@ -1,6 +1,38 @@
 import { readFile } from 'node:fs/promises';
 import { render } from 'pele';
 import { AutomatonSchema, type Automaton, type GeneratedFile } from './types.js';
+import { FiniteGraphSchema, type ExactFiniteAutomaton, type FiniteValue } from './finite-types.js';
+import { z } from 'zod';
+
+type Model = Automaton | ExactFiniteAutomaton;
+
+function finiteValue(value: FiniteValue): string {
+  switch (value.kind) {
+    case 'string': return JSON.stringify(value.value);
+    case 'boolean': return value.value ? 'TRUE' : 'FALSE';
+    case 'integer': return value.value;
+  }
+}
+
+/** Rendering captions contain every variable; the original typed IR is saved in models.json. */
+function displayModel(model: Model): Automaton {
+  if (!('kind' in model)) return model;
+  const captions = new Map(model.nodes.map(node => [node.id, `${node.id}\n${model.variables.map(variable => {
+    const value = node.values[variable.name];
+    if (value === undefined) throw new Error('TLC105: incomplete concrete state');
+    return `${variable.name} = ${finiteValue(value)}`;
+  }).join('\n')}`]));
+  const caption = (id: string): string => {
+    const value = captions.get(id);
+    if (value === undefined) throw new Error('TLC105: unknown concrete node');
+    return value;
+  };
+  return {
+    version: 1, name: model.name, stateVariable: 'concreteNode',
+    states: model.nodes.map(node => caption(node.id)), initialStates: model.initial.map(caption),
+    transitions: model.edges.map(edge => ({ from: caption(edge.from), event: edge.event, to: caption(edge.to) })), source: model.source,
+  };
+}
 
 function escape(text: string): string {
   return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
@@ -10,7 +42,8 @@ function label(text: string): string {
   return escape(text).replaceAll('\n', ' ').replaceAll('\r', ' ');
 }
 
-export function toMermaid(models: Automaton[]): string {
+export function toMermaid(inputModels: Model[]): string {
+  const models = inputModels.map(displayModel);
   const names = new Set<string>();
   for (const model of models) {
     if (names.has(model.name)) throw new Error(`TLC105: duplicate model name ${model.name}`);
@@ -44,7 +77,8 @@ export function toMermaid(models: Automaton[]): string {
   return lines.join('\n') + '\n';
 }
 
-export function generateVisualization(models: Automaton[]): GeneratedFile[] {
+export function generateVisualization(inputModels: Model[]): GeneratedFile[] {
+  const models = inputModels.map(displayModel);
   if (models.length === 0) throw new Error('TLC105: supply at least one automaton');
   const overview = toMermaid(models);
   const diagrams = [
@@ -56,8 +90,8 @@ export function generateVisualization(models: Automaton[]): GeneratedFile[] {
   const options = diagrams.map((diagram, i) => `<option value="${i}">${escape(diagram.name)}</option>`).join('');
   const figures = diagrams.map((diagram, i) => `<figure class="diagram" data-index="${i}"${i === 0 ? '' : ' hidden'}>
     <figcaption>${escape(diagram.name)}</figcaption><div class="viewport" tabindex="0" aria-label="${escape(diagram.name)} diagram. Scroll to explore.">${diagram.svg}</div></figure>`).join('');
-  const tables = models.map(model => `<article><h2>${escape(model.name)}</h2>
-    <p>${model.source.stateCount} concrete states · ${model.states.length} projected states · ${model.transitions.length} projected edges</p>
+  const tables = models.map((model, index) => `<article><h2>${escape(model.name)}</h2>
+    <p>${'kind' in (inputModels[index] ?? {}) ? `${model.states.length} full concrete states · ${model.transitions.length} concrete edges · all scalar variables retained` : `${model.source.stateCount} concrete states · ${model.states.length} projected states · ${model.transitions.length} projected edges`}</p>
     ${model.parent ? `<p>Part of ${escape(model.parent.model)} / ${escape(model.parent.state)}. This is a structural link.</p>` : ''}
     <table><caption>${escape(model.name)} transition relation</caption><thead><tr><th scope="col">From</th><th scope="col">Action</th><th scope="col">To</th></tr></thead>
     <tbody>${model.transitions.map(edge => `<tr><td>${escape(edge.from)}</td><td>${escape(edge.event)}</td><td>${escape(edge.to)}</td></tr>`).join('')}</tbody></table></article>`).join('');
@@ -69,7 +103,7 @@ export function generateVisualization(models: Automaton[]): GeneratedFile[] {
 </style></head><body><a class="skip" href="#content">Skip to models</a><header><span class="eyebrow">Specification Guided Development / specification compiler</span><h1>Model explorer</h1>
 <p>Architecture and behavior, rendered from one automaton representation with Pele.</p></header><main id="content" tabindex="-1">
 <div class="toolbar"><label for="model">View</label><select id="model">${options}</select><button id="out" type="button" aria-label="Zoom out">−</button><button id="in" type="button" aria-label="Zoom in">+</button><button id="fit" type="button">Fit</button><span id="zoom" aria-live="polite">100%</span></div>
-${figures}<p class="scope">An edge records a possible transition in the finite explored graph. Projection can hide guards and other variables. Green nodes are initial projected states. Dashed links show model containment. They do not establish formal refinement. A DOT import alone does not establish a completed model check. Inspect verification.json from the build for the run receipt.</p>
+${figures}<p class="scope">An edge records a transition in the finite explored graph. Exact finite models retain every supported scalar variable in each concrete node. Legacy projected models can hide guards and other variables. Green nodes are initial states. Dashed links show model containment and do not establish formal refinement. A DOT import alone does not establish a completed model check. Inspect verification.json from the build for the run receipt. Generated live-object authority does not establish persistent identity, effect atomicity, or liveness.</p>
 <label for="search">Filter transition rows</label> <input id="search" type="search" placeholder="State or action">${tables}</main><footer>Generated by Specification Guided Development · Pele renderer · No network connection is required to view this file.</footer>
 <script>
 const selector=document.querySelector('#model');let scale=1;
@@ -82,10 +116,10 @@ document.querySelector('#search').addEventListener('input',event=>{const query=e
     { path: 'index.html', content: html.replace(/[ \t]+\n/g, '\n') },
     { path: 'structure.svg', content: overviewDiagram.svg },
     { path: 'structure.mmd', content: overview },
-    { path: 'models.json', content: JSON.stringify(models, null, 2) + '\n' },
+    { path: 'models.json', content: JSON.stringify(inputModels, null, 2) + '\n' },
   ];
 }
 
-export async function loadAutomaton(path: string): Promise<Automaton> {
-  return AutomatonSchema.parse(JSON.parse(await readFile(path, 'utf8')));
+export async function loadAutomaton(path: string): Promise<Model> {
+  return z.union([FiniteGraphSchema, AutomatonSchema]).parse(JSON.parse(await readFile(path, 'utf8')));
 }

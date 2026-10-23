@@ -1,10 +1,15 @@
 import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { ProjectSchema, type GeneratedFile, type Project, type Automaton, type BackendInput, type Target } from './types.js';
-import { importDot } from './dot.js';
+import { importDot, sha256 } from './dot.js';
 import { runTlc } from './tlc.js';
 import { generateTypeScript } from './backends/typescript.js';
 import { generateRust } from './backends/rust.js';
+import { generateOwnedTypeScript } from './backends/owned-typescript.js';
+import { generateOwnedRust } from './backends/owned-rust.js';
+import { MachineProjectSchema, validateExecutableGraph, type MachineProject, type ExactFiniteAutomaton, type OwnedBackendInput } from './finite-types.js';
+import { importFiniteDot } from './finite-dot.js';
+import { runFiniteTlc } from './finite-tlc.js';
 import { z } from 'zod';
 
 const backends = {
@@ -12,8 +17,14 @@ const backends = {
   rust: generateRust,
 } satisfies Record<Target, (input: BackendInput) => GeneratedFile[]>;
 
-export async function readProject(path: string): Promise<Project> {
-  return ProjectSchema.parse(JSON.parse(await readFile(path, 'utf8')));
+const ownedBackends = {
+  typescript: generateOwnedTypeScript,
+  rust: generateOwnedRust,
+} satisfies Record<Target, (input: OwnedBackendInput) => GeneratedFile[]>;
+
+const ConfiguredProjectSchema = z.union([ProjectSchema, MachineProjectSchema]);
+export async function readProject(path: string): Promise<Project | MachineProject> {
+  return ConfiguredProjectSchema.parse(JSON.parse(await readFile(path, 'utf8')));
 }
 
 export function compile(input: { dot: string; project: Project }): { automaton: Automaton; files: GeneratedFile[] } {
@@ -136,6 +147,7 @@ async function writeManaged(input: { out: string; files: GeneratedFile[]; check?
 
 export async function compileProject(input: { project: string; dot: string; out: string; check?: boolean }): Promise<Automaton> {
   const project = await readProject(input.project);
+  if (project.version === 2) throw new Error('TLC206: imported DOT cannot generate finite-owned authority. Use build with the pinned TLC JAR and model sources.');
   const compiled = compile({ dot: await readFile(input.dot, 'utf8'), project });
   await writeGenerated({ out: input.out, files: [...compiled.files,
     { path: 'verification.json', content: JSON.stringify({ kind: 'imported-unverified', message: 'DOT alone does not establish TLC completion.' }, null, 2) + '\n' },
@@ -143,12 +155,40 @@ export async function compileProject(input: { project: string; dot: string; out:
   return compiled.automaton;
 }
 
-export async function buildProject(input: { project: string; jar: string; out: string; check?: boolean; modelOnly?: boolean }): Promise<Automaton> {
+export async function buildProject(input: { project: string; jar: string; out: string; check?: boolean; modelOnly?: boolean }): Promise<Automaton | ExactFiniteAutomaton> {
   const projectPath = resolve(input.project);
-  const project = await readProject(projectPath);
+  const projectBytes = await readFile(projectPath);
+  const project = ConfiguredProjectSchema.parse(JSON.parse(projectBytes.toString('utf8')));
+  const checkProjectUnchanged = async (): Promise<void> => {
+    if (!projectBytes.equals(await readFile(projectPath))) throw new Error('TLC203: project configuration changed during verification; rerun against stable inputs');
+  };
+  if (project.version === 2) {
+    const model = await runFiniteTlc({ spec: resolve(dirname(projectPath), project.spec), config: resolve(dirname(projectPath), project.config), jar: input.jar });
+    const automaton = importFiniteDot({ dot: model.dot, name: project.name });
+    if (!input.modelOnly) validateExecutableGraph(automaton);
+    const files: GeneratedFile[] = [
+      { path: 'automaton.json', content: JSON.stringify(automaton, null, 2) + '\n' },
+      { path: 'binding.json', content: JSON.stringify({ profile: project.profile, ...project.binding }, null, 2) + '\n' },
+    ];
+    if (!input.modelOnly) {
+      for (const target of new Set(project.targets)) {
+        const generated = ownedBackends[target]({ automaton, className: project.binding.className });
+        files.push(...generated.map(file => ({ path: `${target}/${file.path}`, content: file.content })));
+      }
+    }
+    await checkProjectUnchanged();
+    await writeGenerated({ out: input.out, files: [...files,
+      { path: 'model.dot', content: model.dot },
+      { path: 'tlc.log', content: model.log, volatile: true },
+      { path: 'verification.json', content: JSON.stringify({ ...model.evidence, projectSha256: sha256(projectBytes) }, null, 2) + '\n', volatile: true,
+        stableJsonKeys: ['kind', 'profile', 'rootModule', 'moduleClosure', 'standardModules', 'configSha256', 'jarSha256', 'dotSha256', 'projectSha256', 'mode'] },
+    ], ...(input.check === undefined ? {} : { check: input.check }) });
+    return automaton;
+  }
   const model = await runTlc({ spec: resolve(dirname(projectPath), project.spec), config: resolve(dirname(projectPath), project.config), jar: input.jar });
   const compiled = compile({ dot: model.dot, project });
   const files = input.modelOnly ? compiled.files.filter(file => file.path === 'automaton.json' || file.path === 'binding.json') : compiled.files;
+  await checkProjectUnchanged();
   await writeGenerated({ out: input.out, files: [...files,
     { path: 'model.dot', content: model.dot },
     { path: 'tlc.log', content: model.log, volatile: true },

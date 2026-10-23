@@ -21,6 +21,6 @@ Parangsae remains the pilot and its active development must be coordinated with 
 
 ## Current status
 
-The public v0.1.0 preview supplies declaration and import checks, MCP, native plugin packages, and Pele rendering. It does not yet enforce authoritative state writes or preserve guards discarded by projection. The production goal remains active and incomplete.
+The public v0.1.0 preview supplies declaration and import checks, MCP, native plugin packages, and Pele rendering. The next source milestone adds controlled TLC execution, full scalar state, and generated per-live-object TypeScript 7 and Rust authorities. See [the finite-owned contract](finite-owned.md). Actual Parangsae authority/effect bindings, persistence where needed, project-wide coverage, native installed-agent workflow, and sustainable maintenance evidence remain outstanding. The production goal remains active and incomplete.
 
 The Goal card in the desktop app still contains the older wording because the available goal tools cannot edit an active objective. This document records the user's revised scope and governs the ongoing work.
