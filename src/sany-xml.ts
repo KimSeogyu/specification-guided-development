@@ -385,7 +385,8 @@ export function parseSanyXml(xml: string): SanyModule {
           if (child.name.endsWith('Ref')) members.push(reference(child)); else others.push(unsupported(child));
         }
         if (new Set(members.map(member => member.uid)).size !== members.length) fail('duplicate module member');
-        if (new Set(members.map(member => member.name)).size !== members.length) fail('duplicate module member name');
+        const namedMembers = members.filter(member => member.kind !== 'unsupported');
+        if (new Set(namedMembers.map(member => member.name)).size !== namedMembers.length) fail('duplicate module member name');
         result = { kind, uid: id, name, members, unsupported: others, ...meta };
         break;
       }

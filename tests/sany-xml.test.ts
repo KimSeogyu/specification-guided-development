@@ -6,8 +6,10 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
-import { FINITE_TLC_JAR_SHA256 } from '../src/finite-tlc.js';
+import { FINITE_TLC_JAR_SHA256, parseSymbolicConfig, runFiniteTlc } from '../src/finite-tlc.js';
+import { importFiniteDot } from '../src/finite-dot.js';
 import { parseSanyXml, type SanyExpression, type SanyModule } from '../src/sany-xml.js';
+import { lowerSymbolicModel } from '../src/symbolic-lower.js';
 
 const ref = (type: string, id: string): string => `<${type}Ref><UID>${id}</UID></${type}Ref>`;
 const entry = (id: string, value: string): string => `<entry><UID>${id}</UID>${value}</entry>`;
@@ -201,6 +203,40 @@ test('pinned exporter retains finite Approval Boolean operators without inventin
   const operatorNames = [...model.symbols.values()].filter(symbol => symbol.kind === 'builtin').map(symbol => symbol.name);
   assert.ok(operatorNames.includes('TRUE'));
   assert.ok(operatorNames.includes('FALSE'));
+});
+
+test('multiple anonymous assumptions retain separate unsupported identities and remain valid for finite TLC', { skip: !jar }, async () => {
+  const source = String.raw`---- MODULE AnonymousAssumptions ----
+ASSUME TRUE
+ASSUME TRUE
+VARIABLE x
+Init == x = "ready"
+Next == UNCHANGED x
+====
+`;
+  const semantic = await exportModel('AnonymousAssumptions', source);
+  const root = semantic.modules.find(module => module.name === semantic.root);
+  assert.ok(root);
+  const assumptions = root.members.filter(member => member.kind === 'unsupported');
+  assert.equal(assumptions.length, 2);
+  assert.equal(new Set(assumptions.map(assumption => assumption.uid)).size, 2);
+  assert.deepEqual(assumptions.map(assumption => semantic.symbols.get(assumption.uid)?.kind), ['unsupported', 'unsupported']);
+  assert.throws(() => lowerSymbolicModel({ name: semantic.root, semantic, config: parseSymbolicConfig('INIT Init NEXT Next') }),
+    /TLC301.*assumptions/);
+
+  assert.ok(jar);
+  const directory = await mkdtemp(join(tmpdir(), 'sgd-sany-assumptions-test-'));
+  try {
+    const spec = join(directory, 'AnonymousAssumptions.tla');
+    const config = join(directory, 'AnonymousAssumptions.cfg');
+    await writeFile(spec, source);
+    await writeFile(config, 'INIT Init NEXT Next\n');
+    const result = await runFiniteTlc({ spec, config, jar });
+    const graph = importFiniteDot({ name: semantic.root, dot: result.dot });
+    assert.equal(graph.nodes.length, 1);
+    assert.deepEqual(graph.nodes[0]?.values, { x: { kind: 'string', value: 'ready' } });
+    assert.ok(graph.edges.some(edge => edge.from === edge.to));
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test('pinned exporter keeps renamed and shadowed binders, tuples, unbounded quantifiers, and unsupported LET', { skip: !jar }, async () => {
