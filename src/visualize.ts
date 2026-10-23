@@ -67,8 +67,14 @@ function escape(text: string): string {
   return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 }
 
+const mermaidEscapes: ReadonlyMap<string, string> = new Map([
+  ['&', '&amp;'], ['<', '&lt;'], ['>', '&gt;'], ['"', '&quot;'], ["'", '&apos;'], ['#', '&num;'],
+  // Pele's entity sentinel starts with this ligature. Reconstruct it only in the final decode.
+  ['ﬂ', '#64258;'], ['\n', ' '], ['\r', ' '],
+]);
+
 function label(text: string): string {
-  return escape(text).replaceAll('\n', ' ').replaceAll('\r', ' ');
+  return text.replace(/[&<>"'#ﬂ\n\r]/g, character => mermaidEscapes.get(character) ?? character);
 }
 
 export function toMermaid(inputModels: Model[]): string {
@@ -78,17 +84,37 @@ export function toMermaid(inputModels: Model[]): string {
     if (names.has(model.name)) throw new Error(`TLC105: duplicate model name ${model.name}`);
     names.add(model.name);
   }
-  const lines = ['flowchart LR', 'classDef initial fill:#d5f3e8,stroke:#247a65,stroke-width:2px'];
+  const lines = ['flowchart LR', 'classDef initial fill:#d5f3e8,stroke:#247a65,stroke-width:2px',
+    'classDef selfTransitions fill:#fff8df,stroke:#8c7839,stroke-dasharray:4 3'];
   models.forEach((model, mi) => {
     lines.push(`subgraph M${mi}["${label(model.name)}"]`);
     model.states.forEach((state, si) => {
       lines.push(`M${mi}S${si}["${label(state)}"]${model.initialStates.includes(state) ? ':::initial' : ''}`);
     });
+    const selfTransitions = new Map<string, string[]>();
+    for (const edge of model.transitions) {
+      if (edge.from !== edge.to) continue;
+      const events = selfTransitions.get(edge.from) ?? [];
+      events.push(edge.event);
+      selfTransitions.set(edge.from, events);
+    }
+    const drawnSelfTransitions = new Set<string>();
     for (const edge of model.transitions) {
       const from = model.states.indexOf(edge.from);
       const to = model.states.indexOf(edge.to);
       if (from < 0 || to < 0) throw new Error('TLC105: transition references an unknown state');
-      lines.push(`M${mi}S${from} -->|"${label(edge.event)}"| M${mi}S${to}`);
+      let caption = label(edge.event);
+      if (edge.from === edge.to) {
+        if (drawnSelfTransitions.has(edge.from)) continue;
+        drawnSelfTransitions.add(edge.from);
+        const events = selfTransitions.get(edge.from) ?? [edge.event];
+        const choices = [`Annotation: ${events.length} self transition${events.length === 1 ? '' : 's'}`,
+          ...events.map((event, index) => `${index + 1}. ${label(event)}`)].join('<br/>');
+        lines.push(`M${mi}L${from}["${choices}"]:::selfTransitions`);
+        lines.push(`M${mi}S${from} -.-|"lists transitions"| M${mi}L${from}`);
+        caption = 'self';
+      }
+      lines.push(`M${mi}S${from} -->|"${caption}"| M${mi}S${to}`);
     }
     lines.push('end');
   });
@@ -113,7 +139,7 @@ export function generateVisualization(inputModels: Model[]): GeneratedFile[] {
   const diagrams = [
     { name: 'All models', source: overview },
     ...models.map(model => ({ name: model.name, source: toMermaid([model]) })),
-  ].map((diagram, i) => ({ ...diagram, ...render(diagram.source, { idPrefix: `tlc${i}-`, links: false, images: false, maxWidth: 1400 }) }));
+  ].map((diagram, i) => ({ ...diagram, ...render(diagram.source, { idPrefix: `tlc${i}-`, links: false, images: false, maxWidth: 1400, responsive: false }) }));
   const overviewDiagram = diagrams[0];
   if (!overviewDiagram) throw new Error('TLC105: no diagram was rendered');
   const options = diagrams.map((diagram, i) => `<option value="${i}">${escape(diagram.name)}</option>`).join('');
@@ -132,7 +158,7 @@ export function generateVisualization(inputModels: Model[]): GeneratedFile[] {
 </style></head><body><a class="skip" href="#content">Skip to models</a><header><span class="eyebrow">Specification Guided Development / specification compiler</span><h1>Model explorer</h1>
 <p>Architecture and behavior, rendered from one automaton representation with Pele.</p></header><main id="content" tabindex="-1">
 <div class="toolbar"><label for="model">View</label><select id="model">${options}</select><button id="out" type="button" aria-label="Zoom out">−</button><button id="in" type="button" aria-label="Zoom in">+</button><button id="fit" type="button">Fit</button><span id="zoom" aria-live="polite">100%</span></div>
-${figures}<p class="scope">Read each model's scope below. Exact finite models retain every supported scalar variable. Symbolic relations show equality/copy orbits; their data atom names are local to each state. Configured TLC witnesses keep their finite model values and omit event arguments in ordinary DOT. Legacy projections can hide guards. Green nodes are initial states. Dashed links show containment and do not establish refinement. Inspect verification.json and input-verification.json for verification scope. Live-object authority does not establish persistent identity, effect atomicity, or liveness.</p>
+${figures}<p class="scope">Read each model's scope below. Exact finite models retain every supported scalar variable. Symbolic relations show equality/copy orbits; their data atom names are local to each state. Configured TLC witnesses keep their finite model values and omit event arguments in ordinary DOT. Legacy projections can hide guards. Green nodes are initial states. A self loop with a transition card represents every numbered alternative in that card, including observations that leave state unchanged. Yellow dashed cards are annotations, not model states. Dashed links connect annotations or show containment; they do not establish refinement. Inspect verification.json and input-verification.json for verification scope. Live-object authority does not establish persistent identity, effect atomicity, or liveness.</p>
 <label for="search">Filter transition rows</label> <input id="search" type="search" placeholder="State or action">${tables}</main><footer>Generated by Specification Guided Development · Pele renderer · No network connection is required to view this file.</footer>
 <script>
 const selector=document.querySelector('#model');let scale=1;
