@@ -1,6 +1,6 @@
 # Compiler contract
 
-Specification Guided Development has separate executable and diagnostic profiles. Project v2 `finite-owned` preserves full scalar valuations. Project v3 compiles a [single opaque input](symbolic-owned.md), while v4 supports [independent inputs and model erasure](product-inputs.md). V5 binds [complete native rows](row-owned.md) to that relation. Read each profile's contract before generating authority.
+Specification Guided Development has separate executable and diagnostic profiles. Project v2 `finite-owned` preserves full scalar valuations. Project v3 compiles a [single opaque input](symbolic-owned.md), while v4 supports [independent inputs and model erasure](product-inputs.md). V5 binds [complete native rows](row-owned.md) to that relation. V6 composes a [closed partition data fold](partition-fold.md). Read each profile's contract before generating authority.
 
 The remainder of this document describes project v1, which consumes a projected TLC DOT state graph and emits declaration or import diagnostics. It also runs TLC when a project and a local TLA+ tools JAR are supplied. Those diagnostics do not own runtime state.
 
@@ -79,6 +79,7 @@ The `visualize` command accepts repeated `--ir` options to show several models t
 
 The MCP server exposes `sgd_model`, `sgd_build`, `sgd_compile`, `sgd_inspect`, `sgd_visualize`, and `sgd_refine`.
 Model and build calls accept `project`, `jar`, and `out` paths.
+Build and compile calls also accept `check: true` to compare managed output without updating it.
 Compile calls accept `project`, `dot`, and `out` paths.
 Inspect calls accept one `ir` path.
 Visualize calls accept an `ir` array and an `out` path.

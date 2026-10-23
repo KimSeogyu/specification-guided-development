@@ -7,6 +7,8 @@ description: Model architecture and behavior in TLA+. Generate state owners or T
 
 Read the relevant profile in [the modeling guide](references/modeling.md) before you create or change a model.
 Select the profile that matches the required guarantee.
+For a closed partition data fold, read [the v6 composition guide](references/partition-fold.md).
+Project v6 `partition-fold` composes checked complete-row and finite-control models with source-checked literal family projections.
 Project v5 `row-owned` derives a complete-row binding from supported native Rust Fact sources and explicit payload/provenance state.
 Project v4 `symbolic-owned` generates equality/copy behavior with two or three independent inputs and explicit provenance state.
 Project v3 `symbolic-owned` generates equality/copy behavior over immutable string input.
@@ -57,7 +59,7 @@ A matching declaration beside an independent state assignment does not enforce t
 1. Write the TLA+ module and its TLC configuration.
 2. Include the invariants and failure behavior required by the contract.
 3. Create project JSON for the selected profile.
-4. Run `sgd_model` to check the configured finite instance without generating language code.
+4. Run `sgd_model` to check the configured finite instance without generating language code. For v6, run this on its referenced row and control projects.
 5. Read the TLC result and inspect the exported automaton with `sgd_inspect`.
 6. Use `sgd_visualize` for a Pele diagram when a graph helps review the behavior.
 
@@ -75,7 +77,7 @@ A diagram does not check application behavior.
 
 ## Build and integrate a generated owner
 
-Use `sgd_build` with v2, v3, v4, or v5.
+Use `sgd_build` with v2, v3, v4, v5, or v6.
 The controlled runner verifies the pinned JAR and isolates the model source closure before exploration.
 `sgd_compile` rejects these executable profiles because imported DOT cannot establish executable provenance or parameter policy.
 
@@ -251,6 +253,9 @@ V5 checks the admitted production Rust library/type closure and retains complete
 Its source profile trusts unshadowed standard Rust facilities and declared genuine default-registry serde/clap derives.
 Unknown aliases, macros, source overrides, conditional bound items, and unsupported representations fail.
 It does not establish every Cargo target/feature, TypeScript source coverage, filesystem authority, partition folding, or exclusive writers.
+V6 adds a generated closed fold with private row/control observations, checked counters, full conflict pairs, and a consumed unbound data report.
+It checks internal symbol/day consistency, not the selected physical resource or writer.
+Do not describe the report as storage permission or completed source and sink coverage.
 V2 retains finite scalar state and its observed action guards within the explored scope.
 V1 projections discard other variables and their guards.
 

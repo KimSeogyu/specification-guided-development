@@ -381,8 +381,102 @@ process.stdout.write(JSON.stringify({fieldCounts:fields,effects:results.map(step
   const imported = await client.callTool({ name: 'sgd_compile', arguments: { project, dot: join(out, 'model.dot'), out: forbiddenOut } });
   assert.equal(imported.isError, true, JSON.stringify(imported)); assert.match(JSON.stringify(imported.content), /TLC206: imported DOT cannot generate row-owned authority/);
   await assert.rejects(access(forbiddenOut), { code: 'ENOENT' });
-  return { sourceAnalyzer: 'bundled host-native binary; Cargo source fallback absent', sourceScope: receipt.rowBinding.sourceScope, modelCheck: 'completed', finiteInputOracle: 'all configured tuples matched', nativeTypeScript: '7.0.2', ...executed,
-    pele: 'complete payload/provenance views rendered', unverifiedAuthority: 'rejected without output', actualParangsaeAdoption: 'not established by this copied-cache fixture' };
+  return {
+    fixture: { application, model, project, out },
+    details: { sourceAnalyzer: 'bundled host-native binary; Cargo source fallback absent', sourceScope: receipt.rowBinding.sourceScope, modelCheck: 'completed', finiteInputOracle: 'all configured tuples matched', nativeTypeScript: '7.0.2', ...executed,
+      pele: 'complete payload/provenance views rendered', unverifiedAuthority: 'rejected without output', actualParangsaeAdoption: 'not established by this copied-cache fixture' },
+  };
+}
+
+async function verifyPartitionOwned({ client, plugin, name, fixture }) {
+  const { application, model, project: rowProject, out } = fixture;
+  const previousPlan = JSON.parse(await readFile(join(out, 'row-binding-plan.json'), 'utf8'));
+  const references = join(plugin, 'skills/specification-guided-development/references');
+  for (const file of ['PartitionControl.tla', 'PartitionControl.cfg']) await cp(join(references, file), join(model, file));
+  assert.match(await readFile(join(references, 'partition-fold.md'), 'utf8'), /storage gap/);
+  const controlProject = join(model, 'partition-control.json');
+  const project = join(model, 'partition.json');
+  await writeFile(controlProject, JSON.stringify({ version: 2, profile: 'finite-owned', name: 'PartitionControl', spec: 'PartitionControl.tla', config: 'PartitionControl.cfg', targets: ['typescript', 'rust'], binding: { className: 'PartitionControl' } }));
+  // These audited fixture names are test data. User family policy remains in the
+  // original literal TLA+ module, outside the controlled generated output root.
+  const families = [
+    { name: 'KlineFact', key: ['open_time'], time: 'open_time', datasets: ['um-kline', 'mark-price-kline', 'index-price-kline', 'premium-index-kline', 'spot-kline'] },
+    { name: 'FundingFact', key: ['funding_time'], time: 'funding_time', datasets: ['funding-rate'] },
+    { name: 'MetricsFact', key: ['create_time'], time: 'create_time', datasets: ['metrics'] },
+    { name: 'BookFact', key: ['timestamp', 'percentage'], time: 'timestamp', datasets: ['book-depth'] },
+  ];
+  await writeFile(join(model, 'PartitionFamilies.tla'), `---- MODULE PartitionFamilies ----
+PartitionFamilies ==
+ [version |-> 1, calendar |-> "utc-micros-nonnegative-day-v1", families |->
+  [${families.map(family => `${family.name} |-> [key |-> <<${family.key.map(value => JSON.stringify(value)).join(', ')}>>, symbol |-> "symbol", time |-> ${JSON.stringify(family.time)}, datasets |-> {${family.datasets.map(value => JSON.stringify(value)).join(', ')}}]`).join(',\n   ')}]]
+====
+`);
+  await writeFile(project, JSON.stringify({ version: 6, profile: 'partition-fold', name: 'FactPartition', application: '../row-application', targets: ['typescript', 'rust'],
+    models: { row: { project: 'project.json' }, control: { project: 'partition-control.json' }, families: { spec: 'PartitionFamilies.tla', operator: 'PartitionFamilies' } }, binding: { className: 'FactAuthority', rustCrateMode: 'standalone' } }));
+  assert.equal(rowProject, join(model, 'project.json'));
+  toolValue(await client.callTool({ name: 'sgd_build', arguments: { project, jar, out } }));
+  const plan = JSON.parse(await readFile(join(out, 'partition-plan.json'), 'utf8'));
+  assert.equal(plan.runtimeProfile, 'unbound-partition-v1');
+  assert.deepEqual(plan.row.plan, previousPlan);
+  assert.deepEqual(plan.contract.families.map(family => family.name), ['BookFact', 'FundingFact', 'KlineFact', 'MetricsFact']);
+  const receipt = JSON.parse(await readFile(join(out, 'verification.json'), 'utf8'));
+  assert.equal(receipt.kind, 'controlled-partition-fold'); assert.equal(receipt.generation, 'closed-data-fold'); assert.equal(receipt.storageAuthority, false);
+  for (const path of ['model.dot', 'semantic.xml', 'orbit-proof.json', 'input-verification.json']) await assert.rejects(access(join(out, path)), { code: 'ENOENT' });
+  for (const path of ['models/row/semantic.xml', 'models/control/semantic.xml', 'models/families/semantic.xml', 'rust/adapter.rs']) await access(join(out, path));
+  const compiler = join(plugin, 'runtime/node_modules/typescript/bin/tsc');
+  assert.match(execFileSync(process.execPath, [compiler, '--version'], { encoding: 'utf8', timeout: 30_000 }), /^Version 7\.0\.2\s*$/);
+  execFileSync(process.execPath, [compiler, '-p', join(out, 'typescript/tsconfig.json')], { cwd: temporary, encoding: 'utf8', timeout: 30_000 });
+  const runner = join(temporary, name, 'verify-partition.mjs');
+  await writeFile(runner, `import assert from 'node:assert/strict';
+import fs from 'node:fs';
+const module=await import(process.argv[2]);const plan=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
+function raw(fact){return Object.fromEntries(fact.fields.map(field=>{let value;switch(field.codec.kind){case'i64':value=1n;break;case'u32':value=field.name==='schema_version'?({KlineFact:1,FundingFact:3,MetricsFact:4,BookFact:5}[fact.name]):1;break;case'bool':value=true;break;case'string':value='BTCUSDT';break;case'enum':value=field.codec.variants[0];break;}return[field.name,value];}));}
+function consume(folded){assert.equal(folded.ok,true);assert.ok(Object.isFrozen(folded.value));const consumed=folded.value.intoReport();assert.equal(consumed.ok,true);assert.deepEqual(folded.value.intoReport(),{ok:false,reason:'already-consumed'});return consumed.value;}
+const changedFields={KlineFact:'open_ticks',FundingFact:'rate',MetricsFact:'sum_open_interest',BookFact:'depth'};
+const fieldCounts={};
+for(const fact of plan.row.plan.facts){
+ const family=plan.contract.families.find(family=>family.name===fact.name);assert.ok(family);
+ const make=module['create'+fact.name+'Row'];const fold=module['fold'+fact.name];assert.equal(module['create'+fact.name+'Owner'],undefined);
+ const base=raw(fact);const first=make(base);const last=make({...base,received_ts:77n});const equal=make({...base,received_ts:99n,...(fact.name==='KlineFact'?{schema_version:2}:{})});
+ const empty=consume(fold({baseline:[],incoming:[]}));assert.equal(empty.kind,'Noop');assert.deepEqual(empty.rows,[]);assert.equal(empty.group,null);
+ const noop=consume(fold({baseline:[first,last],incoming:[equal]}));assert.equal(noop.kind,'Noop');assert.deepEqual(noop.rows,[first,last]);assert.deepEqual(noop.counts,{inserted:0n,unchanged:1n});assert.equal(noop.rows[0].received_ts,1n);assert.equal(noop.rows[1].received_ts,77n);
+ const changed=changedFields[fact.name];assert.ok(changed);const rejected=make({...base,[changed]:2n,received_ts:2n});const provisional=make({...base,[family.key[0]]:2n,received_ts:3n});
+ const refused=consume(fold({baseline:[first],incoming:[provisional,rejected,rejected,equal]}));assert.equal(refused.kind,'Refused');assert.deepEqual(refused.original,[first]);assert.deepEqual(refused.counts,{inserted:0n,unchanged:1n});assert.deepEqual(refused.conflicts,[{stored:first,rejected},{stored:first,rejected}]);
+ assert.equal(Object.keys(refused.original[0]).length,fact.fields.length);assert.deepEqual(refused.original[0],first);
+ for(const pair of refused.conflicts){assert.deepEqual(pair.stored,first);assert.deepEqual(pair.rejected,rejected);assert.equal(Object.keys(pair.stored).length,fact.fields.length);assert.equal(Object.keys(pair.rejected).length,fact.fields.length);assert.equal(pair.stored.received_ts,1n);assert.equal(pair.rejected.received_ts,2n);}
+ for(const value of [noop,noop.rows,noop.counts,refused,refused.original,refused.conflicts,...refused.conflicts])assert.ok(Object.isFrozen(value));
+ for(const forged of [base,{...first},null,'Same'])assert.deepEqual(fold({baseline:[],incoming:[forged]}),{ok:false,reason:'invalid-row'});
+ const closed=fold({baseline:[first],incoming:[]}).value;assert.deepEqual(closed.intoReport.call({...closed}),{ok:false,reason:'invalid-closed'});assert.equal(closed.intoReport().ok,true);
+ fieldCounts[fact.name]=fact.fields.length;
+}
+assert.equal(module.createFactAuthorityControl,undefined);
+process.stdout.write(JSON.stringify({fieldCounts,noop:'original order, duplicates and metadata retained',refused:'provisional insert rolled back; every repeated complete conflict retained',same:'counted after conflict',handles:'authenticated, frozen and consumed once',forgery:'refused',storageAuthority:false}));
+`);
+  const executed = JSON.parse(execFileSync(process.execPath, [runner, pathToFileURL(join(out, 'typescript/dist/machine.js')).href, join(out, 'partition-plan.json')], { cwd: temporary, encoding: 'utf8', timeout: 30_000 }));
+  const graph = toolValue(await client.callTool({ name: 'sgd_inspect', arguments: { ir: join(out, 'automaton.json') } }));
+  const program = toolValue(await client.callTool({ name: 'sgd_inspect', arguments: { ir: join(out, 'symbolic-model.json') } }));
+  assert.equal(graph.kind, 'exact-finite'); assert.equal(program.kind, 'symbolic-owned');
+  assert.deepEqual(graph.variables.map(variable => variable.name).sort(), ['hasConflict', 'hasInserted', 'phase']);
+  const view = join(temporary, name, 'partition-view');
+  toolValue(await client.callTool({ name: 'sgd_visualize', arguments: { ir: [join(out, 'automaton.json'), join(out, 'symbolic-model.json')], out: view } }));
+  const html = await readFile(join(view, 'index.html'), 'utf8');
+  for (const label of [/hasInserted/, /hasConflict/, /ReadyRefused/, /storedProvenance/, /rejectedProvenance/, /equality\/copy orbits/]) assert.match(html, label);
+  assert.deepEqual(JSON.parse(await readFile(join(view, 'models.json'), 'utf8')), [graph, program]);
+  const inventoryBytes = await readFile(join(out, '.sgd-generated.json'));
+  const inventory = JSON.parse(inventoryBytes.toString('utf8'));
+  const before = await Promise.all(inventory.files.map(path => readFile(join(out, path))));
+  toolValue(await client.callTool({ name: 'sgd_build', arguments: { project, jar, out, check: true } }));
+  assert.deepEqual(await readFile(join(out, '.sgd-generated.json')), inventoryBytes);
+  assert.deepEqual(await Promise.all(inventory.files.map(path => readFile(join(out, path)))), before);
+  execFileSync(process.execPath, [join(plugin, 'scripts/run.mjs'), 'build', '--project', project, '--jar', jar, '--out', out, '--check'], { cwd: temporary, encoding: 'utf8', timeout: 90_000 });
+  assert.deepEqual(await readFile(join(out, '.sgd-generated.json')), inventoryBytes);
+  assert.deepEqual(await Promise.all(inventory.files.map(path => readFile(join(out, path)))), before);
+  const forbiddenOut = join(application, 'unverified-partition-authority');
+  const imported = await client.callTool({ name: 'sgd_compile', arguments: { project, dot: join(out, 'models/control/model.dot'), out: forbiddenOut } });
+  assert.equal(imported.isError, true, JSON.stringify(imported)); assert.match(JSON.stringify(imported.content), /TLC206: imported DOT cannot generate partition-fold authority/);
+  await assert.rejects(access(forbiddenOut), { code: 'ENOENT' });
+  return { controlTemplate: 'loaded from this copied native package', modelCheck: 'both original models and literal metadata completed', migration: 'same v5 output root; original source plan preserved; obsolete managed row outputs removed', nativeTypeScript: 'packaged 7.0.2', ...executed,
+    pele: 'complete finite control and symbolic row relations rendered', check: 'MCP check:true and packaged CLI --check preserved every managed byte', unverifiedAuthority: 'rejected without output', rustRuntime: 'not executed in this copied-cache flow', installedAgentHost: 'not exercised', actualParangsaeAdoption: 'not established by this copied-cache fixture' };
 }
 
 try {
@@ -413,11 +507,12 @@ try {
       const finiteOwned = await verifyFiniteOwned({ client, plugin, name });
       const symbolicOwned = await verifySymbolicOwned({ client, plugin, name });
       const productOwned = await verifyProductOwned({ client, plugin, name, abstractIr: join(temporary, name, 'symbolic-owned/symbolic-model.json') });
-      const rowOwned = await verifyRowOwned({ client, plugin, name });
-      results.push({ plugin: name, environment: 'isolated copied plugin cache; not an installed agent host', actualInstalledAgentHost: 'not exercised', nativeRuntime: `${process.platform}-${process.arch}`, tools, modelCheck: 'completed', generatedTypeScript: 'accepted', pele: 'rendered', finiteOwned, symbolicOwned, productOwned, rowOwned });
+      const row = await verifyRowOwned({ client, plugin, name });
+      const partitionOwned = await verifyPartitionOwned({ client, plugin, name, fixture: row.fixture });
+      results.push({ plugin: name, environment: 'isolated copied plugin cache; not an installed agent host', actualInstalledAgentHost: 'not exercised', nativeRuntime: `${process.platform}-${process.arch}`, tools, modelCheck: 'completed', generatedTypeScript: 'accepted', pele: 'rendered', finiteOwned, symbolicOwned, productOwned, rowOwned: row.details, partitionOwned });
     } finally { await client.close(); }
   }
   await mkdir(resolve('.runtime'), { recursive: true });
   await writeFile(resolve('.runtime/plugin-verification.json'), JSON.stringify(results, null, 2) + '\n');
-  process.stdout.write('Both isolated copied plugin caches completed MCP, real TLC, v1 diagnostics, v2 finite-owned, v3 symbolic-owned, v4 product-input, and v5 source-bound whole-row generation with the bundled Rust analyzer, packaged TypeScript 7.0.2, complete payload/provenance behavior, input-tuple oracle, supplied-IR erasure, Pele, tamper checks, and unverified DOT refusal. Actual installed-agent hosts and completed Parangsae adoption were not established by these copied-cache fixtures.\n');
+  process.stdout.write('Both isolated copied plugin caches completed MCP, real TLC, v1 diagnostics, v2 finite-owned, v3 symbolic-owned, v4 product-input, v5 source-bound whole rows, and v6 closed partition data folds with their bundled control templates. The bundled Rust analyzer, packaged TypeScript 7.0.2, complete payload/provenance behavior, input-tuple oracle, supplied-IR erasure, Pele, v5-to-v6 migration, Noop/Refused complete-row behavior, immutable --check, tamper checks, and unverified DOT refusal passed. Actual installed-agent hosts and completed Parangsae adoption were not established by these copied-cache fixtures.\n');
 } finally { await rm(temporary, { recursive: true, force: true }); }

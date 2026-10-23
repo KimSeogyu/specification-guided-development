@@ -10,6 +10,12 @@ export interface RowTypeScriptInput {
   plan: RowBindingPlan;
   binding: RowBinding;
 }
+/** Compiler-internal composition hook. Private row registries never leave machine.ts. */
+export interface PrivateRowTypeScriptExtension {
+  imports: string;
+  declarations: string;
+  fact: (fact: RowBindingPlan['facts'][number], index: number) => string;
+}
 const quoted = (value: string): string => JSON.stringify(value);
 
 export function encodeRowIdentity(input: {
@@ -45,6 +51,14 @@ export function encodeRowIdentity(input: {
 
 /** Portable DTOs match the audited Rust schema. They do not claim TypeScript source-AST binding. */
 export function generateRowTypeScript(input: RowTypeScriptInput): GeneratedFile[] {
+  return generateRowTypeScriptSource(input);
+}
+
+export function generatePrivateRowTypeScript(input: RowTypeScriptInput, extension: PrivateRowTypeScriptExtension): GeneratedFile[] {
+  return generateRowTypeScriptSource(input, extension);
+}
+
+function generateRowTypeScriptSource(input: RowTypeScriptInput, extension?: PrivateRowTypeScriptExtension): GeneratedFile[] {
   const { model, plan, binding } = validateWholeRowBinding(input);
   const stored = binding.model.pairs.find(pair => pair.name === 'stored');
   const rejected = binding.model.pairs.find(pair => pair.name === 'rejected');
@@ -101,6 +115,7 @@ export function generateRowTypeScript(input: RowTypeScriptInput): GeneratedFile[
       return `  ${flavor} += part(utf8.encode(${quoted(field.name)})) + part(utf8.encode(${quoted(field.codec.kind)})) + part(${bytes});`;
     }).join('\n');
     const inputArguments = model.inputs.map(parameter => parameter.parameter === payload.parameter ? 'incoming.payload' : 'incoming.provenance').join(', ');
+    const ownerExport = extension === undefined ? 'export ' : '';
     return `export interface ${type} {
   readonly [rowBrand]: ${quoted(fact.name)};
 ${fields}
@@ -124,20 +139,20 @@ ${parseFields}
   ${identityMap}.set(row, identify${fact.name}(row));
   return row;
 }
-export interface ${fact.name}Observation {
+${ownerExport}interface ${fact.name}Observation {
   readonly stored: ${type} | null;
   readonly rejected: ${type} | null;
   readonly state: PrimitiveSnapshot;
 }
-export type ${fact.name}WriteResult =
+${ownerExport}type ${fact.name}WriteResult =
   | { readonly ok: true; readonly effect: WriteEffect; readonly receipt: PrimitiveReceipt }
   | { readonly ok: false; readonly reason: 'invalid-row' | 'broken-binding' | PrimitiveRejection['reason']; readonly state: PrimitiveSnapshot };
-export interface ${fact.name}Owner {
+${ownerExport}interface ${fact.name}Owner {
   readonly read: () => ${fact.name}Observation;
   readonly write: (row: ${type}) => ${fact.name}WriteResult;
 }
 /** The authenticated token binds payload and provenance from the same complete immutable DTO. */
-export function create${fact.name}Owner(): ${fact.name}Owner {
+${ownerExport}function create${fact.name}Owner(): ${fact.name}Owner {
   const authority = createPrimitiveAuthority();
   let stored: ${identityType} | null = null;
   let rejected: ${identityType} | null = null;
@@ -165,15 +180,15 @@ export function create${fact.name}Owner(): ${fact.name}Owner {
     return Object.freeze({ ok: true, effect, receipt: pending.receipt });
   });
   return Object.freeze({ read, write });
-}
+}${extension === undefined ? '' : '\n' + extension.fact(fact, factIndex)}
 `;
   }).join('\n');
   const source = `// Generated portable closed DTO authority from an audited Rust whole-row schema.
 // It does not prove TypeScript application source coverage or persistence.
 import { create${primitive} as createPrimitiveAuthority, type ${primitive}Value as PrimitiveValue, type ${primitive}Expression as PrimitiveExpression, type ${primitive}Snapshot as PrimitiveSnapshot, type ${primitive}Receipt as PrimitiveReceipt, type ${primitive}Rejection as PrimitiveRejection } from './primitive.js';
-const rowBrand: unique symbol = Symbol('sgd-row');
+${extension === undefined ? '' : extension.imports + '\n'}const rowBrand: unique symbol = Symbol('sgd-row');
 const utf8 = new TextEncoder();
-export type WriteEffect = ${sourceActions.map(quoted).join(' | ')};
+${extension === undefined ? 'export ' : ''}type WriteEffect = ${sourceActions.map(quoted).join(' | ')};
 function isSourceAction(value: string): value is WriteEffect { return ${sourceActions.map(action => `value === ${quoted(action)}`).join(' || ')}; }
 interface Identity { readonly payload: string; readonly provenance: string }
 function unicode(value: string): boolean {
@@ -210,7 +225,7 @@ function lift<T extends Identity>(receipt: PrimitiveReceipt, payload: string, pr
   if (a?.kind === 'state' && b?.kind === 'state' && a.variable === ${quoted(rejected.payload)} && b.variable === ${quoted(rejected.provenance)}) return { ok: true, row: oldRejected };
   return { ok: false };
 }
-${rowDefinitions}`;
+${extension === undefined ? '' : extension.declarations + '\n'}${rowDefinitions}`;
   const generated = generateSymbolicTypeScript({ model, className: primitive });
   const files = generated.filter(file => file.path !== 'machine.ts' && file.path !== 'README.md').map(file => file.path === 'tsconfig.json' ? { ...file, content: file.content.replace('"machine.ts"', '"machine.ts", "primitive.ts"') } : file);
   const primitiveFile = generated.find(file => file.path === 'machine.ts');
