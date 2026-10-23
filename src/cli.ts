@@ -17,6 +17,7 @@ const help = `sgd 0.1.0
 build runs TLC before generation. Project v2 generates finite state authorities.
 Project v3 symbolic-owned compiles supported SANY equality/copy actions with data input.
 Project v4 adds two or three inputs from disjoint nominal domains.
+Project v5 row-owned binds audited Rust source equality and complete owned rows.
 refine checks state, enabled-input decisions, and observable action erasure.
 compile imports DOT for v1 diagnostics only; it cannot generate executable authority.
 visualize renders offline Pele SVG and HTML from the same automata.

@@ -1,6 +1,6 @@
 # Compiler contract
 
-Specification Guided Development has separate executable and diagnostic profiles. Project v2 `finite-owned` preserves full scalar valuations. Project v3 compiles a [single opaque input](symbolic-owned.md), while v4 supports [independent inputs and model erasure](product-inputs.md). Read each profile's contract before generating authority.
+Specification Guided Development has separate executable and diagnostic profiles. Project v2 `finite-owned` preserves full scalar valuations. Project v3 compiles a [single opaque input](symbolic-owned.md), while v4 supports [independent inputs and model erasure](product-inputs.md). V5 binds [complete native rows](row-owned.md) to that relation. Read each profile's contract before generating authority.
 
 The remainder of this document describes project v1, which consumes a projected TLC DOT state graph and emits declaration or import diagnostics. It also runs TLC when a project and a local TLA+ tools JAR are supplied. Those diagnostics do not own runtime state.
 

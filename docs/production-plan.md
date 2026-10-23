@@ -1,7 +1,7 @@
 # Production implementation plan
 
 The user-selected completion criterion is [successful and sustainable Parangsae adoption](production-goal.md).
-The previous goal turn informed the Parangsae owner chat of that authoritative scope. It was progress. The checked single-input compiler milestone is now merged in PR #2.
+Recent goal work added and independently reviewed v5 source-bound complete rows, then integrated generated owners into the actual Parangsae collector on a separate branch. Native behavior and copied plugin-cache checks provide concrete progress. Remote v5 CI and sustainable application adoption remain pending.
 
 ## Milestones
 
@@ -54,7 +54,17 @@ The live pilot audit and owner coordination identified overlapping collector dra
 
 The source now adds project v4 with two or three independent inputs over pairwise disjoint nominal domains. `FactWriteEnvelope` models original and latest-rejected payload/provenance separately. Its complete-state action properties preserve first provenance. A checked enabled-input erasure compares the full projected state, accepted/disabled decisions, and observable actions with the original ManifestWrite IR. Native TypeScript 7 and Rust keep fixed primitive argument arity. The original-action TLC oracle compares the entire configured input product. Read the [integration design](pilot-fact-merge-design.md) for alternatives, concrete source targets, and review boundaries.
 
-This removes the compiler gap for independent payload/provenance identities. It does not bind actual Fact objects. Next, derive a closed immutable Fact encoding from the selected native Eq implementation, including the schema 1/2 equivalence and retained provenance; reject source drift and unclassified fields. Connect complete owned Fact rows to generated state, replace the handwritten merge policy, and close public Slot/MergeOutcome construction paths. Model partition refusal and a consumed write plan separately. Existing-row replay must validate keys and preserve source metadata; stored data and live operations remain untouched. Architecture/xtask changes need the repository's Ops/Release review, and required-CI changes need human approval.
+This removes the compiler gap for independent payload/provenance identities. It does not alone bind actual Fact objects. Architecture/xtask changes need the repository's Ops/Release review, and required-CI changes need human approval.
+
+## Actual whole-row pilot unit
+
+Project v5 now derives exact payload/provenance encodings from the supported Rust equality and owned representation closure. It rejects unclassified fields, unsupported lifecycle behavior, unresolved macros, overlapping finite quotient classes, and mixed row-copy origins. Both native targets stage complete rows before committing symbolic state. Rust binds the actual four Fact types; TypeScript uses authenticated immutable representation DTOs. Native constructor preconditions, all-target/feature coverage, and storage permission remain separate contracts.
+
+The independent Parangsae `codex/sgd-fact-merge` worktree starts from pending PR #5. Its production fold now uses generated FactOwner and removes handwritten Stored/Slot/merge_fact dispatch. Private consumed MergeOutcome preserves original partition rollback, every conflict report, unchanged counts, and no write on equal-only/refused trials. Existing archive bookkeeping is unchanged. Actual temporary Parquet, workspace/Gherkin/Clippy, architecture, and existing Kani checks have local evidence; final regenerated artifacts and remote CI remain to verify.
+
+Independent integration review found a manual outcome-mapping defect: swapping Same/Clash classifications could approve a conflicted trial. V5 removes that mapping and exposes source action IDs directly, so operator renames require native caller adaptation. Independent source review also retained fixes for shadowed standard macros/traits and hidden custom Drop implementations. A formatter-version-only receipt drift was corrected while retaining strict generated-byte/profile/config checks. Record these interventions as maintenance evidence rather than an unattended-success claim.
+
+Next, publish the verified compiler milestone, pin its reproducible use in Parangsae, and connect fresh source/model/erasure checks to the application's reviewable verification entry point. Review the Ops/Release-owned policy/tooling changes. Model aggregate refusal/commit and establish its relation to per-key decisions, bind baseline/resource authority, validate persisted-key preconditions explicitly, and close project source omission or sink paths. Exercise actual feature, requirement, and defect maintenance cycles. Stored market data and trading gates remain untouched; the production goal is incomplete.
 
 ## Design alternatives and decision
 

@@ -322,6 +322,69 @@ process.stdout.write(JSON.stringify({ actions: trace.map(step => step.action), s
     erasure: 'supplied IR enabled inputs, actions, and projected successors matched', pele: 'all provenance and domain labels rendered', unverifiedAuthority: 'rejected without output' };
 }
 
+async function verifyRowOwned({ client, plugin, name }) {
+  const helper = join(plugin, 'runtime/bin', `sgd-rust-bindings${process.platform === 'win32' ? '.exe' : ''}`);
+  await access(helper);
+  await assert.rejects(access(join(plugin, 'runtime/tools/rust-bindings/Cargo.toml')), { code: 'ENOENT' });
+  const application = join(temporary, name, 'row-application');
+  const model = join(temporary, name, 'row-model');
+  await cp(resolve('tests/fixtures/rust-facts/parangsae'), application, { recursive: true });
+  await mkdir(model);
+  for (const file of ['FactWriteEnvelope.tla', 'FactWriteEnvelope.cfg']) await cp(resolve('examples/fact-envelope', file), join(model, file));
+  const row = JSON.parse(await readFile(resolve('tests/fixtures/rust-facts/binding.json'), 'utf8'));
+  const project = join(model, 'project.json');
+  await writeFile(project, JSON.stringify({ version: 5, profile: 'row-owned', name: 'FactWriteEnvelope', spec: 'FactWriteEnvelope.tla', config: 'FactWriteEnvelope.cfg',
+    application: '../row-application', targets: ['typescript', 'rust'], binding: { className: 'FactAuthority', row, rustCrateMode: 'standalone' } }));
+  const out = join(application, 'generated/fact-write');
+  toolValue(await client.callTool({ name: 'sgd_build', arguments: { project, jar, out } }));
+  const program = toolValue(await client.callTool({ name: 'sgd_inspect', arguments: { ir: join(out, 'symbolic-model.json') } }));
+  const witness = toolValue(await client.callTool({ name: 'sgd_inspect', arguments: { ir: join(out, 'automaton.json') } }));
+  const plan = JSON.parse(await readFile(join(out, 'row-binding-plan.json'), 'utf8'));
+  assert.deepEqual(plan.facts.map(fact => [fact.name, fact.fields.length]), [['KlineFact', 18], ['FundingFact', 9], ['MetricsFact', 13], ['BookFact', 10]]);
+  const kline = plan.facts.find(fact => fact.name === 'KlineFact');
+  assert.deepEqual(kline.fields.find(field => field.name === 'schema_version').classes, [[1, 2]]);
+  assert.deepEqual(kline.fields.find(field => field.name === 'received_ts').codec, { kind: 'i64', getters: ['micros', 'micros'] });
+  assert.ok(plan.sources.some(source => source.path === 'crates/core/src/timestamps.rs'));
+  assert.ok(plan.sources.every(source => !source.path.startsWith('generated/')));
+  const receipt = JSON.parse(await readFile(join(out, 'verification.json'), 'utf8'));
+  assert.equal(receipt.generation, 'whole-row-authority');
+  assert.equal(receipt.rowBinding.profile, 'rust-whole-row-v1');
+  assert.equal(receipt.rowBinding.sourceScope, 'production-library-and-audited-local-type-closure');
+  assert.deepEqual(receipt.rowBinding.sources, plan.sources);
+  assert.equal(receipt.rowBinding.formatter.profile, 'rustfmt-2021-v1');
+  const oracle = JSON.parse(await readFile(join(out, 'input-verification.json'), 'utf8'));
+  assert.equal(oracle.checkedCases, witness.nodes.length * 4); assert.equal(oracle.acceptedCases, oracle.checkedCases);
+  const compiler = join(plugin, 'runtime/node_modules/typescript/bin/tsc');
+  assert.match(execFileSync(process.execPath, [compiler, '--version'], { encoding: 'utf8', timeout: 30_000 }), /^Version 7\.0\.2\s*$/);
+  execFileSync(process.execPath, [compiler, '-p', join(out, 'typescript/tsconfig.json')], { cwd: temporary, encoding: 'utf8', timeout: 30_000 });
+  const runner = join(temporary, name, 'verify-rows.mjs');
+  await writeFile(runner, `import assert from 'node:assert/strict';
+import fs from 'node:fs';
+const module=await import(process.argv[2]);const plan=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
+function raw(fact){return Object.fromEntries(fact.fields.map(field=>{let value;switch(field.codec.kind){case'i64':value=1n;break;case'u32':value=field.name==='schema_version'?({KlineFact:1,FundingFact:3,MetricsFact:4,BookFact:5}[fact.name]):1;break;case'bool':value=true;break;case'string':value='BTCUSDT';break;case'enum':value=field.codec.variants[0];break;}return[field.name,value];}));}
+const fields={};for(const fact of plan.facts){const make=module['create'+fact.name+'Row'];const owner=module['create'+fact.name+'Owner']();const source=raw(fact);const token=make(source);source.received_ts=999n;assert.equal(owner.write(token).effect,'Insert');assert.equal(owner.write(make({...raw(fact),received_ts:2n})).effect,'Same');assert.equal(owner.read().stored.received_ts,1n);assert.equal(Object.keys(owner.read().stored).length,fact.fields.length);fields[fact.name]=fact.fields.length;}
+const fact=plan.facts.find(fact=>fact.name==='KlineFact');const make=module.createKlineFactRow;const owner=module.createKlineFactOwner();const base=raw(fact);base.open_ticks=42n;
+const token=make(base);const inputs=[token,make({...base,schema_version:2,received_ts:2n}),make({...base,open_ticks:43n,schema_version:2,received_ts:3n}),make({...base,open_ticks:43n,schema_version:2,received_ts:4n}),make({...base,schema_version:2,received_ts:5n}),make({...base,schema_version:99,received_ts:6n})];
+const results=inputs.map(row=>{const result=owner.write(row);assert.equal(result.ok,true);return{effect:result.effect,observation:owner.read()};});assert.deepEqual(results.map(step=>step.effect),['Insert','Same','Clash','Clash','Same','Clash']);
+for(const result of results){assert.equal(result.observation.stored.open_ticks,42n);assert.equal(result.observation.stored.schema_version,1);assert.equal(result.observation.stored.received_ts,1n);assert.equal(Object.keys(result.observation.stored).length,18);}
+assert.equal(results[4].observation.rejected.open_ticks,43n);assert.equal(results[4].observation.rejected.received_ts,4n);assert.equal(results[5].observation.rejected.schema_version,99);assert.equal(results[5].observation.rejected.received_ts,6n);
+const before=owner.read();for(const forged of [base,{...token},null,'Same'])assert.equal(owner.write(forged).reason,'invalid-row');assert.deepEqual(owner.read(),before);assert.equal(Reflect.set(token,'received_ts',1000n),false);
+const accessor={...base};Object.defineProperty(accessor,'received_ts',{enumerable:true,get(){throw new Error('must not call accessor');}});assert.throws(()=>make(accessor),/ROW303.*accessors/);
+process.stdout.write(JSON.stringify({fieldCounts:fields,effects:results.map(step=>step.effect),originalMetadata:'retained',latestRejectedMetadata:'replaced',schemaClasses:'native Eq derived',forgery:'rejected unchanged',representation:'portable DTO from audited Rust schema'}));
+`);
+  const executed = JSON.parse(execFileSync(process.execPath, [runner, pathToFileURL(join(out, 'typescript/dist/machine.js')).href, join(out, 'row-binding-plan.json')], { cwd: temporary, encoding: 'utf8', timeout: 30_000 }));
+  const view = join(temporary, name, 'row-view');
+  toolValue(await client.callTool({ name: 'sgd_visualize', arguments: { ir: [join(out, 'automaton.json'), join(out, 'symbolic-model.json')], out: view } }));
+  const html = await readFile(join(view, 'index.html'), 'utf8'); assert.match(html, /storedProvenance/); assert.match(html, /provenance\[Receipts\]/);
+  assert.deepEqual(JSON.parse(await readFile(join(view, 'models.json'), 'utf8')), [witness, program]);
+  const forbiddenOut = join(application, 'unverified-row-authority');
+  const imported = await client.callTool({ name: 'sgd_compile', arguments: { project, dot: join(out, 'model.dot'), out: forbiddenOut } });
+  assert.equal(imported.isError, true, JSON.stringify(imported)); assert.match(JSON.stringify(imported.content), /TLC206: imported DOT cannot generate row-owned authority/);
+  await assert.rejects(access(forbiddenOut), { code: 'ENOENT' });
+  return { sourceAnalyzer: 'bundled host-native binary; Cargo source fallback absent', sourceScope: receipt.rowBinding.sourceScope, modelCheck: 'completed', finiteInputOracle: 'all configured tuples matched', nativeTypeScript: '7.0.2', ...executed,
+    pele: 'complete payload/provenance views rendered', unverifiedAuthority: 'rejected without output', actualParangsaeAdoption: 'not established by this copied-cache fixture' };
+}
+
 try {
   for (const name of ['codex', 'claude-code']) {
     const plugin = join(temporary, `${name} copied cache`);
@@ -350,10 +413,11 @@ try {
       const finiteOwned = await verifyFiniteOwned({ client, plugin, name });
       const symbolicOwned = await verifySymbolicOwned({ client, plugin, name });
       const productOwned = await verifyProductOwned({ client, plugin, name, abstractIr: join(temporary, name, 'symbolic-owned/symbolic-model.json') });
-      results.push({ plugin: name, environment: 'isolated copied plugin cache; not an installed agent host', actualInstalledAgentHost: 'not exercised', nativeRuntime: `${process.platform}-${process.arch}`, tools, modelCheck: 'completed', generatedTypeScript: 'accepted', pele: 'rendered', finiteOwned, symbolicOwned, productOwned });
+      const rowOwned = await verifyRowOwned({ client, plugin, name });
+      results.push({ plugin: name, environment: 'isolated copied plugin cache; not an installed agent host', actualInstalledAgentHost: 'not exercised', nativeRuntime: `${process.platform}-${process.arch}`, tools, modelCheck: 'completed', generatedTypeScript: 'accepted', pele: 'rendered', finiteOwned, symbolicOwned, productOwned, rowOwned });
     } finally { await client.close(); }
   }
   await mkdir(resolve('.runtime'), { recursive: true });
   await writeFile(resolve('.runtime/plugin-verification.json'), JSON.stringify(results, null, 2) + '\n');
-  process.stdout.write('Both isolated copied plugin caches completed MCP, real TLC, v1 diagnostics, v2 finite-owned, v3 symbolic-owned, and v4 product-input authority with packaged native TypeScript 7.0.2, complete payload/provenance receipts, input-tuple oracle, explicit supplied-IR erasure, Pele, tamper checks, and unverified DOT refusal. Actual installed-agent hosts were not exercised.\n');
+  process.stdout.write('Both isolated copied plugin caches completed MCP, real TLC, v1 diagnostics, v2 finite-owned, v3 symbolic-owned, v4 product-input, and v5 source-bound whole-row generation with the bundled Rust analyzer, packaged TypeScript 7.0.2, complete payload/provenance behavior, input-tuple oracle, supplied-IR erasure, Pele, tamper checks, and unverified DOT refusal. Actual installed-agent hosts and completed Parangsae adoption were not established by these copied-cache fixtures.\n');
 } finally { await rm(temporary, { recursive: true, force: true }); }

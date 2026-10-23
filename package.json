@@ -12,6 +12,7 @@
   },
   "files": [
     "dist",
+    "tools/rust-bindings",
     "plugins",
     "README.md",
     "LICENSE"
@@ -20,7 +21,8 @@
     "build": "node node_modules/typescript/bin/tsc",
     "typecheck": "node node_modules/typescript/bin/tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
-    "check": "npm run typecheck && npm test",
+    "check": "npm run typecheck && npm test && npm run test:rust-bindings",
+    "test:rust-bindings": "cargo test --locked --manifest-path tools/rust-bindings/Cargo.toml --target-dir .runtime/rust-binding-tool",
     "plugins:package": "node plugins/package.mjs",
     "plugins:verify": "node scripts/verify-plugins.mjs",
     "verify:ingestion": "node scripts/verify-ingestion.mjs",

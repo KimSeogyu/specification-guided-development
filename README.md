@@ -19,6 +19,7 @@ The [production goal](docs/production-goal.md) is successful and sustainable ado
 Project v2 retains full concrete state and generates an owner that permits only modeled transitions.
 Project v3 adds immutable data input and compiles a supported symbolic equality/copy relation from SANY, checked against original TLA+ actions with a finite input oracle.
 Project v4 separates payload and provenance through independent data inputs and supports checked erasure to a higher-level symbolic model.
+Project v5 derives a closed whole-row binding from supported Rust equality, wrappers, and getters, then generates actual row owners and portable TypeScript DTO owners.
 Project v1 projects one string variable and generates declaration or import diagnostics.
 The [finite-owned guide](docs/finite-owned.md) describes the new source-checkout milestone; the published v0.1.0 archives contain the earlier diagnostic prototype.
 
@@ -28,6 +29,7 @@ The current source supports these profiles:
 
 | Binding | TypeScript | Rust | Checked property |
 | --- | --- | --- | --- |
+| Whole rows (project v5) | Authenticated immutable DTOs with exact representations | Closed actual Fact types behind a private adapter | Source equality and retained metadata agree with the modeled payload/provenance relation; complete rows are prepared before commit |
 | Independent data inputs (project v4) | Fixed-arity primitive inputs and closure-owned tagged state | Fixed-arity inputs and a separate private owner crate | Complete payload/provenance updates; checked enabled-input erasure between supported models |
 | Symbolic data input (project v3) | Closure-owned tagged values | Separate private crate with owned string identities | Generated guards choose the action for the actual input; assignments retain their old-state/input origins |
 | Finite owned state (project v2) | Closure-owned state with a frozen facade and snapshots | Separate crate with private authority state | Each successful dispatch follows the edge from the exact full current state |
@@ -85,6 +87,8 @@ node dist/cli.js visualize --ir .runtime/facts/automaton.json --ir .runtime/fact
 The generated `FactMachine.send(input)` selects Insert, Same, or Clash from the model. After A, B, and C, it retains stored A and latest rejected C. Data identities are immutable strings, distinct from scalar model strings. Read [the symbolic-owned guide](docs/symbolic-owned.md) for the source grammar, finite versus symbolic verification, and the actual Parangsae integration still required.
 
 When equal payloads can have different receipt or source metadata, use [independent data inputs](docs/product-inputs.md). The [fact-envelope example](examples/fact-envelope/README.md) models that metadata explicitly and checks its erasure to the original fact-merge contract with `sgd refine`. An erasure check covers the supplied symbolic programs; actual Fact encoding, native object ownership, and partition writes need application bindings.
+
+For existing Rust rows, read [the whole-row binding guide](docs/row-owned.md). V5 analyzes actual source equality and the owned type closure, preserves metadata excluded or normalized by equality, and returns original model action IDs. Its library-source scope excludes all-target/feature coverage and storage authority. TypeScript DTOs preserve the audited representations; they do not infer every native constructor precondition.
 
 For declaration diagnostics, build the included v1 order model:
 
