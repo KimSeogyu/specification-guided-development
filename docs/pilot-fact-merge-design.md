@@ -1,6 +1,6 @@
 # Parangsae fact-merge integration design
 
-Status: application integration design, 2026-10-24 KST. The [v4 typed-input compiler](product-inputs.md), both native generators, and the model projection checks are implemented and locally verified in the current SGD work. Current v3 remains a separate single-input profile. The actual Fact adapter, persisted-row ownership, and partition commit integration below are still unimplemented. No Parangsae source, data, branch, or configuration was changed during this audit.
+Status: original application integration design, updated after [SDK PR #4](https://github.com/KimSeogyu/specification-guided-development/pull/4) merged v5 [source-bound complete rows](row-owned.md). V4 typed inputs and model erasure remain separate supported contracts. The independent local Parangsae `codex/sgd-fact-merge` branch now uses generated owners for all four actual Fact types and retains native partition rollback and observations. Its aggregate fold and storage dispatch remain handwritten. The [partition authority design](partition-authority-design.md) defines that next unimplemented unit. Local integration is not completed sustainable adoption, remote application CI, or project-wide effect coverage. Earlier source-audit sections below describe the selected base and the original integration proposal. Stored market data and the live collector remain untouched.
 
 ## Decision
 
