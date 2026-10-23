@@ -7,6 +7,7 @@ description: Model architecture and behavior in TLA+. Generate state owners or T
 
 Read the relevant profile in [the modeling guide](references/modeling.md) before you create or change a model.
 Select the profile that matches the required guarantee.
+Project v4 `symbolic-owned` generates equality/copy behavior with two or three independent inputs and explicit provenance state.
 Project v3 `symbolic-owned` generates equality/copy behavior over immutable string input.
 Project v2 `finite-owned` generates a state owner with named events and no data parameters.
 Project v1 generates diagnostics for declared transition triples or mapped imports.
@@ -21,10 +22,13 @@ Use TLA+ for application policy.
 Use project JSON for model paths, language targets, and supported bindings.
 Do not duplicate allowed edges in project JSON.
 
-For data-bound equality/copy actions, select v3 `symbolic-owned` when the model fits its supported grammar.
+For data-bound equality/copy actions, select v3 for one input or v4 for two or three independent inputs.
 Record how application payloads become immutable opaque Unicode string identities.
 The adapter must preserve application equality, including any excluded metadata fields.
 The generated API does not accept arbitrary objects or a custom equality callback.
+Use distinct named domains for v4 inputs, with one binder per domain and pairwise disjoint configured TLC atoms.
+Model associated provenance as explicit state and input when its preservation is part of the contract.
+Assignment origins alone do not prove the behavior of omitted metadata.
 
 For fixed finite state with unparameterized actions, select v2 `finite-owned`.
 Keep every modeled variable in the exact automaton.
@@ -48,7 +52,7 @@ A matching declaration beside an independent state assignment does not enforce t
 5. Read the TLC result and inspect the exported automaton with `sgd_inspect`.
 6. Use `sgd_visualize` for a Pele diagram when a graph helps review the behavior.
 
-For v3, model-only output contains the finite witness and lowered `symbolic-model.json`.
+For v3 and v4, model-only output contains the finite witness and lowered `symbolic-model.json`.
 Model-only mode does not run the input oracle or orbit validation and does not generate an owner.
 Use `sgd_build` before claiming executable validation.
 Finite configured model values alone do not prove a property for arbitrary runtime input.
@@ -61,15 +65,16 @@ A diagram does not check application behavior.
 
 ## Build and integrate a generated owner
 
-Use `sgd_build` with v2 or v3.
+Use `sgd_build` with v2, v3, or v4.
 The controlled runner verifies the pinned JAR and isolates the model source closure before exploration.
-`sgd_compile` rejects both profiles because imported DOT cannot establish executable provenance or parameter policy.
+`sgd_compile` rejects these executable profiles because imported DOT cannot establish executable provenance or parameter policy.
 
-For v3, executable generation uses strict SANY semantic XML and a completed finite TLC witness.
+For v3 and v4, executable generation uses strict SANY semantic XML and a completed finite TLC witness.
 The build compares the lowered relation with an independent TLC oracle for each reachable configured state/input pair.
 It also validates equality/copy orbits, configured invariants, supported square-action properties, and the deadlock setting.
 The orbit result applies only to the accepted grammar over immutable string identities.
 Do not describe this as a proof for arbitrary TLA+ operators or application objects.
+For v4, the oracle covers every configured input tuple and the orbit checker uses separate domain renamings.
 
 Use an empty directory for the first generation.
 Keep the generated `.sgd-generated.json` inventory.
@@ -97,6 +102,17 @@ Sending the text `Same` submits that text as data.
 Literal model strings and tagged data atoms remain distinct even when both contain `none`.
 All simultaneous updates read the old state.
 Use the receipt's `updates` to inspect the source of every assignment instead of reconstructing policy from an action name.
+
+For v4, call `send(first, second)` or `send(first, second, third)` with primitive string arguments.
+Both native targets use the ordered `inputs` in `symbolic-model.json`.
+Named input origins identify the exact parameter copied by an update.
+The same text in different input domains denotes different data atoms.
+Preserve every variable when checking square-action stuttering, including provenance.
+
+For an explicit high-level/low-level erasure, use `sgd_refine` with both symbolic IR files and the variable, input, and action binding.
+The check preserves enabled-input decisions, action classification, and complete projected successors under the admitted grammar.
+It checks supplied IR and does not attest original TLC provenance or application integration.
+Keep the separate build receipts and rerun erasure after either model changes.
 
 For v2, call TypeScript `send(event)` or Rust `send(Event)` with a generated named event.
 The owner follows the exact full-node/action edge.
@@ -142,6 +158,10 @@ Also submit `none` as actual data and inspect every receipt's simultaneous assig
 Test the actual payload adapter, especially metadata exclusions and equality preservation.
 A model-derived example does not prove adoption by an existing application such as Parangsae.
 
+For the v4 fact-envelope model, submit A@r1, B@r2, B@r3, and A@r4.
+Expect stored A@r1 and latest rejected B@r3, including a fresh provenance for the repeated rejected B.
+Test the actual payload adapter and the source paths that create owners and commit partitions.
+
 For the v2 approval example, reject `Submit` before `Approve`, then accept `Approve` followed by `Submit`.
 The initial and approved concrete states both have `phase = "New"`.
 Checking only `phase` loses the approval distinction.
@@ -161,7 +181,7 @@ Do not replace these APIs with an earlier compiler API.
 Distinguish an implementation error, a model error, and a changed requirement before editing the contract.
 For a requirement change, state the affected invariant, payload equality contract, and expected behavior where relevant.
 Update TLA+ and regenerate within the authorized scope.
-V3 source changes must pass the finite witness, input oracle, and orbit validation again before executable generation.
+V3 and v4 source changes must pass the finite witness, input oracle, and orbit validation again before executable generation.
 Do not weaken the model only to make existing code pass.
 Do not edit generated code to change application policy.
 
@@ -191,11 +211,12 @@ Do not change global agent configuration as a hidden setup or test step.
 
 Generated owners protect one live object in a trusted JavaScript realm or a safe Rust caller.
 Trust the generated source, its dependencies, and the platform primitives.
-V3 protects equality/copy over immutable string identities under its supported grammar.
+V3 and v4 protect equality/copy over immutable string identities under their supported grammars.
 Actual payload encoding and its relation to application fields require explicit integration evidence.
 V2 retains finite scalar state and its observed action guards within the explored scope.
 V1 projections discard other variables and their guards.
 
 Persistent identity, restart, restore, database effects, effect atomicity, liveness, and complete application coverage require separate contracts.
 A successful native build does not prove those properties, Parangsae adoption, or production readiness.
-No profile establishes full application refinement or formal hierarchy refinement.
+Explicit erasure establishes only the checked relation between supplied supported IR models.
+It does not establish full application refinement or a persistence contract.

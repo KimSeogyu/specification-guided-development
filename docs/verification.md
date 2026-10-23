@@ -28,6 +28,18 @@ The actual Parangsae `ManifestWrite.tla` and configuration were also compiled di
 
 The full symbolic milestone also passed [Linux CI](https://github.com/KimSeogyu/specification-guided-development/actions/runs/40003962674), including native tests, the prior ingestion application, and both prepared plugin-cache workflows.
 
+## Independent payload and provenance
+
+Project v4 preserves independently tagged payload and provenance inputs. Real SANY/TLC tests check two and three bounded binders, UID substitution, pairwise domain disjointness, and refusal of repeated domains, typed atoms, dependent ranges, or missing/misordered action arguments. The original-action oracle checks the complete configured input product and catches incorrect metadata assignments and extra provenance guards.
+
+Native TypeScript 7 and Rust consumers compare complete before/after receipts, named input origins, first provenance, latest rejected provenance, malformed input rejection, state privacy, snapshot independence, and requirement-change regeneration. Repeated rejected payload B with a new receipt replaces the latest rejected provenance; repeating the original payload preserves the complete state. Identical Unicode text in distinct nominal domains remains distinct. Independent generator comparison confirms that the single-input native artifacts remain unchanged.
+
+The new `refine` CLI and `sgd_refine` MCP compare the initial projection and every concrete equality/copy input class with the abstract program. They check enabledness, action classification, and every projected next variable. Adversarial checks cover provenance-dependent admission, wrong assignments, collapsed action mappings, and metadata-only changes that must not receive the concrete square-stutter exception. An independent review additionally exercised hidden registers whose atom labels differ from projected registers. Metadata laws still require explicit concrete properties; erasing a field cannot establish its preservation.
+
+This is compiler and model-composition evidence. It does not establish actual Fact encoding, Parangsae code adoption, partition authority, exclusive writers, persistence, or sustainable maintenance. Supplied IR erasure also does not attest original-source TLC provenance. The [pilot design](pilot-fact-merge-design.md) records the actual source contracts and pending collector PR dependencies.
+
+Both prepared native plugins also completed the v4 workflow from independent copied caches: original source checking, complete finite input tuples, packaged TypeScript 7 receipts, `sgd_refine`, Pele domain/provenance labels, tamper checks, and imported-DOT refusal. These tests preserve the distinction between a copied package cache and an actual installed agent host.
+
 ## Actual Claude Code host trial
 
 Claude Code 2.1.304 loaded the prepared Claude plugin through session-only `--plugin-dir`, invoked its native Skill, and used the bundled MCP for model checking, generation, inspection, and Pele. The agent wrote a new `OriginalSlot` model with a Boolean control variable and a different action vocabulary, then built strict TypeScript 7.0.2 and separate Rust consumers. Both produced Store→Reject→Reject→Keep for A→B→C→A, preserved original A and latest rejected C, and checked complete snapshots, revision, assignment origins, and data/sentinel separation. The parent read the model and consumers and independently reran both native programs; complete traces agreed.

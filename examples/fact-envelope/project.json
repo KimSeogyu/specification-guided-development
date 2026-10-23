@@ -1,0 +1,9 @@
+{
+  "version": 4,
+  "profile": "symbolic-owned",
+  "name": "FactWriteEnvelope",
+  "spec": "FactWriteEnvelope.tla",
+  "config": "FactWriteEnvelope.cfg",
+  "targets": ["typescript", "rust"],
+  "binding": { "className": "FactEnvelopeMachine" }
+}

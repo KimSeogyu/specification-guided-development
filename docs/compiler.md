@@ -1,6 +1,6 @@
 # Compiler contract
 
-Specification Guided Development has two distinct profiles. Project v2 `finite-owned` runs controlled TLC verification, preserves full scalar valuations, and generates private state authorities. Read [the finite-owned contract](finite-owned.md) for that profile.
+Specification Guided Development has separate executable and diagnostic profiles. Project v2 `finite-owned` preserves full scalar valuations. Project v3 compiles a [single opaque input](symbolic-owned.md), while v4 supports [independent inputs and model erasure](product-inputs.md). Read each profile's contract before generating authority.
 
 The remainder of this document describes project v1, which consumes a projected TLC DOT state graph and emits declaration or import diagnostics. It also runs TLC when a project and a local TLA+ tools JAR are supplied. Those diagnostics do not own runtime state.
 
@@ -68,19 +68,21 @@ In a source checkout, use `node dist/cli.js` with the same commands and options.
 | `build` | `--project`, `--jar`, `--out` | Runs TLC and emits the generated checkers |
 | `inspect` | `--ir` | Reads the automaton for inspection |
 | `visualize` | `--ir`, `--out` | Produces a Pele visualization of the automaton |
+| `refine` | `--abstract`, `--concrete`, `--binding`, `--out` | Checks a supported symbolic enabled-input erasure and writes managed evidence |
 | `mcp` | None | Serves the compiler tools over standard input and output |
 
-The `build` and `compile` commands also accept `--check`.
+The `build`, `compile`, and `refine` commands also accept `--check`.
 That option checks the owned output inventory and stable generated artifacts.
 It fails on a missing or changed stable artifact or a changed output set.
 TLC logs and run receipts contain variable execution data and are not compared byte for byte.
 The `visualize` command accepts repeated `--ir` options to show several models together.
 
-The MCP server exposes `sgd_model`, `sgd_build`, `sgd_compile`, `sgd_inspect`, and `sgd_visualize`.
+The MCP server exposes `sgd_model`, `sgd_build`, `sgd_compile`, `sgd_inspect`, `sgd_visualize`, and `sgd_refine`.
 Model and build calls accept `project`, `jar`, and `out` paths.
 Compile calls accept `project`, `dot`, and `out` paths.
 Inspect calls accept one `ir` path.
 Visualize calls accept an `ir` array and an `out` path.
+Refine calls accept `abstract`, `concrete`, and `binding` paths and return read-only evidence. This checks supplied IR; a fresh build provides separate source/TLC provenance.
 Use absolute paths in MCP calls because the server can run from the installed plugin cache.
 
 ## Generated files

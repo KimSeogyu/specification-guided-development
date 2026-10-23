@@ -1,6 +1,6 @@
 # Specification Guided Development
 
-Compile verified TLA+ finite models into state authorities and source checks for TypeScript 7 and Rust.
+Compile supported TLA+ models into state authorities and source checks for TypeScript 7 and Rust.
 Use the bundled agent skills to model architecture and behavior, then develop with generated ownership and diagnostics.
 The package name is `specification-guided-development` and the CLI name is `sgd`.
 The source-checkout examples below invoke that CLI with `node dist/cli.js`.
@@ -18,6 +18,7 @@ Specification Guided Development is an initial compiler for this workflow.
 The [production goal](docs/production-goal.md) is successful and sustainable adoption in Parangsae.
 Project v2 retains full concrete state and generates an owner that permits only modeled transitions.
 Project v3 adds immutable data input and compiles a supported symbolic equality/copy relation from SANY, checked against original TLA+ actions with a finite input oracle.
+Project v4 separates payload and provenance through independent data inputs and supports checked erasure to a higher-level symbolic model.
 Project v1 projects one string variable and generates declaration or import diagnostics.
 The [finite-owned guide](docs/finite-owned.md) describes the new source-checkout milestone; the published v0.1.0 archives contain the earlier diagnostic prototype.
 
@@ -27,6 +28,7 @@ The current source supports these profiles:
 
 | Binding | TypeScript | Rust | Checked property |
 | --- | --- | --- | --- |
+| Independent data inputs (project v4) | Fixed-arity primitive inputs and closure-owned tagged state | Fixed-arity inputs and a separate private owner crate | Complete payload/provenance updates; checked enabled-input erasure between supported models |
 | Symbolic data input (project v3) | Closure-owned tagged values | Separate private crate with owned string identities | Generated guards choose the action for the actual input; assignments retain their old-state/input origins |
 | Finite owned state (project v2) | Closure-owned state with a frozen facade and snapshots | Separate crate with private authority state | Each successful dispatch follows the edge from the exact full current state |
 | Transition | A configured function call with three string literals | A configured function call or macro with three string literals | The declared source state, action, and target state form a permitted edge |
@@ -81,6 +83,8 @@ node dist/cli.js visualize --ir .runtime/facts/automaton.json --ir .runtime/fact
 ```
 
 The generated `FactMachine.send(input)` selects Insert, Same, or Clash from the model. After A, B, and C, it retains stored A and latest rejected C. Data identities are immutable strings, distinct from scalar model strings. Read [the symbolic-owned guide](docs/symbolic-owned.md) for the source grammar, finite versus symbolic verification, and the actual Parangsae integration still required.
+
+When equal payloads can have different receipt or source metadata, use [independent data inputs](docs/product-inputs.md). The [fact-envelope example](examples/fact-envelope/README.md) models that metadata explicitly and checks its erasure to the original fact-merge contract with `sgd refine`. An erasure check covers the supplied symbolic programs; actual Fact encoding, native object ownership, and partition writes need application bindings.
 
 For declaration diagnostics, build the included v1 order model:
 
@@ -137,7 +141,7 @@ node dist/cli.js compile \
 ```
 
 An imported DOT graph does not establish that TLC completed successfully.
-`compile` accepts only project v1 diagnostics; it rejects v2 and v3 authority generation.
+`compile` accepts only project v1 diagnostics; it rejects executable authority generation.
 The generated verification metadata records that distinction.
 Use `build` when the result must include this tool's TLC completion evidence.
 
@@ -228,6 +232,7 @@ See [plugin setup](docs/plugins.md) for cache checks and troubleshooting.
 
 TLC explores a configured finite model.
 Project v3 uses SANY to compile supported input guards and simultaneous equality/copy updates. A separate TLC oracle checks every configured reachable state/input pair, while grammar-scoped symbolic orbits check equality patterns. This is not unrestricted TLA+ compilation or automatic application payload binding.
+Project v4 applies that grammar to independent nominal domains. Its erasure checker preserves complete projected state, input admission, and action classification between supplied symbolic models. It does not attest application bindings or source provenance.
 Project v2 preserves all supported scalar variables and dispatches from the owner's exact concrete node.
 Its controlled build rejects unsupported reductions, overrides, compound state, and ambiguous executable choices.
 The state owner does not automatically bind live input or database values, protect unrelated application state, prevent creation of another owner, or make external effects atomic.
@@ -238,7 +243,7 @@ Guards over discarded variables do not survive that projection.
 
 For example, observing an `Approve` edge while `balance >= amount` does not generate a checker for that numeric guard.
 The v1 application still needs the guard and tests for its behavior.
-Neither profile proves full application refinement, liveness, transaction atomicity, or arbitrary runtime call paths.
+No profile proves full application refinement, liveness, transaction atomicity, or arbitrary runtime call paths.
 
 Each profile rejects graph structures and values outside its documented subset.
 The generated checks reject unsupported syntax in constructs that their profiles inspect.

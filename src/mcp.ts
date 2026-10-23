@@ -3,6 +3,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { buildProject, compileProject, writeGenerated } from './compiler.js';
 import { generateVisualization, loadAutomaton } from './visualize.js';
+import { verifySymbolicErasureFiles } from './symbolic-refinement.js';
 
 export function createServer(): McpServer {
   const server = new McpServer({ name: 'sgd', version: '0.1.0' });
@@ -17,11 +18,11 @@ export function createServer(): McpServer {
     inputSchema: paths, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   }, args => guarded(() => buildProject({ ...args, modelOnly: true })));
   server.registerTool('sgd_build', {
-    description: 'Run TLC and generate TypeScript and Rust artifacts. V3 symbolic-owned compiles SANY equality/copy actions with immutable data input and a finite TLC oracle. V2 generates full finite state authorities. V1 generates source diagnostics.',
+    description: 'Run TLC and generate TypeScript and Rust artifacts. V4 symbolic-owned accepts multiple disjoint data domains; V3 accepts one. Both compile SANY equality/copy actions with a finite original-action TLC oracle. V2 generates finite state owners. V1 generates diagnostics.',
     inputSchema: paths, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   }, args => guarded(() => buildProject(args)));
   server.registerTool('sgd_compile', {
-    description: 'Compile action-labeled DOT into v1 language-specific diagnostics. Imported DOT is unverified and cannot generate v2 or v3 state authority.',
+    description: 'Compile action-labeled DOT into v1 language-specific diagnostics. Imported DOT is unverified and cannot generate executable authority.',
     inputSchema: { project: paths.project, dot: z.string().describe('Absolute path to action-labeled TLC DOT.'), out: paths.out },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   }, args => guarded(() => compileProject(args)));
@@ -39,6 +40,14 @@ export function createServer(): McpServer {
     await writeGenerated({ out: args.out, files });
     return { out: args.out, files: files.map(file => file.path) };
   }));
+  server.registerTool('sgd_refine', {
+    description: 'Check a symbolic model erasure under the supported equality/copy grammar. Compare the full projected state, every enabled or disabled input class, and action classification. This checks supplied IR; it does not attest application bindings or original TLC provenance.',
+    inputSchema: {
+      abstract: z.string().describe('Absolute path to the abstract symbolic-model.json.'),
+      concrete: z.string().describe('Absolute path to the concrete symbolic-model.json.'),
+      binding: z.string().describe('Absolute path to an erasure binding JSON with variable, input, and action mappings.'),
+    }, annotations: { readOnlyHint: true },
+  }, args => guarded(() => verifySymbolicErasureFiles(args)));
   return server;
 }
 
