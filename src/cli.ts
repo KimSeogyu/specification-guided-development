@@ -12,7 +12,8 @@ const help = `sgd 0.1.0
   visualize --ir FILE [--ir FILE ...] --out DIR
   mcp
 
-build runs TLC before generation. Project v2 finite-owned generates private state authorities.
+build runs TLC before generation. Project v2 generates finite state authorities.
+Project v3 symbolic-owned compiles supported SANY equality/copy actions with data input.
 compile imports DOT for v1 diagnostics only; it cannot generate executable authority.
 visualize renders offline Pele SVG and HTML from the same automata.
 `;

@@ -1,0 +1,14 @@
+{
+  "version": 3,
+  "profile": "symbolic-owned",
+  "name": "ManifestWrite",
+  "spec": "ManifestWrite.tla",
+  "config": "ManifestWrite.cfg",
+  "targets": [
+    "typescript",
+    "rust"
+  ],
+  "binding": {
+    "className": "FactMachine"
+  }
+}

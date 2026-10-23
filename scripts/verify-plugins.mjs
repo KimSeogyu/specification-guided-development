@@ -109,9 +109,111 @@ process.stdout.write(JSON.stringify({ guard: 'enforced', trace: ['Approve', 'Sub
   return { modelCheck: 'completed', concreteStates: 3, nativeTypeScript: '7.0.2', ...executed, pele: 'full-state rendered', unverifiedAuthority: 'rejected without output' };
 }
 
+async function verifySymbolicOwned({ client, plugin, name }) {
+  const out = join(temporary, name, 'symbolic-owned');
+  toolValue(await client.callTool({ name: 'sgd_build', arguments: {
+    project: resolve('examples/fact-merge/project.json'), jar, out,
+  } }));
+  const witness = toolValue(await client.callTool({ name: 'sgd_inspect', arguments: { ir: join(out, 'automaton.json') } }));
+  const program = toolValue(await client.callTool({ name: 'sgd_inspect', arguments: { ir: join(out, 'symbolic-model.json') } }));
+  assert.equal(witness.kind, 'symbolic-witness');
+  assert.deepEqual(witness.atoms, ['v1', 'v2']);
+  assert.deepEqual(witness.variables, ['phase', 'rejected', 'stored']);
+  assert.equal(witness.nodes.length, 5);
+  assert.equal(program.kind, 'symbolic-owned');
+  assert.deepEqual(program.branches.map(branch => branch.action), ['Insert', 'Same', 'Clash']);
+  assert.deepEqual(program.invariants.map(item => item.name), ['TypeOK', 'ConflictKeepsStored']);
+  assert.deepEqual(program.actionProperties.map(item => item.name), ['StoredStable']);
+  const receipt = JSON.parse(await readFile(join(out, 'verification.json'), 'utf8'));
+  assert.equal(receipt.kind, 'tlc-symbolic-completed');
+  assert.equal(receipt.profile, 'symbolic-owned-v1');
+  assert.equal(receipt.extractor, 'SANY-XML-v1');
+  assert.equal(receipt.generation, 'symbolic-authority');
+  assert.equal(receipt.semanticSha256, program.source.semanticSha256);
+  const oracle = JSON.parse(await readFile(join(out, 'input-verification.json'), 'utf8'));
+  assert.equal(oracle.kind, 'tlc-finite-input-oracle');
+  assert.equal(oracle.scope, 'configured-reachable-state-input-product');
+  assert.equal(oracle.checkedCases, witness.nodes.length * witness.atoms.length);
+  assert.equal(oracle.acceptedCases, oracle.checkedCases);
+  assert.equal(oracle.disabledCases, 0);
+  assert.match(await readFile(join(out, 'input-oracle.log'), 'utf8'), /Model checking completed\. No error has been found\./);
+
+  const compiler = join(plugin, 'runtime/node_modules/typescript/bin/tsc');
+  assert.match(execFileSync(process.execPath, [compiler, '--version'], { encoding: 'utf8', timeout: 30_000 }), /^Version 7\.0\.2\s*$/);
+  execFileSync(process.execPath, [compiler, '-p', join(out, 'typescript/tsconfig.json')], { cwd: temporary, encoding: 'utf8', timeout: 30_000 });
+  const runner = join(temporary, name, 'verify-symbolic.mjs');
+  await writeFile(runner, `import assert from 'node:assert/strict';
+const { createFactMachine, isFactMachine } = await import(process.argv[2]);
+const modelRevision = process.argv[3];
+const scalar = value => ({ kind: 'string', value });
+const data = value => ({ kind: 'data', domain: 'Values', value });
+const snapshot = (revision, phase, stored, rejected) => ({ model: 'ManifestWrite', modelRevision, revision: String(revision), values: { phase: scalar(phase), stored, rejected } });
+const origin = variable => ({ kind: 'state', variable });
+const unchanged = { phase: origin('phase'), rejected: origin('rejected'), stored: origin('stored') };
+const literal = value => ({ kind: 'literal', value: scalar(value) });
+function run(inputs) {
+  const machine = createFactMachine();
+  assert.equal(isFactMachine(machine), true);
+  assert.equal(isFactMachine({ ...machine }), false);
+  assert.equal(isFactMachine(new Proxy(machine, {})), false);
+  assert.equal(Reflect.set(machine, 'send', () => ({ ok: true })), false);
+  return inputs.map(input => {
+    const initial = machine.read();
+    assert.equal(Reflect.set(initial.values.stored, 'value', 'forged'), false);
+    const result = machine.send(input);
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.before, initial);
+    assert.deepEqual(result.after, machine.read());
+    assert.equal(Reflect.set(result.updates, 'stored', { kind: 'input' }), false);
+    const { action, before, after, updates } = result;
+    return { input, action, before, after, updates };
+  });
+}
+const initial = snapshot(0, 'absent', scalar('none'), scalar('none'));
+const inserted = snapshot(1, 'present', data('A'), scalar('none'));
+const conflictB = snapshot(2, 'conflict', data('A'), data('B'));
+const conflictC = snapshot(3, 'conflict', data('A'), data('C'));
+const repeatedA = snapshot(4, 'conflict', data('A'), data('C'));
+const clashUpdates = { phase: literal('conflict'), rejected: { kind: 'input' }, stored: origin('stored') };
+const trace = run(['A', 'B', 'C', 'A']);
+assert.deepEqual(trace, [
+  { input: 'A', action: 'Insert', before: initial, after: inserted, updates: { phase: literal('present'), rejected: literal('none'), stored: { kind: 'input' } } },
+  { input: 'B', action: 'Clash', before: inserted, after: conflictB, updates: clashUpdates },
+  { input: 'C', action: 'Clash', before: conflictB, after: conflictC, updates: clashUpdates },
+  { input: 'A', action: 'Same', before: conflictC, after: repeatedA, updates: unchanged },
+]);
+const sentinel = run(['none', 'none', 'A', 'none']);
+assert.deepEqual(sentinel.map(step => step.action), ['Insert', 'Same', 'Clash', 'Same']);
+assert.deepEqual(sentinel[0].before.values.stored, scalar('none'));
+assert.deepEqual(sentinel[0].after.values.stored, data('none'));
+assert.deepEqual(sentinel[3].after.values, { phase: scalar('conflict'), rejected: data('A'), stored: data('none') });
+const namesAreData = run(['Same', 'Clash', 'Insert']);
+assert.deepEqual(namesAreData.map(step => step.action), ['Insert', 'Clash', 'Clash']);
+assert.deepEqual(namesAreData[2].after.values.stored, data('Same'));
+assert.deepEqual(namesAreData[2].after.values.rejected, data('Insert'));
+process.stdout.write(JSON.stringify({ actions: trace.map(step => step.action), stored: 'A', latestRejected: 'C', sentinel: 'typed distinctly', actionSelection: 'generated guards', annotationRequired: false, tampering: 'rejected', completeReceipts: 'matched' }));
+`);
+  const executed = JSON.parse(execFileSync(process.execPath, [runner, pathToFileURL(join(out, 'typescript/dist/machine.js')).href, program.source.semanticSha256], { cwd: temporary, encoding: 'utf8', timeout: 30_000 }));
+  assert.deepEqual(executed.actions, ['Insert', 'Clash', 'Clash', 'Same']);
+  const view = join(temporary, name, 'symbolic-view');
+  toolValue(await client.callTool({ name: 'sgd_visualize', arguments: { ir: [join(out, 'automaton.json'), join(out, 'symbolic-model.json')], out: view } }));
+  const html = await readFile(join(view, 'index.html'), 'utf8');
+  assert.match(html, /configured finite witness states/);
+  assert.match(html, /equality\/copy orbits/);
+  assert.match(html, /input-verification\.json/);
+  assert.match(html, /data\(Values/);
+  assert.deepEqual(JSON.parse(await readFile(join(view, 'models.json'), 'utf8')), [witness, program]);
+  const forbiddenOut = join(temporary, name, 'unverified-symbolic-authority');
+  const imported = await client.callTool({ name: 'sgd_compile', arguments: { project: resolve('examples/fact-merge/project.json'), dot: join(out, 'model.dot'), out: forbiddenOut } });
+  assert.equal(imported.isError, true, JSON.stringify(imported));
+  assert.match(JSON.stringify(imported.content), /TLC206: imported DOT cannot generate symbolic-owned authority/);
+  await assert.rejects(access(forbiddenOut), { code: 'ENOENT' });
+  return { modelCheck: 'completed', sany: 'lowered original parameterized actions', finiteInputOracle: 'all configured state/input pairs matched', nativeTypeScript: '7.0.2', ...executed, pele: 'finite witness and symbolic relation rendered', unverifiedAuthority: 'rejected without output' };
+}
+
 try {
   for (const name of ['codex', 'claude-code']) {
-    const plugin = join(temporary, `${name} installed cache`);
+    const plugin = join(temporary, `${name} copied cache`);
     await cp(resolve('plugins', name), plugin, { recursive: true });
     const client = new Client({ name: 'sgd-package-verification', version: '1.0.0' });
     const transport = new StdioClientTransport({ command: process.execPath, args: [join(plugin, 'scripts/run.mjs'), 'mcp'], cwd: temporary });
@@ -135,10 +237,11 @@ try {
       assert.ok(!visualized.isError, JSON.stringify(visualized));
       assert.match(await readFile(join(temporary, name, 'view/index.html'), 'utf8'), /Model explorer/);
       const finiteOwned = await verifyFiniteOwned({ client, plugin, name });
-      results.push({ plugin: name, environment: 'isolated copied plugin cache; not an installed agent host', nativeRuntime: `${process.platform}-${process.arch}`, tools, modelCheck: 'completed', generatedTypeScript: 'accepted', pele: 'rendered', finiteOwned });
+      const symbolicOwned = await verifySymbolicOwned({ client, plugin, name });
+      results.push({ plugin: name, environment: 'isolated copied plugin cache; not an installed agent host', actualInstalledAgentHost: 'not exercised', nativeRuntime: `${process.platform}-${process.arch}`, tools, modelCheck: 'completed', generatedTypeScript: 'accepted', pele: 'rendered', finiteOwned, symbolicOwned });
     } finally { await client.close(); }
   }
   await mkdir(resolve('.runtime'), { recursive: true });
   await writeFile(resolve('.runtime/plugin-verification.json'), JSON.stringify(results, null, 2) + '\n');
-  process.stdout.write('Both isolated copied plugin caches completed MCP, real TLC, v1 diagnostics, v2 full-state authority and tamper checks with native TypeScript 7.0.2, full-state Pele, and unverified authority rejection. Installed-agent workflows were not exercised.\n');
+  process.stdout.write('Both isolated copied plugin caches completed MCP, real TLC, v1 diagnostics, v2 finite-owned and v3 symbolic-owned authority with packaged native TypeScript 7.0.2, complete fact-merge receipts and assignment origins, finite input oracle, Pele, tamper checks, and unverified DOT refusal. Actual installed-agent hosts were not exercised.\n');
 } finally { await rm(temporary, { recursive: true, force: true }); }

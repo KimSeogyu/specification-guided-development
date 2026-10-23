@@ -17,11 +17,11 @@ export function createServer(): McpServer {
     inputSchema: paths, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   }, args => guarded(() => buildProject({ ...args, modelOnly: true })));
   server.registerTool('sgd_build', {
-    description: 'Run TLC and generate TypeScript and Rust artifacts. Project v2 finite-owned generates state authorities from full concrete states; v1 generates declaration or import diagnostics.',
+    description: 'Run TLC and generate TypeScript and Rust artifacts. V3 symbolic-owned compiles SANY equality/copy actions with immutable data input and a finite TLC oracle. V2 generates full finite state authorities. V1 generates source diagnostics.',
     inputSchema: paths, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   }, args => guarded(() => buildProject(args)));
   server.registerTool('sgd_compile', {
-    description: 'Compile action-labeled DOT into v1 language-specific diagnostics. Imported DOT is unverified and cannot generate v2 finite-owned state authority.',
+    description: 'Compile action-labeled DOT into v1 language-specific diagnostics. Imported DOT is unverified and cannot generate v2 or v3 state authority.',
     inputSchema: { project: paths.project, dot: z.string().describe('Absolute path to action-labeled TLC DOT.'), out: paths.out },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   }, args => guarded(() => compileProject(args)));
