@@ -23,5 +23,6 @@ jobs:
           TLA2TOOLS_JAR: .runtime/tla2tools.jar
       - run: npm run build
       - run: npm run verify:ingestion
+      - run: npm run verify:partition
       - run: npm run plugins:package
       - run: npm run plugins:verify

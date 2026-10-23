@@ -26,6 +26,7 @@
     "plugins:package": "node plugins/package.mjs",
     "plugins:verify": "node scripts/verify-plugins.mjs",
     "verify:ingestion": "node scripts/verify-ingestion.mjs",
+    "verify:partition": "node examples/partition-control/verify-model.mjs",
     "demo": "npm run build && node scripts/demo.mjs",
     "prepare": "npm run build"
   },
