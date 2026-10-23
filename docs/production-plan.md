@@ -46,6 +46,8 @@ Independent review corrected square-action stuttering, omitted root/inherited as
 
 This is compiler progress, not completed application adoption. The next application unit must bind actual Fact equality and metadata to the generated relation, preserve per-partition rollback and first-received values, replace duplicate handwritten policy, and close unauthorized construction/write paths. Persistent identity, restore, crash durability, and execution order handling remain separately scoped work. Keep the actual required-check and architecture-review rules from the Parangsae repository when preparing its integration.
 
+Assignment origins are useful integration information, not a proof about metadata omitted from the TLA+ value. If equality excludes received time, copying an equal input and keeping an old value can be equivalent in the abstract relation while changing concrete metadata. The pilot must define and verify that extra contract, or add a lower-level model and a checked abstraction relation. Do not silently promote update syntax into a metadata guarantee.
+
 ## Design alternatives and decision
 
 Independent design reviews compared full concrete graph execution, symbolic Action compilation through SANY, and a TLC runtime oracle. Full concrete execution preserves the existing TLC-to-graph pipeline and avoids reconstructing lost guards. It is the first implementation profile. Symbolic SANY compilation remains necessary when a Parangsae contract requires application domains outside the executable finite graph. A runtime Java oracle is not the default application path.

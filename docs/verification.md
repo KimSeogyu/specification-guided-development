@@ -26,6 +26,16 @@ Independent adversarial tests use real TLC to expose and retain checks for ignor
 
 The actual Parangsae `ManifestWrite.tla` and configuration were also compiled directly with their own co-located pinned JAR, writing only SGD scratch output. This confirms model compatibility. It does not establish application integration or authorize operational data writes.
 
+The full symbolic milestone also passed [Linux CI](https://github.com/KimSeogyu/specification-guided-development/actions/runs/40003962674), including native tests, the prior ingestion application, and both prepared plugin-cache workflows.
+
+## Actual Claude Code host trial
+
+Claude Code 2.1.304 loaded the prepared Claude plugin through session-only `--plugin-dir`, invoked its native Skill, and used the bundled MCP for model checking, generation, inspection, and Pele. The agent wrote a new `OriginalSlot` model with a Boolean control variable and a different action vocabulary, then built strict TypeScript 7.0.2 and separate Rust consumers. Both produced Store→Reject→Reject→Keep for A→B→C→A, preserved original A and latest rejected C, and checked complete snapshots, revision, assignment origins, and data/sentinel separation. The parent read the model and consumers and independently reran both native programs; complete traces agreed.
+
+The trial required a correction. The first process was stopped after a scratch shell heredoc fell outside the harness allowlist; the agent had adapted with file tools and already completed model generation. An unnecessary offline Node typings install also lacked a cached dependency. A bounded continuation used file tools for writes and a strict consumer without Node typings, completed both native runs and packaged `build --check`, and exited successfully. These interventions remain part of the [sanitized trial record](native-trials/claude-code-2026-10-24.json), not a claim of unattended first-run success.
+
+This was an actual Claude host operation with session-only plugin loading. It did not test permanent marketplace installation, Codex agent execution, or Parangsae application adoption. Existing native credentials were used only by the official CLI; no credentials were copied and no global agent configuration was changed. Raw host logs, prompts, and account metadata are excluded from the public record.
+
 ## Reproduce
 
 ```sh
