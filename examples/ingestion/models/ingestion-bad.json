@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "name": "ingestion-bad",
+  "spec": "IngestionBad.tla",
+  "config": "IngestionBad.cfg",
+  "stateVariable": "state",
+  "targets": [
+    "typescript",
+    "rust"
+  ],
+  "parent": {
+    "model": "architecture",
+    "state": "Pipeline"
+  },
+  "binding": {
+    "kind": "transition",
+    "function": "transition"
+  }
+}

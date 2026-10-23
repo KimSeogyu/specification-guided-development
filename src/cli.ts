@@ -1,0 +1,73 @@
+#!/usr/bin/env node
+import { buildProject, compileProject, writeGenerated } from './compiler.js';
+import { generateVisualization, loadAutomaton } from './visualize.js';
+import { serve } from './mcp.js';
+
+const help = `sgd 0.1.0
+
+  build     --project FILE --jar FILE --out DIR [--check]
+  model     --project FILE --jar FILE --out DIR
+  compile   --project FILE --dot FILE --out DIR [--check]
+  inspect   --ir FILE
+  visualize --ir FILE [--ir FILE ...] --out DIR
+  mcp
+
+build runs TLC before generation. compile imports DOT without a verification claim.
+visualize renders offline Pele SVG and HTML from the same automata.
+`;
+
+async function main(args: string[]): Promise<void> {
+  const command = args.shift();
+  if (!command || command === '--help' || command === '-h') { process.stdout.write(help); return; }
+  if (command === '--version') { process.stdout.write('0.1.0\n'); return; }
+  if (command === 'mcp') {
+    if (args.length) throw new Error('mcp accepts no arguments');
+    await serve(); return;
+  }
+  const flags = new Map<string, string[]>();
+  let check = false;
+  while (args.length) {
+    const key = args.shift();
+    if (key === '--check') { check = true; continue; }
+    if (!key?.startsWith('--')) throw new Error(`Unexpected argument ${key}`);
+    const value = args.shift();
+    if (!value || value.startsWith('--')) throw new Error(`Missing value for ${key}`);
+    flags.set(key, [...(flags.get(key) ?? []), value]);
+  }
+  const allowed: Record<string, string[]> = {
+    build: ['--project', '--jar', '--out'], model: ['--project', '--jar', '--out'],
+    compile: ['--project', '--dot', '--out'], inspect: ['--ir'], visualize: ['--ir', '--out'],
+  };
+  const keys = allowed[command];
+  if (!keys) throw new Error(`Unknown command ${command}`);
+  for (const key of flags.keys()) if (!keys.includes(key)) throw new Error(`Unknown option ${key}`);
+  if (check && command !== 'build' && command !== 'compile') throw new Error('--check is valid only for build and compile');
+  function one(key: string): string {
+    const values = flags.get(key);
+    const value = values?.[0];
+    if (!value || values.length !== 1) throw new Error(`Supply ${key} exactly once`);
+    return value;
+  }
+  let result: unknown;
+  switch (command) {
+    case 'model': case 'build':
+      result = await buildProject({ project: one('--project'), jar: one('--jar'), out: one('--out'), check, modelOnly: command === 'model' }); break;
+    case 'compile':
+      result = await compileProject({ project: one('--project'), dot: one('--dot'), out: one('--out'), check }); break;
+    case 'inspect': result = await loadAutomaton(one('--ir')); break;
+    case 'visualize': {
+      const paths = flags.get('--ir');
+      if (!paths?.length) throw new Error('Supply --ir at least once');
+      const models = await Promise.all(paths.map(loadAutomaton));
+      const files = generateVisualization(models);
+      await writeGenerated({ out: one('--out'), files });
+      result = { out: one('--out'), files: files.map(file => file.path) }; break;
+    }
+  }
+  process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+}
+
+main(process.argv.slice(2)).catch((error: unknown) => {
+  process.stderr.write(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) + '\n');
+  process.exitCode = 2;
+});

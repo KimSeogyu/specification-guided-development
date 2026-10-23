@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "name": "Architecture",
+  "spec": "Architecture.tla",
+  "config": "Architecture.cfg",
+  "stateVariable": "layer",
+  "targets": ["typescript", "rust"],
+  "binding": {
+    "kind": "dependency",
+    "modules": { "Handler": ["src/handler"], "Service": ["src/service"], "Gateway": ["src/gateway"] }
+  }
+}

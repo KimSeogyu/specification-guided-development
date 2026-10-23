@@ -1,0 +1,115 @@
+[
+  {
+    "version": 1,
+    "name": "Architecture",
+    "stateVariable": "layer",
+    "states": [
+      "Gateway",
+      "Handler",
+      "Service"
+    ],
+    "initialStates": [
+      "Gateway",
+      "Handler",
+      "Service"
+    ],
+    "transitions": [
+      {
+        "from": "Gateway",
+        "event": "Idle",
+        "to": "Gateway"
+      },
+      {
+        "from": "Handler",
+        "event": "HandlerToService",
+        "to": "Service"
+      },
+      {
+        "from": "Handler",
+        "event": "Idle",
+        "to": "Handler"
+      },
+      {
+        "from": "Service",
+        "event": "Idle",
+        "to": "Service"
+      },
+      {
+        "from": "Service",
+        "event": "ServiceToGateway",
+        "to": "Gateway"
+      }
+    ],
+    "source": {
+      "dotSha256": "93287ed17f060473410eb337c732dd6f273f1a88de3dccffa36f7006b9d34627",
+      "stateCount": 3,
+      "edgeCount": 5
+    }
+  },
+  {
+    "version": 1,
+    "name": "Order",
+    "stateVariable": "state",
+    "states": [
+      "Acked",
+      "Canceled",
+      "Filled",
+      "New",
+      "Pending"
+    ],
+    "initialStates": [
+      "New"
+    ],
+    "parent": {
+      "model": "Architecture",
+      "state": "Service"
+    },
+    "transitions": [
+      {
+        "from": "Acked",
+        "event": "Cancel",
+        "to": "Canceled"
+      },
+      {
+        "from": "Acked",
+        "event": "Fill",
+        "to": "Filled"
+      },
+      {
+        "from": "Canceled",
+        "event": "Done",
+        "to": "Canceled"
+      },
+      {
+        "from": "Filled",
+        "event": "Done",
+        "to": "Filled"
+      },
+      {
+        "from": "New",
+        "event": "Cancel",
+        "to": "Canceled"
+      },
+      {
+        "from": "New",
+        "event": "Submit",
+        "to": "Pending"
+      },
+      {
+        "from": "Pending",
+        "event": "Ack",
+        "to": "Acked"
+      },
+      {
+        "from": "Pending",
+        "event": "Cancel",
+        "to": "Canceled"
+      }
+    ],
+    "source": {
+      "dotSha256": "90793934311cd05df5573b0d56e6dfe5f171d47a6eef3f99722a4439a95cf090",
+      "stateCount": 5,
+      "edgeCount": 8
+    }
+  }
+]

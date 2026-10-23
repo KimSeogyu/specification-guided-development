@@ -1,0 +1,12 @@
+{
+  "name": "specification-guided-development-claude",
+  "description": "TLA+ modeling and generated source checks for Claude Code.",
+  "owner": { "name": "KimSeogyu" },
+  "plugins": [
+    {
+      "name": "specification-guided-development",
+      "source": "./plugins/claude-code",
+      "description": "Model architecture and behavior in TLA+, then compile TLC graphs into source checks."
+    }
+  ]
+}

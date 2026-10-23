@@ -1,0 +1,13 @@
+ts	phase	decision	why	evidence	result
+2026-10-24T00:00:00+09:00	frame	Create a compiler with independent language backends	The user identified the automaton as the source of generated lint rules	docs/implementation-plan.md	open
+2026-10-24T00:01:00+09:00	architecture	Use a typed automaton and explicit code bindings	Code names need a declared correspondence to model states	src/types.ts	implemented
+2026-10-24T00:02:00+09:00	publication	Create the public repository tlc-lint	The user requested a public GitHub project	https://github.com/KimSeogyu/tlc-lint	created
+2026-10-23T15:55:50Z	scope	Supersede the first three placeholder timestamps	The initial rows recorded real decisions but used placeholder times. Their evidence remains valid.	docs/implementation-plan.md	corrected
+2026-10-23T16:12:50Z	review	Reject projection collisions and indirect reference bypasses	Independent generated-checker experiments found accepted forbidden source patterns	tests/compiler.test.ts	verified
+2026-10-23T16:12:50Z	outputs	Track and remove obsolete owned generated files	Reusing an output directory must not retain a checker for an old model	src/compiler.ts	verified
+2026-10-23T16:12:50Z	typescript	Replace legacy compatibility with the native TypeScript 7 API	A native API probe preserved project resolution and avoided a second compiler API version	src/backends/typescript.ts	implementation-in-progress
+2026-10-23T16:12:50Z	visualization	Render architecture and lifecycle in an offline Pele viewer	The user requested a navigable model representation independent of implementation code	examples/visualization/index.html	verified
+2026-10-23T16:16:33Z	review	Extend review evidence for indirect-reference fixes	The earlier review row omitted the language-backend regression paths	tests/compiler.test.ts, tests/typescript.test.ts, tests/rust.test.ts	corrected
+2026-10-23T16:24:49Z	forward-test	Decode TLC conjunction prefixes and escaped line boundaries once	A new multi-variable model exposed a DOT decoding defect not covered by single-variable examples	tests/compiler.test.ts	verified
+2026-10-23T16:24:49Z	composition	Support direct Rust function declarations for modeled edges	The same business file must pass both behavior and architecture checks without opaque macro exceptions	tests/rust.test.ts	implementation-in-progress
+2026-10-23T16:36:39Z	verification	Verify native TypeScript 7 and composed Rust contracts	The same ingestion application source must pass behavior and architecture constraints while forbidden variants fail	scripts/verify-ingestion.mjs, tests/rust.test.ts, tests/typescript.test.ts	verified

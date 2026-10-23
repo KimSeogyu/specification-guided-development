@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "sgd": {
+      "command": "node",
+      "args": ["scripts/run.mjs", "mcp"],
+      "cwd": "."
+    }
+  }
+}

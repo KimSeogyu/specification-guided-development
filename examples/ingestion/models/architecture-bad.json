@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "name": "architecture-bad",
+  "spec": "ArchitectureBad.tla",
+  "config": "ArchitectureBad.cfg",
+  "stateVariable": "module",
+  "targets": [
+    "typescript",
+    "rust"
+  ],
+  "binding": {
+    "kind": "dependency",
+    "modules": {
+      "Handler": [
+        "src/handler.ts",
+        "src/handler.rs"
+      ],
+      "Pipeline": [
+        "src/pipeline.ts",
+        "src/pipeline.rs",
+        "src/pipeline.test.ts"
+      ],
+      "Storage": [
+        "src/storage.ts",
+        "src/storage.rs"
+      ],
+      "Composition": [
+        "src/lib.rs"
+      ]
+    }
+  }
+}

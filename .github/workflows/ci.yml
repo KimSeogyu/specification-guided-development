@@ -1,0 +1,27 @@
+name: ci
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - run: node scripts/fetch-tlc.mjs
+      - run: npm run check
+        env:
+          TLA2TOOLS_JAR: .runtime/tla2tools.jar
+      - run: npm run build
+      - run: npm run verify:ingestion
+      - run: npm run plugins:package
+      - run: npm run plugins:verify

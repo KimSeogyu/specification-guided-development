@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "name": "Order",
+  "spec": "Order.tla",
+  "config": "Order.cfg",
+  "stateVariable": "state",
+  "targets": ["typescript", "rust"],
+  "parent": { "model": "Architecture", "state": "Service" },
+  "binding": { "kind": "transition", "function": "transition" }
+}
