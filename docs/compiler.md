@@ -129,8 +129,9 @@ The compiler does not use the inventory as a list of application source files to
 Supply application source files explicitly to the generated checker.
 Keep application source outside the generated output directory.
 Use a separate output directory for each concurrent build.
-An exclusive `.sgd-output.lock` prevents mixed output from concurrent writers.
-If a process is killed, use a new directory until the stale lock can be removed after confirming that no writer remains.
+An exclusive `.sgd-output.lock` lease serializes cooperating generators.
+Generation journals exact before/after bytes before publishing files. On Linux and macOS, a later generation can recover after verifying the old process identity is inactive in the same host, boot, and PID namespace. Recovery refuses edited bytes, symlinks, unrelated files, and unverifiable owners. `--check` reports an incomplete transaction without repairing managed files.
+Read the [output recovery contract](managed-output.md) for manual-recovery cases and filesystem limits.
 
 ## Transition binding
 

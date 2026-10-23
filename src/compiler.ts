@@ -1,5 +1,5 @@
-import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { dirname, isAbsolute, resolve } from 'node:path';
 import { ProjectSchema, type GeneratedFile, type Project, type Automaton, type BackendInput, type Target } from './types.js';
 import { importDot, sha256 } from './dot.js';
 import { runTlc } from './tlc.js';
@@ -24,6 +24,8 @@ import { generateRowRust } from './backends/row-rust.js';
 import { generateRowTypeScript } from './backends/row-typescript.js';
 import { formatRowRust } from './rust-format.js';
 import { z } from 'zod';
+import { writeGenerated } from './managed-output.js';
+export { writeGenerated } from './managed-output.js';
 
 const backends = {
   typescript: generateTypeScript,
@@ -76,97 +78,6 @@ export function compile(input: { dot: string; project: Project }): { automaton: 
     files.push(...generated.map(file => ({ path: `${target}/${file.path}`, content: file.content })));
   }
   return { automaton, files };
-}
-
-export async function writeGenerated(input: { out: string; files: GeneratedFile[]; check?: boolean }): Promise<void> {
-  await mkdir(input.out, { recursive: true });
-  const root = await realpath(input.out);
-  const lockPath = join(root, '.sgd-output.lock');
-  let lock;
-  try { lock = await open(lockPath, 'wx'); }
-  catch (error) { throw new Error('TLC103: output directory is locked. Use a separate output directory for concurrent builds.', { cause: error }); }
-  try { await writeManaged({ ...input, out: root }); }
-  finally { await lock.close(); await rm(lockPath, { force: true }); }
-}
-
-async function writeManaged(input: { out: string; files: GeneratedFile[]; check?: boolean }): Promise<void> {
-  await mkdir(input.out, { recursive: true });
-  const root = await realpath(input.out);
-  const inventoryName = '.sgd-generated.json';
-  const Inventory = z.object({ version: z.literal(1), files: z.array(z.string().min(1)) }).strict();
-  function outputPath(name: string): string {
-    const path = resolve(root, name);
-    const rel = relative(root, path);
-    if (!name || rel === '..' || rel.startsWith('../') || isAbsolute(rel) || name === inventoryName || name === '.sgd-output.lock') {
-      throw new Error('TLC103: invalid output path');
-    }
-    return path;
-  }
-  async function rejectSymlinks(name: string): Promise<void> {
-    const components = relative(root, outputPath(name)).split('/');
-    let current = root;
-    for (const part of components) {
-      current = join(current, part);
-      try {
-        if ((await lstat(current)).isSymbolicLink()) throw new Error('TLC103: generated output cannot traverse a symbolic link');
-      } catch (error) {
-        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return;
-        throw error;
-      }
-    }
-  }
-  const wanted = input.files.map(file => file.path).sort();
-  if (new Set(wanted).size !== wanted.length) throw new Error('TLC103: duplicate output file');
-  for (const name of wanted) await rejectSymlinks(name);
-  const inventoryPath = join(root, inventoryName);
-  let previous: string[] = [];
-  try {
-    if ((await lstat(inventoryPath)).isSymbolicLink()) throw new Error('TLC103: output inventory cannot be a symbolic link');
-    previous = Inventory.parse(JSON.parse(await readFile(inventoryPath, 'utf8'))).files;
-    for (const name of previous) await rejectSymlinks(name);
-  } catch (error) {
-    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
-    if ((await readdir(root)).some(name => name !== '.sgd-output.lock')) throw new Error('TLC103: output directory has no generated-file inventory. Use an empty directory.');
-  }
-  if (input.check && JSON.stringify([...previous].sort()) !== JSON.stringify(wanted)) {
-    throw new Error('TLC104: generated output set changed');
-  }
-  if (!input.check) {
-    for (const name of wanted) {
-      if (previous.includes(name)) continue;
-      try {
-        await lstat(outputPath(name));
-      } catch (error) {
-        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') continue;
-        throw error;
-      }
-      throw new Error(`TLC103: refusing to overwrite unowned output file ${name}`);
-    }
-  }
-  for (const file of input.files) {
-    const path = outputPath(file.path);
-    if (input.check) {
-      let current: string;
-      try { current = await readFile(path, 'utf8'); } catch { throw new Error(`TLC104: missing generated file ${file.path}`); }
-      if (file.stableJsonKeys) {
-        const actual = z.record(z.unknown()).parse(JSON.parse(current));
-        const expected = z.record(z.unknown()).parse(JSON.parse(file.content));
-        for (const key of file.stableJsonKeys) {
-          if (JSON.stringify(actual[key]) !== JSON.stringify(expected[key])) throw new Error(`TLC104: stale receipt field ${key}`);
-        }
-      }
-      if (!file.volatile && current !== file.content) throw new Error(`TLC104: stale generated file ${file.path}`);
-    } else {
-      await mkdir(dirname(path), { recursive: true });
-      const temporary = `${path}.sgd-tmp-${process.pid}`;
-      try { await writeFile(temporary, file.content, { flag: 'wx' }); await rename(temporary, path); }
-      finally { await rm(temporary, { force: true }); }
-    }
-  }
-  if (!input.check) {
-    for (const name of previous) if (!wanted.includes(name)) await rm(outputPath(name), { force: true });
-    await writeFile(inventoryPath, JSON.stringify({ version: 1, files: wanted }, null, 2) + '\n');
-  }
 }
 
 export async function compileProject(input: { project: string; dot: string; out: string; check?: boolean }): Promise<Automaton> {
