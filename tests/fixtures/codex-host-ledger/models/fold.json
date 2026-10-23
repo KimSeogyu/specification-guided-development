@@ -1,0 +1,26 @@
+{
+  "version": 6,
+  "profile": "partition-fold",
+  "name": "LedgerPartition",
+  "application": "..",
+  "targets": [
+    "typescript",
+    "rust"
+  ],
+  "models": {
+    "row": {
+      "project": "row.json"
+    },
+    "control": {
+      "project": "control.json"
+    },
+    "families": {
+      "spec": "PartitionFamilies.tla",
+      "operator": "PartitionFamilies"
+    }
+  },
+  "binding": {
+    "className": "LedgerPartitionMachine",
+    "rustCrateMode": "standalone"
+  }
+}

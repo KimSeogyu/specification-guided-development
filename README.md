@@ -161,6 +161,8 @@ Use `build --check` or `compile --check` to compare stable artifacts without upd
 TLC logs and run receipts are not compared byte for byte.
 Interrupted generation has [journaled process-termination recovery](docs/managed-output.md); `--check` does not repair incomplete outputs.
 
+For a real Codex CLI session with fresh MCP generation and native checks, use the [manual host verification guide](docs/codex-host-verification.md). It requires an existing login and leaves global configuration unchanged. Plugin discovery and permanent installation have separate acceptance checks.
+
 ## Model architecture and behavior
 
 The intended method starts before lint integration:
