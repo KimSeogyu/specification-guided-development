@@ -12,6 +12,10 @@ A real TLC integration test compares both languages' complete snapshot traces. I
 
 Read [the finite-owned contract](finite-owned.md) for the actual trust boundary. These checks establish per-live-object finite safety. They do not establish persistent identity, effect atomicity, all application call paths, or completed Parangsae adoption.
 
+An independent agent followed the revised Codex skill through the source plugin launcher to create a new four-state job model and native TypeScript/Rust consumers. Both retained the two Ready guard states, rejected Run before Validate, accepted the intended lifecycle, and preserved state/revision after rejections. The trial needed a consumer tsconfig rootDir adjustment and a local SVG rendering adjustment; it required no generated policy edit. It exposed an unclear terminal self-loop description, now corrected in both modeling guides. Browser interaction and actual installed agent hosts were outside that trial.
+
+Both prepared native plugin packages also pass the MCP workflow from independent copied caches, including full-state generation, packaged TypeScript 7 compilation, runtime tamper checks, Pele, and imported-authority rejection. These cache tests do not establish installed-host operation.
+
 ## Reproduce
 
 ```sh

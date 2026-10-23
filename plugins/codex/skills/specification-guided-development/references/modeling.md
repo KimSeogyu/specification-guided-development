@@ -122,6 +122,7 @@ Both targets expose full copied snapshots through `read()`.
 Snapshot values use tagged string, boolean, or integer values.
 Integer values and the checked u64 revision serialize as decimal strings.
 A successful send returns the before and after snapshots.
+A named self-loop such as terminal `Wait` is a public successful event and increments revision. Here terminal means that lifecycle state no longer changes; it does not mean that every send is rejected.
 A rejected send preserves both the current state and revision.
 The TypeScript snapshot and API facade are frozen.
 The Rust owner has private fields and returns owned snapshot copies.

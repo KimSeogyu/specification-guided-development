@@ -65,6 +65,8 @@ The current node and revision live in a closure. The facade, its methods, result
 
 `send` is synchronous. It accepts no callback. Unknown or disabled events return a rejection without changing node or revision. A successful event increments a checked u64 revision, including a modeled self-loop. Reaching the maximum revision causes rejection. Integer model values and revisions use decimal strings without conversion through JavaScript `Number`.
 
+The example's terminal `Wait` is an explicit public self-loop. It succeeds and increments revision while leaving all model variables unchanged. Terminal describes the end of lifecycle state changes, not rejection of every event.
+
 The boundary assumes a trusted JavaScript realm and unchanged generated module. Replacing platform intrinsics or editing the generated implementation is outside that boundary.
 
 ## Rust

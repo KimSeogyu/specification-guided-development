@@ -145,6 +145,11 @@ fn main() {
     println!("{}", serde_json::to_string(ALL_EVENTS).unwrap());
 }
 `);
+  const fetched = spawnSync('cargo', ['fetch', '--quiet', '--manifest-path', join(consumer, 'Cargo.toml')], {
+    encoding: 'utf8', timeout: 180_000,
+  });
+  assert.equal(fetched.error, undefined, `${fetched.error}\n${fetched.stderr}`);
+  assert.equal(fetched.status, 0, `Fetch the generated consumer dependencies before offline source checks:\n${fetched.stderr}`);
 });
 
 after(async () => {
