@@ -94,7 +94,7 @@ test('one long self-transition and entity-like input text remain fully visible i
 });
 
 test('literal Unicode sentinel patterns survive Pele rendering without entity or quote substitution', () => {
-  for (const input of ['ﬂ°amp¶ß', 'ﬂ°°39¶ß', 'ﬂ°ﬂ°amp¶ß¶ß', 'ﬂ°quot¶ß #39; &#39; &apos;', 'ﬂ°°64258¶ß']) {
+  for (const input of ['ﬂ°', '¶ß', 'ﬂ°amp¶ß', 'ﬂ°°39¶ß', 'ﬂ°ﬂ°amp¶ß¶ß', 'ﬂ°quot¶ß #39; &#39; &apos;', 'ﬂ°°64258¶ß']) {
     const event = `Same / input ${input}`;
     const files = generateVisualization([model([event])]);
     const svg = readSvg(file(files, 'structure.svg'));
