@@ -1,5 +1,7 @@
 # Implementation plan
 
+This file records the initial prototype. The active production objective and completion criterion are in [production-goal.md](production-goal.md).
+
 ## User requirements
 
 - Create the public repository `KimSeogyu/specification-guided-development`.

@@ -15,6 +15,7 @@ Requirements
 ```
 
 Specification Guided Development is an initial compiler for this workflow.
+The [production goal](docs/production-goal.md) is successful and sustainable adoption in Parangsae.
 The model supplies permitted edges.
 A binding maps model names to a supported source construct.
 The compiler emits the checker program for that model and language.
