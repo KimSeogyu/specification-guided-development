@@ -1,4 +1,4 @@
-import { type SymbolicExpression, type SymbolicGuard, type SymbolicModel, type SymbolicValue, validateSymbolicModel } from './symbolic-types.js';
+import { type SymbolicExpression, type SymbolicGuard, type SymbolicInput, type SymbolicModel, type SymbolicValue, SymbolicValueSchema, symbolicInputs, validateSymbolicModel } from './symbolic-types.js';
 
 export type SymbolicState = Record<string, SymbolicValue>;
 export const sameSymbolicValue = (a: SymbolicValue, b: SymbolicValue): boolean => a.kind === b.kind && a.value === b.value && (a.kind !== 'data' || (b.kind === 'data' && a.domain === b.domain));
@@ -7,11 +7,19 @@ function compareGuardValues(a: SymbolicValue, b: SymbolicValue): boolean {
   return sameSymbolicValue(a, b);
 }
 
-export function evaluateExpression(expression: SymbolicExpression, state: SymbolicState, input: SymbolicValue | null, next: SymbolicState | null = null): SymbolicValue {
+export type SymbolicEvaluationInput = SymbolicValue | { kind: 'inputs'; values: ReadonlyMap<string, SymbolicValue> } | null;
+export function evaluateExpression(expression: SymbolicExpression, state: SymbolicState, input: SymbolicEvaluationInput, next: SymbolicState | null = null): SymbolicValue {
   switch (expression.kind) {
     case 'literal': return expression.value;
     case 'input': {
       if (!input) throw new Error('TLC301: input is unavailable');
+      if ('parameter' in expression) {
+        if (input.kind !== 'inputs') throw new Error('TLC301: named input frame is unavailable');
+        const value = input.values.get(expression.parameter);
+        if (!value) throw new Error('TLC301: named input parameter is unavailable');
+        return value;
+      }
+      if (input.kind === 'inputs') throw new Error('TLC301: unnamed input is unavailable in a product frame');
       return input;
     }
     case 'state': case 'next-state': {
@@ -22,7 +30,7 @@ export function evaluateExpression(expression: SymbolicExpression, state: Symbol
   }
 }
 
-export function evaluateGuard(guard: SymbolicGuard, state: SymbolicState, input: SymbolicValue | null, next: SymbolicState | null = null): boolean {
+export function evaluateGuard(guard: SymbolicGuard, state: SymbolicState, input: SymbolicEvaluationInput, next: SymbolicState | null = null): boolean {
   const value = (expression: SymbolicExpression) => evaluateExpression(expression, state, input, next);
   const test = (predicate: SymbolicGuard): boolean => evaluateGuard(predicate, state, input, next);
   switch (guard.kind) {
@@ -43,8 +51,28 @@ export type SymbolicStep =
   | { kind: 'accepted'; action: string; state: SymbolicState; updates: Record<string, SymbolicExpression> }
   | { kind: 'disabled' }
   | { kind: 'ambiguous' };
-export function stepSymbolic(model: SymbolicModel, state: SymbolicState, input: string): SymbolicStep {
-  const value: SymbolicValue = { kind: 'data', domain: model.input.domain, value: input };
+export function stepSymbolic(model: SymbolicModel, state: SymbolicState, input: SymbolicInput): SymbolicStep {
+  const inputs = symbolicInputs(model);
+  const atom = (domain: string, value: unknown): SymbolicValue => {
+    const parsed = SymbolicValueSchema.safeParse({ kind: 'data', domain, value });
+    if (!parsed.success) throw new Error('TLC301: symbolic input requires immutable Unicode string identities');
+    return parsed.data;
+  };
+  let value: SymbolicEvaluationInput;
+  if (model.version === 1) value = atom(model.input.domain, input);
+  else {
+    if (typeof input !== 'object' || input === null || Array.isArray(input)) throw new Error('TLC301: product input requires a named input record');
+    const keys = Reflect.ownKeys(input);
+    if (keys.length !== inputs.length || keys.some(key => typeof key !== 'string' || !inputs.some(item => item.parameter === key))) throw new Error('TLC301: product input must contain every declared parameter exactly once and no other keys');
+    const values = new Map(inputs.map(item => {
+      const descriptor = Object.getOwnPropertyDescriptor(input, item.parameter);
+      if (!descriptor || !('value' in descriptor)) throw new Error('TLC301: product input parameters must be own data properties');
+      return [item.parameter, atom(item.domain, descriptor.value)];
+    }));
+    value = { kind: 'inputs', values };
+  }
+  const domains = new Set(inputs.map(item => item.domain));
+  if (Object.values(state).some(item => item.kind === 'data' && !domains.has(item.domain))) throw new Error('TLC301: state contains an undeclared opaque domain');
   const enabled = model.branches.filter(branch => evaluateGuard(branch.guard, state, value));
   if (enabled.length === 0) return { kind: 'disabled' };
   if (enabled.length !== 1) return { kind: 'ambiguous' };
@@ -59,28 +87,31 @@ export function stepSymbolic(model: SymbolicModel, state: SymbolicState, input: 
 }
 
 function canonicalState(model: SymbolicModel, state: SymbolicState): SymbolicState {
-  const atoms = new Map<string, string>();
+  const atoms = new Map(symbolicInputs(model).map(item => [item.domain, new Map<string, string>()]));
   return Object.fromEntries(model.variables.map(variable => {
     const value = state[variable];
     if (!value) throw new Error('TLC301: incomplete abstract state');
     if (value.kind !== 'data') return [variable, value];
-    let name = atoms.get(value.value);
-    if (name === undefined) { name = `a${atoms.size}`; atoms.set(value.value, name); }
-    return [variable, { kind: 'data', domain: model.input.domain, value: name }];
+    const domainAtoms = atoms.get(value.domain);
+    if (!domainAtoms) throw new Error('TLC301: abstract state contains an undeclared opaque domain');
+    let name = domainAtoms.get(value.value);
+    if (name === undefined) { name = `a${domainAtoms.size}`; domainAtoms.set(value.value, name); }
+    return [variable, { kind: 'data', domain: value.domain, value: name }];
   }));
 }
 
 /** Equality and copy commute with atom renaming. Each state needs its existing atoms plus one fresh input. */
 export function inspectSymbolicOrbits(input: unknown): {
   kind: 'equality-copy-orbits'; states: SymbolicState[];
-  edges: { from: number; input: string; action: string; to: number }[];
-  disabled: { state: number; input: string }[];
+  edges: { from: number; input: SymbolicInput; action: string; to: number }[];
+  disabled: { state: number; input: SymbolicInput }[];
 } {
   const model = validateSymbolicModel(input);
   const states: SymbolicState[] = [canonicalState(model, model.initial)];
   const ids = new Map([[JSON.stringify(states[0]), 0]]);
-  const edges: { from: number; input: string; action: string; to: number }[] = [];
-  const disabled: { state: number; input: string }[] = [];
+  const edges: { from: number; input: SymbolicInput; action: string; to: number }[] = [];
+  const disabled: { state: number; input: SymbolicInput }[] = [];
+  let attempts = 0;
   for (let index = 0; index < states.length; index++) {
     const state = states[index];
     if (!state) throw new Error('TLC301: abstract state disappeared');
@@ -88,10 +119,20 @@ export function inspectSymbolicOrbits(input: unknown): {
       if (!evaluateGuard(invariant.predicate, state, null)) throw new Error(`TLC302: invariant ${invariant.name} fails in an equality/copy orbit`);
     }
     // [P]_vars means P OR UNCHANGED vars. Its implicit stuttering step always satisfies it.
-    const atoms = [...new Set(Object.values(state).flatMap(value => value.kind === 'data' ? [value.value] : []))];
-    const inputs = [...atoms, `a${atoms.length}`];
+    let product: Record<string, string>[] = [{}];
+    for (const input of symbolicInputs(model)) {
+      const atoms = [...new Set(Object.values(state).flatMap(value => value.kind === 'data' && value.domain === input.domain ? [value.value] : []))];
+      const choices = [...atoms, `a${atoms.length}`];
+      product = product.flatMap(frame => choices.map(value => ({ ...frame, [input.parameter]: value })));
+    }
+    const inputs: SymbolicInput[] = model.version === 1 ? product.map(frame => {
+      const value = frame[model.input.parameter];
+      if (value === undefined) throw new Error('TLC301: missing orbit input');
+      return value;
+    }) : product;
     let accepted = 0;
     for (const value of inputs) {
+      if (++attempts > 250_000) throw new Error('TLC302: symbolic input-product attempt limit exceeded; no partial success is permitted');
       const result = stepSymbolic(model, state, value);
       if (result.kind === 'disabled') { disabled.push({ state: index, input: value }); continue; }
       if (result.kind === 'ambiguous') throw new Error('TLC302: more than one symbolic action is enabled for the same state and input');

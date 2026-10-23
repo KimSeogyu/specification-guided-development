@@ -211,6 +211,117 @@ process.stdout.write(JSON.stringify({ actions: trace.map(step => step.action), s
   return { modelCheck: 'completed', sany: 'lowered original parameterized actions', finiteInputOracle: 'all configured state/input pairs matched', nativeTypeScript: '7.0.2', ...executed, pele: 'finite witness and symbolic relation rendered', unverifiedAuthority: 'rejected without output' };
 }
 
+async function verifyProductOwned({ client, plugin, name, abstractIr }) {
+  const out = join(temporary, name, 'product-owned');
+  toolValue(await client.callTool({ name: 'sgd_build', arguments: {
+    project: resolve('examples/fact-envelope/project.json'), jar, out,
+  } }));
+  const witness = toolValue(await client.callTool({ name: 'sgd_inspect', arguments: { ir: join(out, 'automaton.json') } }));
+  const program = toolValue(await client.callTool({ name: 'sgd_inspect', arguments: { ir: join(out, 'symbolic-model.json') } }));
+  assert.equal(witness.kind, 'symbolic-witness');
+  assert.equal(witness.version, 2);
+  assert.deepEqual(witness.domains, { Receipts: ['p1', 'p2'], Values: ['v1', 'v2'] });
+  assert.deepEqual(witness.variables, ['phase', 'rejected', 'rejectedProvenance', 'stored', 'storedProvenance']);
+  assert.equal(program.version, 2);
+  assert.deepEqual(program.inputs, [{ parameter: 'v', domain: 'Values' }, { parameter: 'provenance', domain: 'Receipts' }]);
+  assert.deepEqual(program.actionProperties.map(item => item.name), ['StoredStable', 'ProvenanceStable']);
+  const receipt = JSON.parse(await readFile(join(out, 'verification.json'), 'utf8'));
+  assert.equal(receipt.kind, 'tlc-symbolic-completed');
+  assert.equal(receipt.profile, 'symbolic-owned-v1');
+  assert.equal(receipt.symbolicIrVersion, 2);
+  assert.equal(receipt.inputProfile, 'disjoint-input-product-v1');
+  assert.deepEqual(receipt.runtimeDomain, { kind: 'disjoint-untyped-opaque-unicode-string-identities', inputs: program.inputs,
+    domains: { Values: { finiteWitnessAtoms: ['v1', 'v2'] }, Receipts: { finiteWitnessAtoms: ['p1', 'p2'] } } });
+  const oracle = JSON.parse(await readFile(join(out, 'input-verification.json'), 'utf8'));
+  assert.equal(oracle.kind, 'tlc-finite-input-oracle');
+  assert.deepEqual(oracle.inputs, program.inputs);
+  assert.deepEqual(oracle.domains, witness.domains);
+  assert.equal(oracle.checkedCases, witness.nodes.length * 2 * 2);
+  assert.equal(oracle.acceptedCases, oracle.checkedCases);
+  assert.equal(oracle.disabledCases, 0);
+  assert.match(await readFile(join(out, 'input-oracle.log'), 'utf8'), /Model checking completed\. No error has been found\./);
+
+  const compiler = join(plugin, 'runtime/node_modules/typescript/bin/tsc');
+  assert.match(execFileSync(process.execPath, [compiler, '--version'], { encoding: 'utf8', timeout: 30_000 }), /^Version 7\.0\.2\s*$/);
+  execFileSync(process.execPath, [compiler, '-p', join(out, 'typescript/tsconfig.json')], { cwd: temporary, encoding: 'utf8', timeout: 30_000 });
+  const runner = join(temporary, name, 'verify-product.mjs');
+  await writeFile(runner, `import assert from 'node:assert/strict';
+const { createFactEnvelopeMachine, isFactEnvelopeMachine } = await import(process.argv[2]);
+const modelRevision = process.argv[3];
+const scalar = value => ({ kind: 'string', value });
+const data = (domain, value) => ({ kind: 'data', domain, value });
+const values = (phase, stored, rejected, storedProvenance, rejectedProvenance) => ({ phase: scalar(phase), stored, rejected, storedProvenance, rejectedProvenance });
+const snapshot = (revision, state) => ({ model: 'FactWriteEnvelope', modelRevision, revision: String(revision), values: state });
+const origin = variable => ({ kind: 'state', variable });
+const literal = value => ({ kind: 'literal', value: scalar(value) });
+const machine = createFactEnvelopeMachine();
+assert.equal(isFactEnvelopeMachine(machine), true);
+assert.equal(isFactEnvelopeMachine({ ...machine }), false);
+assert.equal(Reflect.set(machine, 'send', () => ({ ok: true })), false);
+const initial = snapshot(0, values('absent', scalar('none'), scalar('none'), scalar('none'), scalar('none')));
+assert.deepEqual(machine.read(), initial);
+const inputPairs = [['A', 'r1'], ['B', 'r2'], ['B', 'r3'], ['A', 'r4']];
+const trace = inputPairs.map(([v, provenance]) => {
+  const before = machine.read();
+  const result = machine.send(v, provenance);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.before, before);
+  assert.deepEqual(result.after, machine.read());
+  assert.equal(Reflect.set(result.after.values.storedProvenance, 'value', 'forged'), false);
+  const { action, after, updates } = result;
+  return { input: { v, provenance }, action, before, after, updates };
+});
+const inserted = snapshot(1, values('present', data('Values', 'A'), scalar('none'), data('Receipts', 'r1'), scalar('none')));
+const rejectedB2 = snapshot(2, values('conflict', data('Values', 'A'), data('Values', 'B'), data('Receipts', 'r1'), data('Receipts', 'r2')));
+const rejectedB3 = snapshot(3, values('conflict', data('Values', 'A'), data('Values', 'B'), data('Receipts', 'r1'), data('Receipts', 'r3')));
+const repeatedA = snapshot(4, rejectedB3.values);
+const clashUpdates = { phase: literal('conflict'), rejected: { kind: 'input', parameter: 'v' }, rejectedProvenance: { kind: 'input', parameter: 'provenance' }, stored: origin('stored'), storedProvenance: origin('storedProvenance') };
+assert.deepEqual(trace, [
+  { input: { v: 'A', provenance: 'r1' }, action: 'Insert', before: initial, after: inserted, updates: { phase: literal('present'), stored: { kind: 'input', parameter: 'v' }, rejected: literal('none'), storedProvenance: { kind: 'input', parameter: 'provenance' }, rejectedProvenance: literal('none') } },
+  { input: { v: 'B', provenance: 'r2' }, action: 'Clash', before: inserted, after: rejectedB2, updates: clashUpdates },
+  { input: { v: 'B', provenance: 'r3' }, action: 'Clash', before: rejectedB2, after: rejectedB3, updates: clashUpdates },
+  { input: { v: 'A', provenance: 'r4' }, action: 'Same', before: rejectedB3, after: repeatedA, updates: { phase: origin('phase'), stored: origin('stored'), rejected: origin('rejected'), storedProvenance: origin('storedProvenance'), rejectedProvenance: origin('rejectedProvenance') } },
+]);
+assert.equal(Reflect.set(trace[2].updates.rejectedProvenance, 'parameter', 'v'), false);
+const beforeInvalid = machine.read();
+assert.equal(machine.send('A').reason, 'invalid-input');
+assert.equal(machine.send({ v: 'A', provenance: 'r5' }).reason, 'invalid-input');
+assert.deepEqual(machine.read(), beforeInvalid);
+const sentinel = createFactEnvelopeMachine().send('none', 'none');
+assert.equal(sentinel.ok, true);
+assert.deepEqual(sentinel.before.values.stored, scalar('none'));
+assert.deepEqual(sentinel.after.values.stored, data('Values', 'none'));
+assert.deepEqual(sentinel.after.values.storedProvenance, data('Receipts', 'none'));
+process.stdout.write(JSON.stringify({ actions: trace.map(step => step.action), stored: 'A@r1', latestRejected: 'B@r3', namedOrigins: 'matched', sentinel: 'distinct scalar and domain tags', completeReceipts: 'matched', invalidTuple: 'rejected unchanged' }));
+`);
+  const executed = JSON.parse(execFileSync(process.execPath, [runner, pathToFileURL(join(out, 'typescript/dist/machine.js')).href, program.source.semanticSha256], { cwd: temporary, encoding: 'utf8', timeout: 30_000 }));
+  assert.deepEqual(executed.actions, ['Insert', 'Clash', 'Clash', 'Same']);
+  const refinement = toolValue(await client.callTool({ name: 'sgd_refine', arguments: {
+    abstract: abstractIr, concrete: join(out, 'symbolic-model.json'), binding: resolve('examples/fact-envelope/erasure.json'),
+  } }));
+  assert.equal(refinement.kind, 'symbolic-enabled-input-erasure');
+  assert.equal(refinement.scope, 'admitted-equality-copy-orbits');
+  assert.equal(refinement.concrete.semanticSha256, program.source.semanticSha256);
+  assert.equal(refinement.abstract.semanticSha256, JSON.parse(await readFile(abstractIr, 'utf8')).source.semanticSha256);
+  assert.equal(refinement.acceptedCases, refinement.checkedCases);
+  const view = join(temporary, name, 'product-view');
+  toolValue(await client.callTool({ name: 'sgd_visualize', arguments: { ir: [join(out, 'automaton.json'), join(out, 'symbolic-model.json')], out: view } }));
+  const html = await readFile(join(view, 'index.html'), 'utf8');
+  assert.match(html, /storedProvenance/);
+  assert.match(html, /rejectedProvenance/);
+  assert.match(html, /v\[Values\]/);
+  assert.match(html, /provenance\[Receipts\]/);
+  assert.doesNotMatch(html, /\[object Object\]/);
+  assert.deepEqual(JSON.parse(await readFile(join(view, 'models.json'), 'utf8')), [witness, program]);
+  const forbiddenOut = join(temporary, name, 'unverified-product-authority');
+  const imported = await client.callTool({ name: 'sgd_compile', arguments: { project: resolve('examples/fact-envelope/project.json'), dot: join(out, 'model.dot'), out: forbiddenOut } });
+  assert.equal(imported.isError, true, JSON.stringify(imported));
+  assert.match(JSON.stringify(imported.content), /TLC206: imported DOT cannot generate symbolic-owned authority/);
+  await assert.rejects(access(forbiddenOut), { code: 'ENOENT' });
+  return { modelCheck: 'completed', finiteInputOracle: 'all configured state/input tuples matched', nativeTypeScript: '7.0.2', ...executed,
+    erasure: 'supplied IR enabled inputs, actions, and projected successors matched', pele: 'all provenance and domain labels rendered', unverifiedAuthority: 'rejected without output' };
+}
+
 try {
   for (const name of ['codex', 'claude-code']) {
     const plugin = join(temporary, `${name} copied cache`);
@@ -220,7 +331,7 @@ try {
     try {
       await client.connect(transport);
       const tools = (await client.listTools()).tools.map(tool => tool.name).sort();
-      assert.deepEqual(tools, ['sgd_build', 'sgd_compile', 'sgd_inspect', 'sgd_model', 'sgd_visualize']);
+      assert.deepEqual(tools, ['sgd_build', 'sgd_compile', 'sgd_inspect', 'sgd_model', 'sgd_refine', 'sgd_visualize']);
       const out = join(temporary, name, 'generated');
       const built = await client.callTool({ name: 'sgd_build', arguments: {
         project: resolve('examples/order/project.json'), jar, out,
@@ -238,10 +349,11 @@ try {
       assert.match(await readFile(join(temporary, name, 'view/index.html'), 'utf8'), /Model explorer/);
       const finiteOwned = await verifyFiniteOwned({ client, plugin, name });
       const symbolicOwned = await verifySymbolicOwned({ client, plugin, name });
-      results.push({ plugin: name, environment: 'isolated copied plugin cache; not an installed agent host', actualInstalledAgentHost: 'not exercised', nativeRuntime: `${process.platform}-${process.arch}`, tools, modelCheck: 'completed', generatedTypeScript: 'accepted', pele: 'rendered', finiteOwned, symbolicOwned });
+      const productOwned = await verifyProductOwned({ client, plugin, name, abstractIr: join(temporary, name, 'symbolic-owned/symbolic-model.json') });
+      results.push({ plugin: name, environment: 'isolated copied plugin cache; not an installed agent host', actualInstalledAgentHost: 'not exercised', nativeRuntime: `${process.platform}-${process.arch}`, tools, modelCheck: 'completed', generatedTypeScript: 'accepted', pele: 'rendered', finiteOwned, symbolicOwned, productOwned });
     } finally { await client.close(); }
   }
   await mkdir(resolve('.runtime'), { recursive: true });
   await writeFile(resolve('.runtime/plugin-verification.json'), JSON.stringify(results, null, 2) + '\n');
-  process.stdout.write('Both isolated copied plugin caches completed MCP, real TLC, v1 diagnostics, v2 finite-owned and v3 symbolic-owned authority with packaged native TypeScript 7.0.2, complete fact-merge receipts and assignment origins, finite input oracle, Pele, tamper checks, and unverified DOT refusal. Actual installed-agent hosts were not exercised.\n');
+  process.stdout.write('Both isolated copied plugin caches completed MCP, real TLC, v1 diagnostics, v2 finite-owned, v3 symbolic-owned, and v4 product-input authority with packaged native TypeScript 7.0.2, complete payload/provenance receipts, input-tuple oracle, explicit supplied-IR erasure, Pele, tamper checks, and unverified DOT refusal. Actual installed-agent hosts were not exercised.\n');
 } finally { await rm(temporary, { recursive: true, force: true }); }

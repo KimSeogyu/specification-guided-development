@@ -13,11 +13,12 @@ export const SymbolicValueSchema = z.union([
 ]);
 export type SymbolicValue = z.infer<typeof SymbolicValueSchema>;
 
-export const SymbolicExpressionSchema = z.discriminatedUnion('kind', [
+export const SymbolicExpressionSchema = z.union([
   z.object({ kind: z.literal('literal'), value: FiniteValueSchema }).strict(),
   z.object({ kind: z.literal('state'), variable: Identifier }).strict(),
   z.object({ kind: z.literal('next-state'), variable: Identifier }).strict(),
   z.object({ kind: z.literal('input') }).strict(),
+  z.object({ kind: z.literal('input'), parameter: Identifier }).strict(),
 ]);
 export type SymbolicExpression = z.infer<typeof SymbolicExpressionSchema>;
 export type SymbolicGuard =
@@ -38,11 +39,12 @@ export const SymbolicGuardSchema: z.ZodType<SymbolicGuard> = z.lazy(() => z.unio
   z.object({ kind: z.enum(['implies', 'equivalent']), left: SymbolicGuardSchema, right: SymbolicGuardSchema }).strict(),
 ]));
 const SourceSchema = z.object({ module: z.string(), beginLine: z.number().int().positive(), beginColumn: z.number().int().positive(), endLine: z.number().int().positive(), endColumn: z.number().int().positive() }).strict();
-export const SymbolicModelSchema = z.object({
-  version: z.literal(1), kind: z.literal('symbolic-owned'), name: Identifier,
+const SymbolicProgramHead = {
+  kind: z.literal('symbolic-owned'), name: Identifier,
   checkDeadlock: z.boolean(),
   variables: z.array(Identifier).min(1),
-  input: z.object({ parameter: Identifier, domain: Identifier, next: Identifier }).strict(),
+};
+const SymbolicProgramTail = {
   initial: z.record(Identifier, FiniteValueSchema),
   branches: z.array(z.object({
     action: Identifier, guard: SymbolicGuardSchema, updates: z.record(Identifier, SymbolicExpressionSchema),
@@ -51,8 +53,28 @@ export const SymbolicModelSchema = z.object({
   invariants: z.array(z.object({ name: Identifier, predicate: SymbolicGuardSchema }).strict()),
   actionProperties: z.array(z.object({ kind: z.literal('square-action'), name: Identifier, predicate: SymbolicGuardSchema }).strict()),
   source: z.object({ semanticSha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
+};
+export const SymbolicModelV1Schema = z.object({
+  version: z.literal(1), ...SymbolicProgramHead,
+  input: z.object({ parameter: Identifier, domain: Identifier, next: Identifier }).strict(),
+  ...SymbolicProgramTail,
 }).strict();
+export const SymbolicModelV2Schema = z.object({
+  version: z.literal(2), ...SymbolicProgramHead,
+  inputs: z.array(z.object({ parameter: Identifier, domain: Identifier }).strict()).min(2).max(3),
+  next: Identifier,
+  ...SymbolicProgramTail,
+}).strict();
+export const SymbolicModelSchema = z.discriminatedUnion('version', [SymbolicModelV1Schema, SymbolicModelV2Schema]);
+export type SymbolicModelV1 = z.infer<typeof SymbolicModelV1Schema>;
+export type SymbolicModelV2 = z.infer<typeof SymbolicModelV2Schema>;
 export type SymbolicModel = z.infer<typeof SymbolicModelSchema>;
+export type SymbolicProgram = Omit<SymbolicModelV1, 'source'> | Omit<SymbolicModelV2, 'source'>;
+export type SymbolicInput = string | Readonly<Record<string, string>>;
+export function symbolicInputs(model: SymbolicModel): readonly { parameter: string; domain: string }[] {
+  return model.version === 1 ? [{ parameter: model.input.parameter, domain: model.input.domain }] : model.inputs;
+}
+export function symbolicNext(model: SymbolicModel): string { return model.version === 1 ? model.input.next : model.next; }
 
 export const SymbolicProjectSchema = z.object({
   version: z.literal(3), profile: z.literal('symbolic-owned'), name: Identifier,
@@ -60,7 +82,8 @@ export const SymbolicProjectSchema = z.object({
   targets: z.array(z.enum(['typescript', 'rust'])).min(1),
   binding: z.object({ className: z.string().regex(/^[A-Z][A-Za-z0-9]*$/) }).strict(),
 }).strict();
-export type SymbolicProject = z.infer<typeof SymbolicProjectSchema>;
+export const ProductSymbolicProjectSchema = SymbolicProjectSchema.extend({ version: z.literal(4) }).strict();
+export type SymbolicProject = z.infer<typeof SymbolicProjectSchema> | z.infer<typeof ProductSymbolicProjectSchema>;
 export interface SymbolicBackendInput { model: SymbolicModel; className: string }
 
 function canonical(value: unknown): unknown {
@@ -68,7 +91,7 @@ function canonical(value: unknown): unknown {
   if (typeof value === 'object' && value !== null) return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => [key, canonical(item)]));
   return value;
 }
-function semanticIdentity(program: Omit<SymbolicModel, 'source'>): string { return sha256(JSON.stringify(canonical(program))); }
+function semanticIdentity(program: SymbolicProgram): string { return sha256(JSON.stringify(canonical(program))); }
 
 export function guardExpressions(guard: SymbolicGuard): SymbolicExpression[] {
   switch (guard.kind) {
@@ -85,6 +108,10 @@ export function validateSymbolicModel(input: unknown): SymbolicModel {
   const parsed = SymbolicModelSchema.safeParse(input);
   if (!parsed.success) throw new Error(`TLC301: invalid symbolic IR: ${parsed.error.issues.slice(0, 5).map(issue => issue.message).join('; ')}`);
   const model = parsed.data;
+  const inputs = symbolicInputs(model);
+  const parameters = new Set(inputs.map(input => input.parameter));
+  const domains = new Set(inputs.map(input => input.domain));
+  if (parameters.size !== inputs.length || domains.size !== inputs.length) throw new Error('TLC301: symbolic inputs require distinct parameter names and distinct domains');
   const variables = new Set(model.variables);
   if (variables.size !== model.variables.length || model.variables.length > 12) throw new Error('TLC301: symbolic-owned requires 1–12 distinct variables');
   const exactKeys = (record: object): boolean => Object.keys(record).length === variables.size && Object.keys(record).every(name => variables.has(name));
@@ -93,10 +120,14 @@ export function validateSymbolicModel(input: unknown): SymbolicModel {
     if ((expression.kind === 'state' || expression.kind === 'next-state') && !variables.has(expression.variable)) throw new Error('TLC301: unknown symbolic state variable');
     if (expression.kind === 'next-state' && !nextAllowed) throw new Error('TLC301: primed expressions are unsupported in executable guards and assignment values');
     if (expression.kind === 'input' && !inputAllowed) throw new Error('TLC301: input is unavailable in an invariant or action property');
+    if (expression.kind === 'input') {
+      if (model.version === 1 && 'parameter' in expression) throw new Error('TLC301: version 1 input expressions cannot name a parameter');
+      if (model.version === 2 && (!('parameter' in expression) || !parameters.has(expression.parameter))) throw new Error('TLC301: version 2 input expressions must name a declared parameter');
+    }
   }
   function checkGuard(guard: SymbolicGuard, nextAllowed: boolean, inputAllowed: boolean): void {
     for (const expression of guardExpressions(guard)) checkExpression(expression, nextAllowed, inputAllowed);
-    if (guard.kind === 'in-domain' && guard.domain !== model.input.domain) throw new Error('TLC301: unknown symbolic data domain');
+    if (guard.kind === 'in-domain' && !domains.has(guard.domain)) throw new Error('TLC301: unknown symbolic data domain');
     if (guard.kind === 'member' && new Set(guard.elements.map(element => element.kind)).size > 1) throw new Error('TLC301: finite literal sets require one scalar kind');
     if (guard.kind === 'and' || guard.kind === 'or') guard.terms.forEach(term => checkGuard(term, nextAllowed, inputAllowed));
     if (guard.kind === 'not') checkGuard(guard.term, nextAllowed, inputAllowed);
@@ -109,11 +140,15 @@ export function validateSymbolicModel(input: unknown): SymbolicModel {
   }
   for (const invariant of model.invariants) checkGuard(invariant.predicate, false, false);
   for (const property of model.actionProperties) checkGuard(property.predicate, true, false);
+  if (new Set(model.invariants.map(item => item.name)).size !== model.invariants.length || new Set(model.actionProperties.map(item => item.name)).size !== model.actionProperties.length) throw new Error('TLC301: symbolic property names must be unique');
   const { source: _source, ...program } = model;
   if (semanticIdentity(program) !== model.source.semanticSha256) throw new Error('TLC301: symbolic semantic identity does not match the program');
   return model;
 }
 
-export function symbolicModel(program: Omit<SymbolicModel, 'source'>): SymbolicModel {
+export function symbolicModel(program: Omit<SymbolicModelV1, 'source'>): SymbolicModelV1;
+export function symbolicModel(program: Omit<SymbolicModelV2, 'source'>): SymbolicModelV2;
+export function symbolicModel(program: SymbolicProgram): SymbolicModel;
+export function symbolicModel(program: SymbolicProgram): SymbolicModel {
   return validateSymbolicModel({ ...program, source: { semanticSha256: semanticIdentity(program) } });
 }

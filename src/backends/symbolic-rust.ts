@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { validateSymbolicModel, type SymbolicBackendInput, type SymbolicExpression, type SymbolicGuard, type SymbolicValue } from '../symbolic-types.js';
+import { symbolicInputs, validateSymbolicModel, type SymbolicBackendInput, type SymbolicExpression, type SymbolicGuard, type SymbolicValue } from '../symbolic-types.js';
 import { inspectSymbolicOrbits } from '../symbolic-semantics.js';
 import type { GeneratedFile } from '../types.js';
 
@@ -26,10 +26,14 @@ function renderValue(value: SymbolicValue): string {
   }
 }
 
-function renderExpression(expression: SymbolicExpression): string {
+function renderExpression(expression: SymbolicExpression, inputs: ReadonlyMap<string, string>, legacyInput: string | undefined): string {
   switch (expression.kind) {
     case 'literal': return renderValue(expression.value);
-    case 'input': return 'input_value.clone()';
+    case 'input': {
+      const name = 'parameter' in expression ? inputs.get(expression.parameter) : legacyInput;
+      if (name === undefined) throw new Error('TLC301: unknown symbolic input parameter');
+      return `${name}.clone()`;
+    }
     case 'state': return `self.values.get(${rustString(expression.variable)}).expect("private generated state invariant").clone()`;
     case 'next-state': throw new Error('TLC301: primed expressions cannot execute in a symbolic guard or assignment');
     default: { const exhaustive: never = expression; return exhaustive; }
@@ -39,25 +43,27 @@ function renderExpression(expression: SymbolicExpression): string {
 function renderOrigin(expression: SymbolicExpression): string {
   switch (expression.kind) {
     case 'literal': return `ValueExpression::Literal { value: ${renderValue(expression.value)} }`;
-    case 'input': return 'ValueExpression::Input';
+    case 'input': return 'parameter' in expression ? `ValueExpression::Input { parameter: ${rustString(expression.parameter)}.to_owned() }` : 'ValueExpression::Input';
     case 'state': return `ValueExpression::State { variable: ${rustString(expression.variable)}.to_owned() }`;
     case 'next-state': return `ValueExpression::NextState { variable: ${rustString(expression.variable)}.to_owned() }`;
     default: { const exhaustive: never = expression; return exhaustive; }
   }
 }
 
-function renderGuard(guard: SymbolicGuard): string {
+function renderGuard(guard: SymbolicGuard, inputs: ReadonlyMap<string, string>, legacyInput: string | undefined): string {
+  const render = (expression: SymbolicExpression): string => renderExpression(expression, inputs, legacyInput);
+  const nested = (value: SymbolicGuard): string => renderGuard(value, inputs, legacyInput);
   switch (guard.kind) {
     case 'boolean': return String(guard.value);
-    case 'equal': return `(${renderExpression(guard.left)} == ${renderExpression(guard.right)})`;
-    case 'not-equal': return `(${renderExpression(guard.left)} != ${renderExpression(guard.right)})`;
-    case 'member': return `[${guard.elements.map(renderValue).join(', ')}].contains(&(${renderExpression(guard.value)}))`;
-    case 'in-domain': return `matches!(${renderExpression(guard.value)}, SymbolicValue::Data { ref domain, .. } if domain == ${rustString(guard.domain)})`;
-    case 'and': return `(${guard.terms.map(renderGuard).join(' && ') || 'true'})`;
-    case 'or': return `(${guard.terms.map(renderGuard).join(' || ') || 'false'})`;
-    case 'not': return `!(${renderGuard(guard.term)})`;
-    case 'implies': return `(!(${renderGuard(guard.left)}) || (${renderGuard(guard.right)}))`;
-    case 'equivalent': return `((${renderGuard(guard.left)}) == (${renderGuard(guard.right)}))`;
+    case 'equal': return `(${render(guard.left)} == ${render(guard.right)})`;
+    case 'not-equal': return `(${render(guard.left)} != ${render(guard.right)})`;
+    case 'member': return `[${guard.elements.map(renderValue).join(', ')}].contains(&(${render(guard.value)}))`;
+    case 'in-domain': return `matches!(${render(guard.value)}, SymbolicValue::Data { ref domain, .. } if domain == ${rustString(guard.domain)})`;
+    case 'and': return `(${guard.terms.map(nested).join(' && ') || 'true'})`;
+    case 'or': return `(${guard.terms.map(nested).join(' || ') || 'false'})`;
+    case 'not': return `!(${nested(guard.term)})`;
+    case 'implies': return `(!(${nested(guard.left)}) || (${nested(guard.right)}))`;
+    case 'equivalent': return `((${nested(guard.left)}) == (${nested(guard.right)}))`;
     default: { const exhaustive: never = guard; return exhaustive; }
   }
 }
@@ -66,6 +72,13 @@ function renderGuard(guard: SymbolicGuard): string {
 export function generateSymbolicRust(input: SymbolicBackendInput): GeneratedFile[] {
   const model = validateSymbolicModel(input.model);
   inspectSymbolicOrbits(model);
+  const parameters = symbolicInputs(model);
+  const inputNames = new Map(parameters.map((parameter, index) => [parameter.parameter, model.version === 1 ? 'input_value' : `input_value_${index}`]));
+  const legacyInput = model.version === 1 ? 'input_value' : undefined;
+  const render = (expression: SymbolicExpression): string => renderExpression(expression, inputNames, legacyInput);
+  const argumentNames = parameters.map((_parameter, index) => model.version === 1 ? 'input' : `input_${index}`);
+  const signature = argumentNames.map(name => `${name}: &str`).join(', ');
+  const inputValues = parameters.map((parameter, index) => `        let ${inputNames.get(parameter.parameter)} = SymbolicValue::Data { domain: ${rustString(parameter.domain)}.to_owned(), value: ${argumentNames[index]}.to_owned() };`).join('\n');
   const className = input.className;
   const reserved = ['Self', 'SymbolicValue', 'ValueExpression', 'Snapshot', 'Receipt', 'TransitionError', 'TransitionErrorReason',
     'String', 'BTreeMap', 'Serialize', 'Result', 'Option', 'Some', 'None', 'Ok', 'Err', 'MODEL'];
@@ -76,7 +89,7 @@ export function generateSymbolicRust(input: SymbolicBackendInput): GeneratedFile
     if (value === undefined) throw new Error('TLC301: incomplete symbolic Init');
     return `            (${rustString(variable)}.to_owned(), ${renderValue(value)}),`;
   }).join('\n');
-  const guards = model.branches.map((branch, index) => `        if ${renderGuard(branch.guard)} {
+  const guards = model.branches.map((branch, index) => `        if ${renderGuard(branch.guard, inputNames, legacyInput)} {
             if selected.is_some() { return Err(self.reject(TransitionErrorReason::Ambiguous)); }
             selected = Some(${index});
         }`).join('\n');
@@ -84,7 +97,7 @@ export function generateSymbolicRust(input: SymbolicBackendInput): GeneratedFile
     const values = variables.map(variable => {
       const expression = branch.updates[variable];
       if (expression === undefined) throw new Error('TLC301: incomplete symbolic update');
-      return `                (${rustString(variable)}.to_owned(), ${renderExpression(expression)}),`;
+      return `                (${rustString(variable)}.to_owned(), ${render(expression)}),`;
     }).join('\n');
     const origins = variables.map(variable => {
       const expression = branch.updates[variable];
@@ -138,7 +151,7 @@ pub enum ValueExpression {
     Literal { value: SymbolicValue },
     State { variable: String },
     NextState { variable: String },
-    Input,
+    ${model.version === 1 ? 'Input,' : 'Input { parameter: String },'}
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -207,8 +220,8 @@ ${initial}
 
     /// The input is actual immutable data, never a caller-selected action.
     /// All guards and simultaneous assignment values read the old state.
-    pub fn send(&mut self, input: &str) -> Result<Receipt, TransitionError> {
-        let input_value = SymbolicValue::Data { domain: ${rustString(model.input.domain)}.to_owned(), value: input.to_owned() };
+    pub fn send(&mut self, ${signature}) -> Result<Receipt, TransitionError> {
+${inputValues}
         let mut selected: Option<usize> = None;
 ${guards}
         let Some(selected) = selected else { return Err(self.reject(TransitionErrorReason::Disabled)); };
@@ -235,7 +248,7 @@ mod tests {
         let mut owner = ${className}::new();
         owner.revision = u64::MAX;
         let before = owner.read();
-        let error = owner.send("fresh-overflow-input").expect_err("no revision follows u64::MAX");
+        let error = owner.send(${parameters.map((_parameter, index) => rustString(model.version === 1 ? 'fresh-overflow-input' : `fresh-overflow-input-${index}`)).join(', ')}).expect_err("no revision follows u64::MAX");
         assert_eq!(error.state, before);
         assert_eq!(owner.read(), before);
     }
@@ -250,9 +263,9 @@ This standalone crate is \`${packageName}\`. Keep it as a separate dependency:
 authority = { package = "${packageName}", path = "../generated/rust" }
 \`\`\`
 
-Import \`authority::${className}\`. Create a live owner with \`new()\`, copy its complete state with \`read()\`, and submit actual UTF-8 input data through \`send(&str)\`. The generated guards choose the action. There is no caller action enum, equality callback, generic data identity, or mutable input alias. Data are tagged with their domain and stay distinct from literal scalar strings, even when their text matches a sentinel. Equality is exact Rust string equality; input bytes are not normalized.
+Import \`authority::${className}\`. Create a live owner with \`new()\`, copy its complete state with \`read()\`, and ${model.version === 1 ? 'submit actual UTF-8 input data through `send(&str)`.' : `submit actual UTF-8 input data through \`send(${parameters.map(() => '&str').join(', ')})\` in model input order (${parameters.map(parameter => `${parameter.parameter}: ${parameter.domain}`).join(', ')}).`} The generated guards choose the action. There is no caller action enum, equality callback, generic data identity, or mutable input alias. ${model.version === 1 ? 'Data are tagged with their domain and stay distinct from literal scalar strings, even when their text matches a sentinel.' : 'Data are tagged with their domain and stay distinct from literal scalar strings and other domains, even when their text matches.'} Equality is exact Rust string equality; input bytes are not normalized.
 
-The receipt contains \`action\`, \`before\`, \`after\`, and copied IR assignment origins in \`updates\`. All guards and assignments read the old state. A rejected input preserves state and the checked u64 revision. Snapshots own their values; editing them cannot alter the authority. JSON integers and revision remain decimal strings. \`modelRevision\` identifies the canonical symbolic program.
+The receipt contains \`action\`, \`before\`, \`after\`, and copied IR assignment origins in \`updates\`${model.version === 2 ? ', including the source parameter on each input assignment' : ''}. All guards and assignments read the old state. A rejected input preserves state and the checked u64 revision. Snapshots own their values; editing them cannot alter the authority. JSON integers and revision remain decimal strings. \`modelRevision\` identifies the canonical symbolic program.
 
 Generation validates the complete equality/copy orbit space, invariants, and action properties. This profile supports equality, finite scalar membership, domain tests, Boolean logic, and simultaneous literal/input/state copying. It does not establish application-wide coverage or external-effect atomicity. The authority has no Clone, Deserialize, raw constructor, setter, or restore API. This crate forbids unsafe code and requires safe Rust callers. Trust the generated crate and dependencies. Each \`new()\` creates a distinct live object; persistent identity, reset prevention, restart, recovery, and database effects require separate contracts.
 ` },

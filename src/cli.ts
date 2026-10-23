@@ -2,6 +2,7 @@
 import { buildProject, compileProject, writeGenerated } from './compiler.js';
 import { generateVisualization, loadAutomaton } from './visualize.js';
 import { serve } from './mcp.js';
+import { verifySymbolicErasureFiles } from './symbolic-refinement.js';
 
 const help = `sgd 0.1.0
 
@@ -10,10 +11,13 @@ const help = `sgd 0.1.0
   compile   --project FILE --dot FILE --out DIR [--check]
   inspect   --ir FILE
   visualize --ir FILE [--ir FILE ...] --out DIR
+  refine    --abstract FILE --concrete FILE --binding FILE --out DIR [--check]
   mcp
 
 build runs TLC before generation. Project v2 generates finite state authorities.
 Project v3 symbolic-owned compiles supported SANY equality/copy actions with data input.
+Project v4 adds two or three inputs from disjoint nominal domains.
+refine checks state, enabled-input decisions, and observable action erasure.
 compile imports DOT for v1 diagnostics only; it cannot generate executable authority.
 visualize renders offline Pele SVG and HTML from the same automata.
 `;
@@ -39,11 +43,12 @@ async function main(args: string[]): Promise<void> {
   const allowed: Record<string, string[]> = {
     build: ['--project', '--jar', '--out'], model: ['--project', '--jar', '--out'],
     compile: ['--project', '--dot', '--out'], inspect: ['--ir'], visualize: ['--ir', '--out'],
+    refine: ['--abstract', '--concrete', '--binding', '--out'],
   };
   const keys = allowed[command];
   if (!keys) throw new Error(`Unknown command ${command}`);
   for (const key of flags.keys()) if (!keys.includes(key)) throw new Error(`Unknown option ${key}`);
-  if (check && command !== 'build' && command !== 'compile') throw new Error('--check is valid only for build and compile');
+  if (check && !['build', 'compile', 'refine'].includes(command)) throw new Error('--check is valid only for build, compile, and refine');
   function one(key: string): string {
     const values = flags.get(key);
     const value = values?.[0];
@@ -57,6 +62,11 @@ async function main(args: string[]): Promise<void> {
     case 'compile':
       result = await compileProject({ project: one('--project'), dot: one('--dot'), out: one('--out'), check }); break;
     case 'inspect': result = await loadAutomaton(one('--ir')); break;
+    case 'refine': {
+      result = await verifySymbolicErasureFiles({ abstract: one('--abstract'), concrete: one('--concrete'), binding: one('--binding') });
+      await writeGenerated({ out: one('--out'), files: [{ path: 'refinement.json', content: JSON.stringify(result, null, 2) + '\n' }], check });
+      break;
+    }
     case 'visualize': {
       const paths = flags.get('--ir');
       if (!paths?.length) throw new Error('Supply --ir at least once');

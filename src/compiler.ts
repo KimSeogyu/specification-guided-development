@@ -10,7 +10,7 @@ import { generateOwnedRust } from './backends/owned-rust.js';
 import { MachineProjectSchema, validateExecutableGraph, type MachineProject, type ExactFiniteAutomaton, type OwnedBackendInput } from './finite-types.js';
 import { importFiniteDot } from './finite-dot.js';
 import { runFiniteTlc } from './finite-tlc.js';
-import { SymbolicProjectSchema, type SymbolicProject } from './symbolic-types.js';
+import { ProductSymbolicProjectSchema, SymbolicProjectSchema, symbolicInputs, type SymbolicProject } from './symbolic-types.js';
 import { runSymbolicTlc } from './symbolic-tlc.js';
 import { parseSanyXml } from './sany-xml.js';
 import { lowerSymbolicModel } from './symbolic-lower.js';
@@ -30,7 +30,7 @@ const ownedBackends = {
   rust: generateOwnedRust,
 } satisfies Record<Target, (input: OwnedBackendInput) => GeneratedFile[]>;
 
-const ConfiguredProjectSchema = z.union([ProjectSchema, MachineProjectSchema, SymbolicProjectSchema]);
+const ConfiguredProjectSchema = z.union([ProjectSchema, MachineProjectSchema, SymbolicProjectSchema, ProductSymbolicProjectSchema]);
 export async function readProject(path: string): Promise<Project | MachineProject | SymbolicProject> {
   return ConfiguredProjectSchema.parse(JSON.parse(await readFile(path, 'utf8')));
 }
@@ -170,20 +170,35 @@ export async function buildProject(input: { project: string; jar: string; out: s
   const checkProjectUnchanged = async (): Promise<void> => {
     if (!projectBytes.equals(await readFile(projectPath))) throw new Error('TLC203: project configuration changed during verification; rerun against stable inputs');
   };
-  if (project.version === 3) {
+  if (project.version === 3 || project.version === 4) {
     const spec = resolve(dirname(projectPath), project.spec);
     const config = resolve(dirname(projectPath), project.config);
     const run = await runSymbolicTlc({ spec, config, jar: input.jar });
-    const model = lowerSymbolicModel({ name: project.name, semantic: parseSanyXml(run.xml), config: run.config });
+    const model = lowerSymbolicModel({ name: project.name, semantic: parseSanyXml(run.xml), config: run.config,
+      profile: project.version === 4 ? 'product' : 'single' });
     const orbitProof = input.modelOnly ? null : inspectSymbolicOrbits(model);
     const differential = input.modelOnly ? null : await verifySymbolicWitness({ model, run, spec, config, jar: input.jar });
-    const configured = run.config.constants[model.input.domain];
-    if (configured?.kind !== 'set') throw new Error('TLC301: missing symbolic input domain');
-    const atoms = configured.values.map(value => {
-      if (value.kind !== 'model-value') throw new Error('TLC301: symbolic witness requires model atoms');
-      return value.value;
-    });
-    const witness = differential?.witness ?? importSymbolicDot({ dot: run.dot, name: model.name, domain: model.input.domain, atoms });
+    const inputs = symbolicInputs(model);
+    const domains: Record<string, string[]> = Object.fromEntries(inputs.map(({ domain }) => {
+      const configured = run.config.constants[domain];
+      if (configured?.kind !== 'set') throw new Error('TLC301: missing symbolic input domain');
+      const atoms = configured.values.map(value => {
+        if (value.kind !== 'model-value') throw new Error('TLC301: symbolic witness requires model atoms');
+        return value.value;
+      });
+      return [domain, atoms];
+    }));
+    const firstInput = inputs[0];
+    if (!firstInput) throw new Error('TLC301: symbolic model has no input');
+    const firstAtoms = domains[firstInput.domain];
+    if (!firstAtoms) throw new Error('TLC301: missing symbolic witness input domain');
+    const witness = differential?.witness ?? (model.version === 1
+      ? importSymbolicDot({ dot: run.dot, name: model.name, domain: firstInput.domain, atoms: firstAtoms })
+      : importSymbolicDot({ dot: run.dot, name: model.name, domains }));
+    const runtimeDomain = model.version === 1
+      ? { kind: 'untyped-opaque-unicode-string-identities', constant: firstInput.domain, finiteWitnessAtoms: firstAtoms }
+      : { kind: 'disjoint-untyped-opaque-unicode-string-identities', inputs,
+        domains: Object.fromEntries(Object.entries(domains).map(([domain, atoms]) => [domain, { finiteWitnessAtoms: atoms }])) };
     const files: GeneratedFile[] = [
       { path: 'automaton.json', content: JSON.stringify(witness, null, 2) + '\n' },
       { path: 'symbolic-model.json', content: JSON.stringify(model, null, 2) + '\n' },
@@ -204,10 +219,12 @@ export async function buildProject(input: { project: string; jar: string; out: s
     );
     files.push({ path: 'verification.json', content: JSON.stringify({
       ...run.evidence, projectSha256: sha256(projectBytes), semanticSha256: model.source.semanticSha256,
+      ...(model.version === 2 ? { symbolicIrVersion: 2, inputProfile: 'disjoint-input-product-v1' } : {}),
       generation: input.modelOnly ? 'model-only' : 'symbolic-authority',
-      runtimeDomain: { kind: 'untyped-opaque-unicode-string-identities', constant: model.input.domain, finiteWitnessAtoms: atoms },
+      runtimeDomain,
       orbitVerification: orbitProof ? { kind: orbitProof.kind, stateCount: orbitProof.states.length, edgeCount: orbitProof.edges.length, checkDeadlock: model.checkDeadlock, invariants: model.invariants.map(item => item.name), actionProperties: model.actionProperties.map(item => item.name) } : null,
-    }, null, 2) + '\n', volatile: true, stableJsonKeys: ['kind', 'profile', 'extractor', 'xmlSha256', 'rootModule', 'moduleClosure', 'standardModules', 'configSha256', 'jarSha256', 'dotSha256', 'mode', 'projectSha256', 'semanticSha256', 'generation', 'runtimeDomain', 'orbitVerification'] });
+    }, null, 2) + '\n', volatile: true, stableJsonKeys: ['kind', 'profile', 'extractor', 'xmlSha256', 'rootModule', 'moduleClosure', 'standardModules', 'configSha256', 'jarSha256', 'dotSha256', 'mode', 'projectSha256', 'semanticSha256',
+      ...(model.version === 2 ? ['symbolicIrVersion', 'inputProfile'] : []), 'generation', 'runtimeDomain', 'orbitVerification'] });
     await checkProjectUnchanged();
     await writeGenerated({ out: input.out, files, ...(input.check === undefined ? {} : { check: input.check }) });
     return witness;

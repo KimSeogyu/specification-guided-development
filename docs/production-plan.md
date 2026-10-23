@@ -1,7 +1,7 @@
 # Production implementation plan
 
 The user-selected completion criterion is [successful and sustainable Parangsae adoption](production-goal.md).
-The previous goal turn changed that authoritative scope and informed the Parangsae owner chat. It was progress.
+The previous goal turn informed the Parangsae owner chat of that authoritative scope. It was progress. The checked single-input compiler milestone is now merged in PR #2.
 
 ## Milestones
 
@@ -47,6 +47,14 @@ Independent review corrected square-action stuttering, omitted root/inherited as
 This is compiler progress, not completed application adoption. The next application unit must bind actual Fact equality and metadata to the generated relation, preserve per-partition rollback and first-received values, replace duplicate handwritten policy, and close unauthorized construction/write paths. Persistent identity, restore, crash durability, and execution order handling remain separately scoped work. Keep the actual required-check and architecture-review rules from the Parangsae repository when preparing its integration.
 
 Assignment origins are useful integration information, not a proof about metadata omitted from the TLA+ value. If equality excludes received time, copying an equal input and keeping an old value can be equivalent in the abstract relation while changing concrete metadata. The pilot must define and verify that extra contract, or add a lower-level model and a checked abstraction relation. Do not silently promote update syntax into a metadata guarantee.
+
+## Payload and provenance integration unit
+
+The live pilot audit and owner coordination identified overlapping collector drafts. Parangsae PR #5 treats only known Kline source schemas 1 and 2 as equivalent payloads while retaining the original raw schema and receipt. PR #3 records archive coverage before materialized writes; PR #6 builds on that coverage for funding verification. Preserve these contracts and coordinate the eventual pilot base. Main alone does not describe the pending equality requirement.
+
+The source now adds project v4 with two or three independent inputs over pairwise disjoint nominal domains. `FactWriteEnvelope` models original and latest-rejected payload/provenance separately. Its complete-state action properties preserve first provenance. A checked enabled-input erasure compares the full projected state, accepted/disabled decisions, and observable actions with the original ManifestWrite IR. Native TypeScript 7 and Rust keep fixed primitive argument arity. The original-action TLC oracle compares the entire configured input product. Read the [integration design](pilot-fact-merge-design.md) for alternatives, concrete source targets, and review boundaries.
+
+This removes the compiler gap for independent payload/provenance identities. It does not bind actual Fact objects. Next, derive a closed immutable Fact encoding from the selected native Eq implementation, including the schema 1/2 equivalence and retained provenance; reject source drift and unclassified fields. Connect complete owned Fact rows to generated state, replace the handwritten merge policy, and close public Slot/MergeOutcome construction paths. Model partition refusal and a consumed write plan separately. Existing-row replay must validate keys and preserve source metadata; stored data and live operations remain untouched. Architecture/xtask changes need the repository's Ops/Release review, and required-CI changes need human approval.
 
 ## Design alternatives and decision
 

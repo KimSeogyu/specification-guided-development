@@ -218,6 +218,136 @@ Each factory still creates a separate live object at Init.
 Persistent entity identity, reset prevention, restart, and database or filesystem effects require separate contracts.
 A receipt does not make an external effect atomic.
 
+## Own payload and provenance with v4
+
+Select project v4 `symbolic-owned` for two or three independent opaque inputs.
+Keep one scalar binder per distinct named domain.
+Configure each domain with at least two untyped TLC model atoms.
+The configured domain sets must be pairwise disjoint.
+`Values = {v1, v2}` and `Receipts = {p1, p2}` are separate domains.
+An atom reused in both sets is one TLC value and fails the product-input profile.
+Runtime domains are separate namespaces, so identical text in two domains denotes different tagged atoms.
+
+For payload-associated provenance, add explicit state to the single-input model above.
+The essential source relation is:
+
+```tla
+VARIABLES phase, stored, rejected, storedProvenance, rejectedProvenance
+vars == <<phase, stored, rejected, storedProvenance, rejectedProvenance>>
+
+Init ==
+  /\ phase = "absent"
+  /\ stored = "none"
+  /\ rejected = "none"
+  /\ storedProvenance = "none"
+  /\ rejectedProvenance = "none"
+
+Insert(v, provenance) ==
+  /\ phase = "absent"
+  /\ v \in Values
+  /\ provenance \in Receipts
+  /\ phase' = "present"
+  /\ stored' = v
+  /\ storedProvenance' = provenance
+  /\ rejected' = "none"
+  /\ rejectedProvenance' = "none"
+
+Same(v, provenance) ==
+  /\ phase \in {"present", "conflict"}
+  /\ v = stored
+  /\ provenance \in Receipts
+  /\ UNCHANGED vars
+
+Clash(v, provenance) ==
+  /\ phase \in {"present", "conflict"}
+  /\ v \in Values
+  /\ v # stored
+  /\ provenance \in Receipts
+  /\ phase' = "conflict"
+  /\ rejected' = v
+  /\ rejectedProvenance' = provenance
+  /\ UNCHANGED <<stored, storedProvenance>>
+
+Next ==
+  \E v \in Values, provenance \in Receipts:
+    \/ Insert(v, provenance)
+    \/ Same(v, provenance)
+    \/ Clash(v, provenance)
+
+Spec == Init /\ [][Next]_vars
+
+ProvenanceStable ==
+  [][stored # "none" => storedProvenance' = storedProvenance]_vars
+```
+
+Declare `CONSTANTS Values, Receipts` in the module and configure both sets.
+Retain `StoredStable` and the payload type invariant from the single-input model.
+Extend the type invariant so present stored payloads require stored provenance in `Receipts`.
+Conflict states require rejected provenance in `Receipts`.
+Absent stored payloads and non-conflict rejected payloads require their provenance sentinel `"none"`.
+Include every variable in `vars`.
+A provenance-only write changes the full state and cannot use the square-action stutter exception.
+
+Use a project with `"version": 4`, `"profile": "symbolic-owned"`, and the model's paths and generated class name.
+V4 emits symbolic IR version 2 with ordered `inputs`, a separate `next`, and named input origins.
+V3 keeps its original IR and single-input API and rejects this arity.
+Both profiles reject dependent ranges, opaque-domain enumeration, arithmetic, unsupported temporal properties, and incomplete simultaneous assignments.
+V4 also rejects repeated domains and more than three binders.
+
+Run `sgd_build` before claiming executable validation.
+The finite oracle calls the original actions with every configured input tuple.
+The orbit checker considers the Cartesian product of retained atoms and one fresh atom per domain.
+It renames each domain independently.
+The receipt records every domain and its finite witness atoms.
+`profile: "symbolic-owned-v1"` identifies the shared controlled runner.
+`symbolicIrVersion: 2` and `inputProfile: "disjoint-input-product-v1"` identify the v4 lowering grammar.
+
+Both native targets take primitive arguments in the order of `inputs`.
+For inputs `v` and `provenance`, TypeScript and Rust use `send("A", "r1")`.
+Neither API accepts a map, object, callback, or caller-selected action.
+The reference interpreter's input record is an artifact representation, not the native method signature.
+Every receipt includes all payload and provenance variables before and after the action.
+An input assignment origin includes its `parameter`.
+
+Verify A@r1, B@r2, B@r3, and A@r4.
+The final state keeps stored A@r1 and rejected B@r3.
+The second B must update rejected provenance even though the rejected payload identity is unchanged.
+The final A must preserve the original receipt and latest rejected pair.
+
+For an explicit relation to the original payload model, call `sgd_refine` with absolute paths in `abstract`, `concrete`, and `binding`.
+The binding maps abstract variables and inputs to concrete names and concrete actions to abstract actions:
+
+```json
+{
+  "version": 1,
+  "variables": { "phase": "phase", "stored": "stored", "rejected": "rejected" },
+  "inputs": { "v": "v" },
+  "actions": { "Insert": "Insert", "Same": "Same", "Clash": "Clash" }
+}
+```
+
+The check compares initial projection, every enabled or disabled input class, observable actions, and full projected successors.
+It checks the supplied IR under the accepted grammar.
+Keep the separate source-build receipts because erasure does not rerun TLC or attest original source provenance.
+The MCP tool is read-only and returns evidence.
+The CLI can write managed evidence:
+
+```sh
+node /absolute/plugin/path/scripts/run.mjs refine --abstract /app/high/symbolic-model.json --concrete /app/low/symbolic-model.json --binding /app/erasure.json --out /app/erasure-evidence
+node /absolute/plugin/path/scripts/run.mjs refine --abstract /app/high/symbolic-model.json --concrete /app/low/symbolic-model.json --binding /app/erasure.json --out /app/erasure-evidence --check
+```
+
+Use a separate evidence output directory so refinement generation does not replace an owned executable artifact set.
+Rerun the build and erasure checks when either model changes.
+An extra provenance guard that disables an otherwise enabled payload write must fail erasure.
+
+An actual Fact adapter remains required.
+It must encode the real equality contract, retain owned payload and provenance, and control the application's actual write path.
+Parangsae's pending Kline contract treats only source schema 1 and 2 as equivalent payloads while preserving the first raw schema and receipt.
+Other schema values stay distinct.
+Raw all-field equality and ignored provenance both change that contract.
+The model example and supplied-IR erasure do not establish partition rollback, persisted loading, exclusive writers, file transactions, or completed Parangsae adoption.
+
 ## Own a finite state machine
 
 Use project v2 `finite-owned` when the generated API must control actual modeled state.
@@ -306,7 +436,7 @@ node /absolute/plugin/path/scripts/run.mjs build --project /app/model/project.js
 
 Inspect `/app/generated/automaton.json` to review all concrete variables.
 The generated `verification.json` records the completed finite run and its source closure.
-Do not use `sgd_compile` for v2 or v3.
+Do not use `sgd_compile` for v2, v3, or v4.
 That tool rejects imported DOT as a source of executable authority.
 
 Build the generated TypeScript package before importing its JavaScript:
@@ -435,7 +565,7 @@ Record the supplied files and syntax exclusions when reporting coverage.
 ## Regenerate after a requirement change
 
 Update the model and rerun TLC before generating artifacts for a changed requirement.
-For v3, `sgd_build` also reruns semantic lowering, the finite input oracle, and equality/copy orbit validation.
+For v3 and v4, `sgd_build` also reruns semantic lowering, the finite input oracle, and equality/copy orbit validation.
 Rerun application adapter checks when payload encoding or equality changes.
 Check both the permitted behavior and the expected rejection in the actual application integration.
 Keep the generated output inventory so regeneration can remove obsolete owned files.

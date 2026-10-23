@@ -1,7 +1,7 @@
 import type { FiniteValue } from './finite-types.js';
 import { type SanyDefinition, type SanyExpression, type SanyModule, type SanySourceSpan } from './sany-xml.js';
 import type { ParsedSymbolicConfig, TlcConfigValue } from './symbolic-tlc.js';
-import { symbolicModel, type SymbolicExpression, type SymbolicGuard, type SymbolicModel } from './symbolic-types.js';
+import { symbolicModel, type SymbolicExpression, type SymbolicGuard, type SymbolicModel, type SymbolicModelV1, type SymbolicModelV2 } from './symbolic-types.js';
 
 const conjunctions = new Set(['$ConjList', '\\land']);
 const disjunctions = new Set(['$DisjList', '\\lor']);
@@ -21,7 +21,11 @@ function substitute(expression: SanyExpression, values: ReadonlyMap<string, Sany
   return { ...expression, arguments: expression.arguments.map(argument => substitute(argument, values)), bounded: expression.bounded.map(bound => ({ ...bound, range: substitute(bound.range, values) })) };
 }
 
-export function lowerSymbolicModel(input: { name: string; semantic: SanyModule; config: ParsedSymbolicConfig }): SymbolicModel {
+export interface LowerSymbolicInput { name: string; semantic: SanyModule; config: ParsedSymbolicConfig; profile?: 'single' | 'product' }
+export function lowerSymbolicModel(input: LowerSymbolicInput & { profile?: 'single' }): SymbolicModelV1;
+export function lowerSymbolicModel(input: LowerSymbolicInput & { profile: 'product' }): SymbolicModelV2;
+export function lowerSymbolicModel(input: LowerSymbolicInput): SymbolicModel;
+export function lowerSymbolicModel(input: LowerSymbolicInput): SymbolicModel {
   const semantic = input.semantic;
   const variables = [...semantic.variables].sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
   const variableIds = new Map(variables.map(variable => [variable.uid, variable.name]));
@@ -132,18 +136,30 @@ export function lowerSymbolicModel(input: { name: string; semantic: SanyModule; 
   }
   closure(init.body); closure(next.body);
   const quantified = application(next.body, '$BoundedExists', 1);
-  const bound = quantified.bounded[0];
-  if (quantified.bounded.length !== 1 || !bound || bound.parameters.length !== 1 || !bound.parameters[0]) return failure('Next requires one scalar bounded input parameter', quantified.source);
-  const parameter = bound.parameters[0];
-  const range = head(bound.range);
-  if (range.kind !== 'apply' || range.operator.kind !== 'constant' || range.arguments.length) return failure('input range must name a configured opaque domain', range.source);
-  const domain = range.operator.name;
-  const domainConfig = input.config.constants[domain];
-  if (domainConfig?.kind !== 'set' || domainConfig.values.length < 2 || domainConfig.values.some(value => value.kind !== 'model-value')) return failure('opaque input domain requires at least two configured model values', range.source);
-  if (domainConfig.values.some(value => typeof value.value === 'string' && value.value.length > 2 && value.value[1] === '_')) return failure('typed TLC model values cannot represent the untyped runtime data domain', range.source);
-  if (new Set(domainConfig.values.map(value => value.value)).size !== domainConfig.values.length) return failure('opaque domain contains duplicate atoms', range.source);
+  const product = input.profile === 'product';
+  if (quantified.bounded.length < (product ? 2 : 1) || quantified.bounded.length > (product ? 3 : 1)) return failure(product ? 'Next requires 2–3 scalar inputs over distinct domains' : 'Next requires one scalar bounded input parameter', quantified.source);
+  const atoms = new Set<string>();
+  const domains = new Map<string, string>();
+  const parameters = quantified.bounded.map(bound => {
+    const parameter = bound.parameters[0];
+    if (bound.tuple || bound.parameters.length !== 1 || !parameter) return failure('each Next input must have one scalar binder and an independent domain', quantified.source);
+    const range = head(bound.range);
+    if (range.kind !== 'apply' || range.operator.kind !== 'constant' || range.arguments.length) return failure('input range must name an independent configured opaque domain', range.source);
+    const domain = range.operator.name;
+    if ([...domains.values()].includes(domain)) return failure('each Next input requires a distinct opaque domain', range.source);
+    const domainConfig = input.config.constants[domain];
+    if (domainConfig?.kind !== 'set' || domainConfig.values.length < 2 || domainConfig.values.some(value => value.kind !== 'model-value')) return failure('opaque input domain requires at least two configured model values', range.source);
+    const configured = domainConfig.values.map(value => String(value.value));
+    if (configured.some(value => value.length > 2 && value[1] === '_')) return failure('typed TLC model values cannot represent the untyped runtime data domain', range.source);
+    if (new Set(configured).size !== configured.length) return failure('opaque domain contains duplicate atoms', range.source);
+    if (configured.some(value => atoms.has(value))) return failure('opaque input domains must have pairwise disjoint configured atom sets', range.source);
+    configured.forEach(value => atoms.add(value)); domains.set(range.operator.uid, domain);
+    return { parameter, domain };
+  });
+  if (new Set(parameters.map(item => item.parameter.uid)).size !== parameters.length || new Set(parameters.map(item => item.parameter.name)).size !== parameters.length) return failure('Next input parameters must be distinct', quantified.source);
+  const inputExpressions = new Map(parameters.map(({ parameter }) => [parameter.uid, product ? { kind: 'input', parameter: parameter.name } satisfies SymbolicExpression : { kind: 'input' } satisfies SymbolicExpression]));
   for (const [name, value] of Object.entries(input.config.constants)) {
-    if (name !== domain && (value.kind === 'model-value' || (value.kind === 'set' && value.values.some(item => item.kind === 'model-value')))) return failure('only the input domain may contain configured model values');
+    if (![...domains.values()].includes(name) && (value.kind === 'model-value' || (value.kind === 'set' && value.values.some(item => item.kind === 'model-value')))) return failure('only the input domains may contain configured model values');
   }
   const scalarConstant = (value: TlcConfigValue, source: SanySourceSpan | null): FiniteValue => {
     switch (value.kind) {
@@ -162,7 +178,10 @@ export function lowerSymbolicModel(input: { name: string; semantic: SanyModule; 
       if (!variable) return failure('unknown root variable', result.source);
       return { kind: 'state', variable };
     }
-    if (result.operator.kind === 'parameter' && result.operator.uid === parameter.uid && !result.arguments.length) return { kind: 'input' };
+    if (result.operator.kind === 'parameter' && !result.arguments.length) {
+      const expression = inputExpressions.get(result.operator.uid);
+      if (expression) return expression;
+    }
     if (result.operator.kind === 'constant' && !result.arguments.length) {
       const configured = input.config.constants[result.operator.name];
       if (!configured) return failure('unassigned constant', result.source);
@@ -190,7 +209,8 @@ export function lowerSymbolicModel(input: { name: string; semantic: SanyModule; 
       const member = value(argument(result, 0), allowNext);
       const set = head(argument(result, 1));
       let predicate: SymbolicGuard;
-      if (set.kind === 'apply' && set.operator.kind === 'constant' && set.operator.name === domain && !set.arguments.length) predicate = { kind: 'in-domain', domain, value: member };
+      const domain = set.kind === 'apply' && set.operator.kind === 'constant' && !set.arguments.length ? domains.get(set.operator.uid) : undefined;
+      if (domain !== undefined) predicate = { kind: 'in-domain', domain, value: member };
       else {
         let elements: FiniteValue[];
         if (set.kind === 'apply' && set.operator.kind === 'builtin' && set.operator.name === '$SetEnumerate') elements = set.arguments.map(element => {
@@ -244,14 +264,23 @@ export function lowerSymbolicModel(input: { name: string; semantic: SanyModule; 
     if (expression.kind === 'apply' && expression.operator.kind === 'builtin' && disjunctions.has(expression.operator.name)) { expression.arguments.forEach(actionCall); return; }
     if (expression.kind !== 'apply' || expression.operator.kind !== 'definition') return failure('Next input body must be a disjunction of named action calls', expression.source);
     const action = definition(expression.operator.uid);
-    const passed = expression.arguments[0];
-    if (action.parameters.length !== 1 || expression.arguments.length !== 1 || !passed || passed.kind !== 'apply' || passed.operator.kind !== 'parameter' || passed.operator.uid !== parameter.uid || passed.arguments.length) return failure('each action must receive the same Next input directly', expression.source);
-    const formal = action.parameters[0];
-    if (!formal) return failure('missing action input', action.source);
-    const body = inline(substitute(action.body, new Map([[formal.uid, passed]])));
+    if (action.parameters.length !== parameters.length || expression.arguments.length !== parameters.length || parameters.some(({ parameter }, index) => {
+      const passed = expression.arguments[index];
+      return !passed || passed.kind !== 'apply' || passed.operator.kind !== 'parameter' || passed.operator.uid !== parameter.uid || passed.arguments.length !== 0;
+    })) return failure('each action must receive every Next input directly in binder order', expression.source);
+    const argumentsByFormal = new Map(action.parameters.map((formal, index) => {
+      const passed = expression.arguments[index];
+      if (!passed) return failure('missing action input', action.source);
+      return [formal.uid, passed];
+    }));
+    const body = inline(substitute(action.body, argumentsByFormal));
     for (const terms of alternatives(body)) {
       const updates = new Map<string, SymbolicExpression>();
-      const guards: SymbolicGuard[] = [{ kind: 'in-domain', value: { kind: 'input' }, domain }];
+      const guards: SymbolicGuard[] = parameters.map(({ parameter, domain }) => {
+        const expression = inputExpressions.get(parameter.uid);
+        if (!expression) return failure('missing symbolic input identity', action.source);
+        return { kind: 'in-domain', value: expression, domain };
+      });
       const assign = (variable: string, expression: SymbolicExpression): void => {
         if (updates.has(variable)) return failure(`multiple next-state constraints for ${variable}`, action.source);
         updates.set(variable, expression);
@@ -284,10 +313,14 @@ export function lowerSymbolicModel(input: { name: string; semantic: SanyModule; 
     checkStateTuple(argument(square, 1));
     return { kind: 'square-action', name, predicate: guard(inline(argument(square, 0)), true) } satisfies SymbolicModel['actionProperties'][number];
   });
-  return symbolicModel({ version: 1, kind: 'symbolic-owned', name: input.name, checkDeadlock: input.config.checkDeadlock, variables: variables.map(variable => variable.name),
-    input: { parameter: parameter.name, domain, next: next.name }, initial: Object.fromEntries(variables.map(variable => {
+  const program = { kind: 'symbolic-owned', name: input.name, checkDeadlock: input.config.checkDeadlock, variables: variables.map(variable => variable.name),
+    initial: Object.fromEntries(variables.map(variable => {
       const assigned = initial.get(variable.name);
       if (!assigned) return failure('Init leaves a variable unconstrained', init.source);
       return [variable.name, assigned];
-    })), branches, invariants, actionProperties });
+    })), branches, invariants, actionProperties } satisfies Omit<SymbolicModel, 'version' | 'source'>;
+  if (product) return symbolicModel({ version: 2, ...program, inputs: parameters.map(({ parameter, domain }) => ({ parameter: parameter.name, domain })), next: next.name });
+  const first = parameters[0];
+  if (!first) return failure('missing symbolic input parameter', quantified.source);
+  return symbolicModel({ version: 1, ...program, input: { parameter: first.parameter.name, domain: first.domain, next: next.name } });
 }
