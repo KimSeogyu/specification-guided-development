@@ -203,7 +203,9 @@ ${consume.join('\n')}
   }, { imports, declarations, fact: (fact, index) => foldDefinition(plan, fact, index) });
   const control = generateOwnedTypeScript({ automaton: plan.control, className: controlName }).find(file => file.path === 'machine.ts');
   if (control === undefined) throw new Error('PART301: finite control authority was not generated');
-  return files.filter(file => file.path !== 'README.md').map(file => file.path === 'tsconfig.json' ? {
+  return files.filter(file => file.path !== 'README.md').map(file => file.path === 'machine.ts' ? {
+    ...file, content: file.content.trimEnd() + '\n',
+  } : file.path === 'tsconfig.json' ? {
     ...file, content: file.content.replace('"primitive.ts"', '"primitive.ts", "primitive-control.ts"'),
   } : file).concat([
     { path: 'primitive-control.ts', content: control.content },
