@@ -1,6 +1,6 @@
 # Partition authority after complete-row ownership
 
-Status: v6 now has a source implementation of the [closed partition data fold](partition-fold.md). Its complete-row and control instances remain private and its consumed result is explicitly unbound data. The resource-bound session and sink-coverage checks below remain planned. The actual Parangsae draft still uses the v5 per-key owners with a handwritten aggregate fold; its migration and storage closure remain required work.
+Status: v6 now has a source implementation of the [closed partition data fold](partition-fold.md). Its complete-row and control instances remain private and its consumed result is explicitly unbound data. The resource-bound session and sink-coverage checks below remain planned. Parangsae draft PR #9 now uses the generated v6 fold. Its physical resource/writer consumption and complete source/sink closure remain required work.
 
 ## Decision and alternatives
 
@@ -12,7 +12,7 @@ Generate a closed batch fold that owns the per-key owners and a finite aggregate
 | An AST checker for the handwritten fold | Possible, but requires a source profile for loops, map operations, callbacks, counters, aliases, and control flow. Writer and source coverage still need separate checks. Refactors can change the accepted grammar without changing the business behavior. |
 | A generated closed fold with a private controller | Recommended. The compiler generates the only observation path and the result constructor. The application supplies admitted complete rows through one consuming batch operation. The collection runtime remains an explicit compiler contract. |
 
-The current integration exposes the gap in two places. Parangsae's `crates/collector/src/manifest.rs::merge_rows` accepts an arbitrary key callback and interprets each `WriteEffect` in Rust. Its private `MergeOutcome::commit` then accepts storage callbacks. `crates/collector/src/store.rs::commit_merge` supplies the path, dataset, symbol, and writer independently of the loaded baseline. Private fields and a consuming method prevent some forgery, but do not authenticate that resource.
+The earlier v5 integration exposed the gap in two places. Parangsae's former `crates/collector/src/manifest.rs::merge_rows` accepted an arbitrary key callback and interpreted each `WriteEffect` in Rust. Its private `MergeOutcome::commit` accepted storage callbacks. V6 removes that fold and result type; ordinary `store::upsert_by_day` now consumes an unbound generated report and still selects physical IO. The former `crates/collector/src/store.rs::commit_merge` supplied the path, dataset, symbol, and writer independently of the loaded baseline. V6 removes that helper but still leaves physical selection in the ordinary storage consumer. Private fields and a consuming method prevent some forgery, but do not authenticate that resource.
 
 ## Finite aggregate control
 
@@ -59,7 +59,6 @@ Pele should show the complete controller states beside the existing envelope mod
 V6 generates a consuming data operation with these available interfaces:
 
 ```rust
-trait PartitionFact: private::SupportedPartitionFact {}
 struct ClosedPartition<T: PartitionFact> { /* private fields */ }
 fn fold_partition<T: PartitionFact>(baseline: Vec<T>, incoming: Vec<T>)
     -> Result<ClosedPartition<T>, PartitionError>;
@@ -112,7 +111,7 @@ impl<T: PartitionFact> ClosedPartition<'_, T> {
 
 Only a checked concrete reader creates `LoadedPartition`. Its private session owns the canonical selected resource, dataset, symbol, day, loaded baseline, and writer choice. It validates incoming and persisted rows against that same resource. `commit` accepts no replacement path, writer, baseline, or action. Empty input cannot authorize overwriting an existing partition with a fabricated empty baseline.
 
-The exclusive store borrow prevents overlapping sessions through that live store object. Other store instances, processes, restarts, symlink or hardlink aliases, and external writers remain outside that guarantee. A pre-write baseline hash alone leaves a time-of-check/time-of-use window. Stronger writer isolation needs locking or an atomic versioned replacement protocol covering the actual load-to-write interval.
+The proposed exclusive store borrow prevents overlapping sessions through that live store object. Other store instances, processes, restarts, symlink or hardlink aliases, and external writers remain outside that guarantee. A pre-write baseline hash alone leaves a time-of-check/time-of-use window. Stronger writer isolation needs locking or an atomic versioned replacement protocol covering the actual load-to-write interval.
 
 ## Sink coverage and existing effects
 
@@ -146,3 +145,9 @@ The implementation must demonstrate failures through native interfaces and the s
 Rust first binds the actual Parangsae types and storage boundary. The same control and fold semantics must have a TypeScript 7 target using authenticated rows and a private, consumed result. Portable DTO parity does not establish TypeScript source bindings or reproduce Rust constructor checks.
 
 Completion of this unit requires a reviewed implementation, real model execution, native bypass checks, actual temporary-partition behavior, and a reproducible mandatory verification path. Sustainable feature, requirement-change, and defect-fix cycles remain part of the [production goal](production-goal.md).
+
+## Concrete following source boundaries
+
+Live Parangsae grounding found additional routes that the resource implementation must close. The private same-module `write_batch(&Path, ...)` serves both Fact and Gap writes; a wrapper around it does not establish exclusive Fact authority. Raw/history paths join a full listing key after classifying only its basename, so a valid archive name does not establish a safe relative key or requested-prefix membership. A typed VisionKey must enforce that path contract before those effects. Kline needs a closed generated dataset selector because five normative datasets share KlineFact.
+
+Workspace binaries also have independent sinks. Backtest's caller-selected ledger reaches arbitrary append/fsync; examples include a DuckDB process. Enumerating only collector libraries cannot establish their namespace or target coverage. The next source profile must classify or refuse every admitted target and effect route, including aliases, function values, new Cargo targets and unsupported expansion. Registry build scripts and genuine trusted dependencies remain a separately stated environment boundary. No current data-fold or package effect grant establishes these properties.

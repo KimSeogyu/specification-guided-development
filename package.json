@@ -21,14 +21,16 @@
     "build": "node node_modules/typescript/bin/tsc",
     "typecheck": "node node_modules/typescript/bin/tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
-    "check": "npm run typecheck && npm test && npm run test:rust-bindings",
+    "check": "npm run typecheck && npm test && npm run test:rust-bindings && npm run test:codex-host-protocol",
     "test:rust-bindings": "cargo test --locked --manifest-path tools/rust-bindings/Cargo.toml --target-dir .runtime/rust-binding-tool",
     "plugins:package": "node plugins/package.mjs",
     "plugins:verify": "node scripts/verify-plugins.mjs",
     "verify:ingestion": "node scripts/verify-ingestion.mjs",
     "verify:partition": "node examples/partition-control/verify-model.mjs",
     "demo": "npm run build && node scripts/demo.mjs",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "verify:codex-host": "node scripts/verify-codex-host.mjs",
+    "test:codex-host-protocol": "node --test scripts/verify-codex-host.test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
