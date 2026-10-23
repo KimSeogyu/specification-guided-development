@@ -1,5 +1,223 @@
 # Model the contract that the application uses
 
+## Own data-bound equality/copy behavior with v3
+
+Select project v3 `symbolic-owned` for actions that compare and copy one opaque input value.
+The public API accepts actual immutable Unicode string identities.
+Generated guards choose the model action, rather than accepting a caller-selected action name.
+
+This profile supports one bounded input domain and 1–12 root state variables.
+Use one scalar input binder in `Next` and pass that input directly to each named action.
+Configure the finite witness domain with at least two distinct TLC model values.
+Use scalar literals or scalar sets for other configured constants.
+The grammar supports equality, inequality, scalar-set membership, input-domain membership, and Boolean predicates.
+Each action assigns or leaves unchanged every variable exactly once.
+Assignment values can be scalar literals, the input, or values copied from the old state.
+All assignments take effect simultaneously.
+
+Init assigns scalar literals to every state variable.
+Runtime values distinguish scalar strings, booleans, exact decimal integers, and domain-tagged data atoms.
+A model string `"none"` and input data whose text is `none` are different values.
+The runtime uses exact string equality without Unicode normalization.
+The TypeScript API rejects unpaired surrogate code units.
+Rust `&str` already contains valid UTF-8.
+
+The compiler reads strict SANY semantic XML and rejects unsupported executable operators or incomplete updates.
+Top-level assumptions, module instances, and proofs are outside this source profile.
+Arithmetic, object fields, hashing, arbitrary collections, custom equality callbacks, and multiple input domains are unsupported.
+Configured properties are limited to supported square-action safety properties such as `[][P]_vars`.
+This grammar does not establish liveness or fairness.
+
+The fact-merge example stores the first input, leaves the slot unchanged for equal input, and records a different input without replacing the stored value:
+
+```tla
+------------------------------ MODULE ManifestWrite ------------------------------
+
+EXTENDS Integers
+
+CONSTANTS Values
+
+VARIABLES phase, stored, rejected
+
+vars == <<phase, stored, rejected>>
+
+Init ==
+  /\ phase = "absent"
+  /\ stored = "none"
+  /\ rejected = "none"
+
+Insert(v) ==
+  /\ phase = "absent"
+  /\ v \in Values
+  /\ phase' = "present"
+  /\ stored' = v
+  /\ rejected' = "none"
+
+Same(v) ==
+  /\ phase \in {"present", "conflict"}
+  /\ v = stored
+  /\ UNCHANGED vars
+
+Clash(v) ==
+  /\ phase \in {"present", "conflict"}
+  /\ v \in Values
+  /\ v # stored
+  /\ phase' = "conflict"
+  /\ rejected' = v
+  /\ UNCHANGED stored
+
+Next ==
+  \E v \in Values:
+    \/ Insert(v)
+    \/ Same(v)
+    \/ Clash(v)
+
+Spec == Init /\ [][Next]_vars
+
+TypeOK ==
+  /\ phase \in {"absent", "present", "conflict"}
+  /\ (phase = "absent") <=> (stored = "none")
+  /\ phase = "conflict" => (rejected \in Values /\ rejected # stored)
+  /\ phase = "present" => rejected = "none"
+  /\ phase = "absent" => rejected = "none"
+  /\ stored = "none" \/ stored \in Values
+
+ConflictKeepsStored ==
+  phase = "conflict" => stored \in Values
+
+StoredStable ==
+  [][stored # "none" => stored' = stored]_vars
+
+=============================================================================
+```
+
+The finite TLC instance uses model-value atoms, not string literals:
+
+```text
+SPECIFICATION Spec
+CONSTANT Values = {v1, v2}
+
+INVARIANT TypeOK
+INVARIANT ConflictKeepsStored
+PROPERTY StoredStable
+```
+
+The witness importer represents these atoms as domain-tagged data values.
+The atoms are separate from scalar strings with the same spelling.
+This finite configuration checks the configured instance.
+Two configured atoms alone do not prove behavior for arbitrary runtime values.
+
+The project selects semantic compilation and the generated owner name:
+
+```json
+{
+  "version": 3,
+  "profile": "symbolic-owned",
+  "name": "ManifestWrite",
+  "spec": "ManifestWrite.tla",
+  "config": "ManifestWrite.cfg",
+  "targets": [
+    "typescript",
+    "rust"
+  ],
+  "binding": {
+    "className": "FactMachine"
+  }
+}
+```
+
+Run `sgd_model` for finite model review without generating an owner.
+For v3, its output includes `automaton.json` as a `symbolic-witness`, `semantic.xml`, and lowered `symbolic-model.json`.
+`verification.json` records `generation: "model-only"` and no orbit result.
+Model-only mode does not run the independent input oracle or validate all equality/copy orbits.
+
+Run `sgd_build` to generate executable artifacts.
+The executable build requires these separate checks:
+
+1. A controlled, completed TLC run over the configured finite model and source snapshot.
+2. Semantic lowering from strict SANY XML into the supported symbolic grammar.
+3. An independent TLC oracle over every reachable configured state/input pair, using the original TLA+ action bodies.
+4. Equality/copy orbit validation over existing data identities and one fresh identity, with the configured invariants, supported action properties, and deadlock setting.
+
+The pinned TLC DOT action labels omit argument identities.
+Never infer parameter guards or caller permissions from those labels alone.
+The independent input oracle compares the selected action and complete successor with the lowered relation.
+Executable output includes `input-verification.json`, `input-oracle.dot`, and `orbit-proof.json` in addition to the finite witness and symbolic IR.
+
+The orbit result relies on the accepted equality/copy grammar, where consistent atom renaming preserves behavior.
+It covers immutable string identities under that grammar.
+It is not an arbitrary-domain TLC proof for unrestricted TLA+ or application objects.
+The compiler respects configured `CHECK_DEADLOCK`, invariants, and supported square-action properties.
+Do not disable a check merely to hide an unexpected behavior.
+
+Use absolute paths in MCP arguments.
+The equivalent CLI build is:
+
+```sh
+node /absolute/plugin/path/scripts/run.mjs build --project /app/model/project.json --jar /tools/tla2tools.jar --out /app/generated
+```
+
+Build the generated TypeScript package:
+
+```sh
+npm install --prefix /app/generated/typescript
+npm run build --prefix /app/generated/typescript
+```
+
+Submit input data through the generated owner:
+
+```typescript
+import { createFactMachine } from "./generated/typescript/dist/machine.js";
+
+const fact = createFactMachine();
+const inserted = fact.send("none");
+if (!inserted.ok || inserted.action !== "Insert") throw new Error("Expected Insert");
+const same = fact.send("none");
+if (!same.ok || same.action !== "Same") throw new Error("Expected Same");
+const clash = fact.send("different");
+if (!clash.ok || clash.action !== "Clash") throw new Error("Expected Clash");
+const stored = clash.after.values.stored;
+if (stored.kind !== "data" || stored.value !== "none") throw new Error("Stored data changed");
+const origin = clash.updates.stored;
+if (origin?.kind !== "state" || origin.variable !== "stored") throw new Error("Expected old-state copy");
+```
+
+A call such as `fact.send("Same")` submits the text `Same` as data.
+The API has no caller action selector.
+Each successful receipt exposes `action`, `before`, `after`, and `updates` for every simultaneous assignment.
+Origins identify a literal, input, or old-state variable.
+Use all assignments when integrating the behavior, rather than hardcoding a mutation from the action name.
+A successful `Same` leaves model values unchanged and still increments the owner's revision.
+
+For Rust, add the generated crate as a separate dependency using the package name in its README.
+With a dependency named `authority`, the API uses actual string input:
+
+```rust
+use authority::FactMachine;
+
+let mut fact = FactMachine::new();
+assert_eq!(fact.send("none").unwrap().action, "Insert");
+assert_eq!(fact.send("none").unwrap().action, "Same");
+let clash = fact.send("different").unwrap();
+assert_eq!(clash.action, "Clash");
+```
+
+TypeScript protects state in a closure and returns frozen copies.
+Rust keeps state private in the generated crate and returns owned copies.
+A rejected input preserves both state and revision.
+Neither API exposes a custom equality callback, arbitrary object input, raw-state constructor, or restore method.
+
+Before applying this API to application payloads, define an explicit adapter to immutable string identity.
+Prove or test that the encoding preserves the application's equality contract.
+If equality excludes metadata such as `received_ts`, encode only the fields that define identity and verify that exclusion.
+Do not assume that serializing an arbitrary object preserves the required equality.
+Connect the generated owner to the real state path instead of maintaining a parallel handwritten implementation.
+The fact-merge model names a Parangsae operation, but this example alone does not establish actual Parangsae adoption.
+
+Each factory still creates a separate live object at Init.
+Persistent entity identity, reset prevention, restart, and database or filesystem effects require separate contracts.
+A receipt does not make an external effect atomic.
+
 ## Own a finite state machine
 
 Use project v2 `finite-owned` when the generated API must control actual modeled state.
@@ -10,7 +228,7 @@ The executable profile has these limits:
 
 - Each variable has one scalar type across all nodes: string, boolean, or exact decimal integer.
 - TLC finds exactly one initial concrete state.
-- Action labels are named, unparameterized TLA+ operators.
+- Actions are named, unparameterized TLA+ operators. The compiler checks reachable action semantics in SANY XML, not only DOT labels.
 - Each concrete node and action has at most one distinct successor.
 - Compound values, model values, parameterized action labels, and nondeterministic successors are unsupported.
 - Configuration reductions, transformed labels, and operator overrides are unsupported.
@@ -88,7 +306,7 @@ node /absolute/plugin/path/scripts/run.mjs build --project /app/model/project.js
 
 Inspect `/app/generated/automaton.json` to review all concrete variables.
 The generated `verification.json` records the completed finite run and its source closure.
-Do not use `sgd_compile` for v2.
+Do not use `sgd_compile` for v2 or v3.
 That tool rejects imported DOT as a source of executable authority.
 
 Build the generated TypeScript package before importing its JavaScript:
@@ -122,7 +340,9 @@ Both targets expose full copied snapshots through `read()`.
 Snapshot values use tagged string, boolean, or integer values.
 Integer values and the checked u64 revision serialize as decimal strings.
 A successful send returns the before and after snapshots.
-A named self-loop such as terminal `Wait` is a public successful event and increments revision. Here terminal means that lifecycle state no longer changes; it does not mean that every send is rejected.
+A named self-loop such as terminal `Wait` is a public successful event and increments revision.
+Here terminal means that lifecycle state no longer changes.
+It does not mean that every send is rejected.
 A rejected send preserves both the current state and revision.
 The TypeScript snapshot and API facade are frozen.
 The Rust owner has private fields and returns owned snapshot copies.
@@ -215,8 +435,12 @@ Record the supplied files and syntax exclusions when reporting coverage.
 ## Regenerate after a requirement change
 
 Update the model and rerun TLC before generating artifacts for a changed requirement.
+For v3, `sgd_build` also reruns semantic lowering, the finite input oracle, and equality/copy orbit validation.
+Rerun application adapter checks when payload encoding or equality changes.
 Check both the permitted behavior and the expected rejection in the actual application integration.
 Keep the generated output inventory so regeneration can remove obsolete owned files.
+Model-only generation removes executable artifacts previously owned by the same output directory.
+Use a separate output directory for model review when you need to retain an existing generated package.
 Use `build --check` to compare stable artifacts and stable provenance fields without replacing files.
 V1 diagnostic projects also support `compile --check`.
 TLC log bytes and volatile run details are outside the byte comparison.

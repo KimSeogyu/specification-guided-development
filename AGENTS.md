@@ -8,6 +8,7 @@ Compile TLC state graphs into language-specific source checks. Keep application 
 - Support TypeScript and Rust through separate backends that share one automaton representation.
 - Keep exact finite state separate from projected diagnostic state. Only controlled completed builds can generate finite-owned authority; imported DOT remains unverified.
 - Read `docs/finite-owned.md` before changing executable semantics. Preserve all supported variables and reject ambiguous executable choices. State the per-live-object boundary; do not claim persistence, external data binding, effect atomicity, or application-wide coverage without separate evidence.
+- For v3 data input, read `docs/symbolic-owned.md`. Derive policy from validated SANY source; pinned DOT omits action arguments. Keep bounded TLC evidence, equality/copy orbit validation, and actual application integration as distinct claims. Do not replace original fact equality with all-field serialization or caller-selected Same/Clash events.
 - Use exact TypeScript 7.0.2 for builds and native syntax analysis. Do not reintroduce a legacy compiler API.
 - Reject unsupported graph labels, ambiguous projections, and unsupported code in a checked construct. Never treat an unknown construct as a permitted transition.
 - Report the finite model scope. A projected edge is an observed possible transition, not a proof of every guard or every application behavior.

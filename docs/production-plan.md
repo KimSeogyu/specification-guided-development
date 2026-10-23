@@ -36,6 +36,16 @@ Execution order lifecycle is a later candidate. Its live `OrderProgress` and `Or
 
 The next unit must compare concrete graph parameterization with symbolic action compilation, define the exact guarantee for actual payloads, and exercise valid, repeated, and conflicting data against the existing native contract. Coordinate the selected independent branch with the owning Parangsae chat before modifying its active collector or execution work. Leave stored market data and the running collector untouched.
 
+## Parameterized action compiler unit
+
+The next compiler unit now uses a distinct v3 [symbolic-owned profile](symbolic-owned.md). Independent alternatives showed that the pinned DOT omits action arguments and that two payload atoms cannot identify every update law. The compiler therefore lowers the original SANY action relation, preserving outer input admission, guards, complete simultaneous assignments, and assignment origins. DOT remains finite evidence, not the source of a guessed generic policy.
+
+The native TypeScript 7 and Rust owners accept immutable Unicode string identities and choose the source action internally. They preserve data/sentinel tags and keep the original stored identity while updating the latest rejected identity. The independent TLC input oracle calls original model actions for every configured reachable state/input pair. Equality/copy orbits separately cover existing-atom and fresh-atom input classes under the admitted grammar. A source requirement change that resolves conflict on repeated original input changes both native outputs through regeneration.
+
+Independent review corrected square-action stuttering, omitted root/inherited assumptions, action-level applications of parameterized pure helpers, mixed scalar comparison errors, typed model-value admission, and deadlocks outside the configured finite atom set. The source profile and review regressions retain those boundaries. Actual Parangsae TLA+ source files can be checked with their explicitly selected co-located pinned JAR; generated output stays outside Parangsae.
+
+This is compiler progress, not completed application adoption. The next application unit must bind actual Fact equality and metadata to the generated relation, preserve per-partition rollback and first-received values, replace duplicate handwritten policy, and close unauthorized construction/write paths. Persistent identity, restore, crash durability, and execution order handling remain separately scoped work. Keep the actual required-check and architecture-review rules from the Parangsae repository when preparing its integration.
+
 ## Design alternatives and decision
 
 Independent design reviews compared full concrete graph execution, symbolic Action compilation through SANY, and a TLC runtime oracle. Full concrete execution preserves the existing TLC-to-graph pipeline and avoids reconstructing lost guards. It is the first implementation profile. Symbolic SANY compilation remains necessary when a Parangsae contract requires application domains outside the executable finite graph. A runtime Java oracle is not the default application path.

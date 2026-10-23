@@ -17,6 +17,7 @@ Requirements
 Specification Guided Development is an initial compiler for this workflow.
 The [production goal](docs/production-goal.md) is successful and sustainable adoption in Parangsae.
 Project v2 retains full concrete state and generates an owner that permits only modeled transitions.
+Project v3 adds immutable data input and compiles a supported symbolic equality/copy relation from SANY, checked against original TLA+ actions with a finite input oracle.
 Project v1 projects one string variable and generates declaration or import diagnostics.
 The [finite-owned guide](docs/finite-owned.md) describes the new source-checkout milestone; the published v0.1.0 archives contain the earlier diagnostic prototype.
 
@@ -26,6 +27,7 @@ The current source supports these profiles:
 
 | Binding | TypeScript | Rust | Checked property |
 | --- | --- | --- | --- |
+| Symbolic data input (project v3) | Closure-owned tagged values | Separate private crate with owned string identities | Generated guards choose the action for the actual input; assignments retain their old-state/input origins |
 | Finite owned state (project v2) | Closure-owned state with a frozen facade and snapshots | Separate crate with private authority state | Each successful dispatch follows the edge from the exact full current state |
 | Transition | A configured function call with three string literals | A configured function call or macro with three string literals | The declared source state, action, and target state form a permitted edge |
 | Dependency | Imports between mapped module paths | Imports between mapped module paths | The source module may directly depend on the target module |
@@ -70,6 +72,15 @@ The generated TypeScript API is `createApprovalMachine().read()/send(event)`.
 The Rust crate exports `ApprovalMachine::new/read/send(Event)`.
 Both reject `Submit` until `Approve` changes the full concrete state.
 Read [the finite-owned guide](docs/finite-owned.md) for native builds, integration, supported semantics, and limits.
+
+For parameterized equality/copy rules, build the original fact-merge model:
+
+```sh
+node dist/cli.js build --project examples/fact-merge/project.json --jar "$TLA2TOOLS_JAR" --out .runtime/facts
+node dist/cli.js visualize --ir .runtime/facts/automaton.json --ir .runtime/facts/symbolic-model.json --out .runtime/facts/view
+```
+
+The generated `FactMachine.send(input)` selects Insert, Same, or Clash from the model. After A, B, and C, it retains stored A and latest rejected C. Data identities are immutable strings, distinct from scalar model strings. Read [the symbolic-owned guide](docs/symbolic-owned.md) for the source grammar, finite versus symbolic verification, and the actual Parangsae integration still required.
 
 For declaration diagnostics, build the included v1 order model:
 
@@ -126,7 +137,7 @@ node dist/cli.js compile \
 ```
 
 An imported DOT graph does not establish that TLC completed successfully.
-`compile` accepts only project v1 diagnostics; it rejects v2 executable authority generation.
+`compile` accepts only project v1 diagnostics; it rejects v2 and v3 authority generation.
 The generated verification metadata records that distinction.
 Use `build` when the result must include this tool's TLC completion evidence.
 
@@ -216,6 +227,7 @@ See [plugin setup](docs/plugins.md) for cache checks and troubleshooting.
 ## Understand the guarantee
 
 TLC explores a configured finite model.
+Project v3 uses SANY to compile supported input guards and simultaneous equality/copy updates. A separate TLC oracle checks every configured reachable state/input pair, while grammar-scoped symbolic orbits check equality patterns. This is not unrestricted TLA+ compilation or automatic application payload binding.
 Project v2 preserves all supported scalar variables and dispatches from the owner's exact concrete node.
 Its controlled build rejects unsupported reductions, overrides, compound state, and ambiguous executable choices.
 The state owner does not automatically bind live input or database values, protect unrelated application state, prevent creation of another owner, or make external effects atomic.

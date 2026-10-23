@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { FINITE_TLC_JAR_SHA256, runFiniteTlc, validateFiniteConfig } from '../src/finite-tlc.js';
+import { runTlc } from '../src/tlc.js';
 
 const hash = (value: string): string => createHash('sha256').update(value).digest('hex');
 const jar = process.env.TLA2TOOLS_JAR ? resolve(process.env.TLA2TOOLS_JAR) : undefined;
@@ -27,6 +28,20 @@ async function fixture(): Promise<{ directory: string; spec: string; config: str
   await writeFile(spec, model);
   await writeFile(config, 'SPECIFICATION Spec\n');
   return { directory, spec, config, dispose: () => rm(directory, { recursive: true, force: true }) };
+}
+
+async function observeSnapshot(existing: ReadonlySet<string>, expectedSource = model): Promise<string> {
+  for (let attempt = 0; attempt < 250; attempt++) {
+    for (const name of await readdir(tmpdir())) {
+      if (!name.startsWith('sgd-finite-') || existing.has(name)) continue;
+      const candidate = join(tmpdir(), name);
+      try {
+        if ((await readFile(join(candidate, 'models', 'Guarded.tla'), 'utf8')) === expectedSource) return candidate;
+      } catch { /* The private copy may still be in progress or already removed. */ }
+    }
+    await delay(20);
+  }
+  assert.fail('observe the actual copied model while verification is running');
 }
 
 test('finite config lexer ignores strings, line comments, and nested block comments', () => {
@@ -152,24 +167,50 @@ test('real finite verification uses copied sources, rejects changed originals, a
   try {
     const existing = new Set(await readdir(tmpdir()));
     const pending = runFiniteTlc({ ...files, jar }).then(value => ({ kind: 'success', value }), error => ({ kind: 'failure', error }));
-    let snapshot: string | undefined;
-    for (let attempt = 0; attempt < 250 && snapshot === undefined; attempt++) {
-      for (const name of await readdir(tmpdir())) {
-        if (!name.startsWith('sgd-finite-') || existing.has(name)) continue;
-        const candidate = join(tmpdir(), name);
-        try {
-          if ((await readFile(join(candidate, 'models', 'Guarded.tla'), 'utf8')) === model) snapshot = candidate;
-        } catch { /* The private copy may still be in progress or already removed. */ }
-      }
-      if (snapshot === undefined) await delay(20);
-    }
-    assert.ok(snapshot, 'observe the actual copied model before changing its original');
+    const snapshot = await observeSnapshot(existing);
     await writeFile(files.config, 'SPECIFICATION Spec\n\\* changed while TLC checks its isolated copy\n');
     const result = await pending;
     assert.equal(result.kind, 'failure');
     assert.ok('error' in result && result.error instanceof Error);
     assert.match(result.error.message, /TLC203.*configuration or JAR changed/);
     await assert.rejects(lstat(snapshot), { code: 'ENOENT' });
+  } finally { await files.dispose(); }
+});
+
+test('finite runner accepts its verified co-located input JAR without exposing source-directory Java artifacts to the model snapshot', { skip: !jar }, async () => {
+  assert.ok(jar);
+  const files = await fixture();
+  try {
+    const selectedJar = join(files.directory, 'tla2tools.jar');
+    const selectedBytes = await readFile(jar);
+    await writeFile(selectedJar, selectedBytes);
+    const source = `${model}\\* co-located tool fixture ${files.directory}\n`;
+    await writeFile(files.spec, source);
+    const existing = new Set(await readdir(tmpdir()));
+    const pending = runFiniteTlc({ ...files, jar: selectedJar });
+    const snapshot = await observeSnapshot(existing, source);
+    assert.deepEqual((await readdir(join(snapshot, 'models'))).filter(name => /\.(?:jar|java|class)$/i.test(name)), []);
+    assert.deepEqual(await readFile(join(snapshot, 'tla2tools.jar')), selectedBytes);
+    assert.equal((await pending).evidence.jarSha256, FINITE_TLC_JAR_SHA256);
+    await assert.rejects(lstat(snapshot), { code: 'ENOENT' });
+    for (const artifact of ['override.jar', 'Guarded.class']) {
+      await writeFile(join(files.directory, artifact), selectedBytes);
+      await assert.rejects(runFiniteTlc({ ...files, jar: selectedJar }), /TLC203.*Java override artifact/);
+      await rm(join(files.directory, artifact));
+    }
+    await symlink(selectedJar, join(files.directory, 'alias.jar'));
+    await assert.rejects(runFiniteTlc({ ...files, jar: selectedJar }), /TLC203.*Java override artifact alias.jar/);
+    await rm(join(files.directory, 'alias.jar'));
+
+    const beforeChangedRun = new Set(await readdir(tmpdir()));
+    const changing = runFiniteTlc({ ...files, jar: selectedJar }).then(value => ({ kind: 'success', value }), error => ({ kind: 'failure', error }));
+    const copied = await observeSnapshot(beforeChangedRun, source);
+    await writeFile(selectedJar, 'changed after the verified JAR was copied');
+    const result = await changing;
+    assert.equal(result.kind, 'failure');
+    assert.ok('error' in result && result.error instanceof Error);
+    assert.match(result.error.message, /TLC203.*configuration or JAR changed/);
+    await assert.rejects(lstat(copied), { code: 'ENOENT' });
   } finally { await files.dispose(); }
 });
 
@@ -219,5 +260,84 @@ test('real finite TLC rejects invariant errors and timeouts without completion e
     await assert.rejects(runFiniteTlc({ ...files, jar }), /TLC204/);
     await assert.rejects(runFiniteTlc({ ...files, jar, timeoutMs: 1 }), /TLC204/);
     assert.equal(await readFile(files.config, 'utf8'), 'SPECIFICATION Spec\nINVARIANT Safe\n');
+  } finally { await files.dispose(); }
+});
+
+test('finite execution rejects parameterized action provenance even when TLC erases arguments into a deterministic scalar graph', { skip: !jar }, async () => {
+  assert.ok(jar);
+  const files = await fixture();
+  try {
+    await writeFile(files.spec, String.raw`---- MODULE Guarded ----
+VARIABLE phase
+Init == phase = "New"
+Advance(value) == /\ phase = "New" /\ phase' = value
+Wait == /\ phase = "Done" /\ UNCHANGED phase
+Next == Advance("Done") \/ Wait
+Spec == Init /\ [][Next]_phase
+====
+`);
+    const uncheckedProvenance = await runTlc({ ...files, jar });
+    assert.match(uncheckedProvenance.dot, /label="Advance"/);
+    assert.doesNotMatch(uncheckedProvenance.dot, /Advance\(/);
+    await assert.rejects(runFiniteTlc({ ...files, jar }), /TLC204.*parameterized action Advance/);
+    // Calling through an unparameterized wrapper must not erase the actual action's semantic provenance.
+    const wrapped = (await readFile(files.spec, 'utf8')).replace('Next == Advance("Done") \\/ Wait', 'Wrapped == Advance("Done")\nNext == Wrapped \\/ Wait');
+    await writeFile(files.spec, wrapped);
+    await assert.rejects(runFiniteTlc({ ...files, jar }), /TLC204.*parameterized action Advance/);
+    await writeFile(join(files.directory, 'Helper.tla'), String.raw`---- MODULE Helper ----
+VARIABLE phase
+Advance(value) == /\ phase = "New" /\ phase' = value
+====
+`);
+    await writeFile(files.spec, String.raw`---- MODULE Guarded ----
+EXTENDS Helper
+Init == phase = "New"
+Wait == /\ phase = "Done" /\ UNCHANGED phase
+Next == Advance("Done") \/ Wait
+Spec == Init /\ [][Next]_phase
+====
+`);
+    await assert.rejects(runFiniteTlc({ ...files, jar }), /TLC204.*parameterized action Advance/);
+  } finally { await files.dispose(); }
+});
+
+test('finite execution permits unused parameterized definitions and reachable pure parameterized helpers', { skip: !jar }, async () => {
+  assert.ok(jar);
+  const files = await fixture();
+  try {
+    await writeFile(files.spec, model.replace('Submit ==', 'Unused(value) == phase\' = value\nIsNew(value) == value = "New"\nSubmit ==')
+      .replace('Submit == /\\ phase = "New"', 'Submit == /\\ IsNew(phase)'));
+    const result = await runFiniteTlc({ ...files, jar });
+    assert.match(result.dot, /label="Submit"/);
+  } finally { await files.dispose(); }
+});
+
+test('finite execution rejects action-level applications of pure helpers, including inside retained LET nodes', { skip: !jar }, async () => {
+  assert.ok(jar);
+  const files = await fixture();
+  try {
+    const pureDefinition = String.raw`---- MODULE Guarded ----
+VARIABLE phase
+Init == phase = "New"
+Equal(a,b) == a=b
+Next == \E value \in {"Done"} : Equal(phase',value)
+Spec == Init /\ [][Next]_phase
+====
+`;
+    await writeFile(files.spec, pureDefinition);
+    assert.match((await runTlc({ ...files, jar })).dot, /label="Equal"/);
+    await assert.rejects(runFiniteTlc({ ...files, jar }), /TLC204.*parameterized action Equal at application level 2/);
+    await writeFile(files.spec, pureDefinition.replace('Equal(a,b) == a=b\nNext ==', 'Next == LET Equal(a,b) == a=b IN'));
+    await assert.rejects(runFiniteTlc({ ...files, jar }), /TLC204.*parameterized action Equal at application level 2/);
+    await writeFile(files.spec, String.raw`---- MODULE Guarded ----
+VARIABLE phase
+Init == phase = "New"
+Advance == LET Equal(a,b) == a=b IN /\ Equal(phase,"New") /\ phase' = "Done"
+Wait == /\ phase = "Done" /\ UNCHANGED phase
+Next == Advance \/ Wait
+Spec == Init /\ [][Next]_phase
+====
+`);
+    assert.match((await runFiniteTlc({ ...files, jar })).dot, /label="Advance"/);
   } finally { await files.dispose(); }
 });

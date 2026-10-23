@@ -10,6 +10,14 @@ import { generateOwnedRust } from './backends/owned-rust.js';
 import { MachineProjectSchema, validateExecutableGraph, type MachineProject, type ExactFiniteAutomaton, type OwnedBackendInput } from './finite-types.js';
 import { importFiniteDot } from './finite-dot.js';
 import { runFiniteTlc } from './finite-tlc.js';
+import { SymbolicProjectSchema, type SymbolicProject } from './symbolic-types.js';
+import { runSymbolicTlc } from './symbolic-tlc.js';
+import { parseSanyXml } from './sany-xml.js';
+import { lowerSymbolicModel } from './symbolic-lower.js';
+import { inspectSymbolicOrbits } from './symbolic-semantics.js';
+import { importSymbolicDot, verifySymbolicWitness, type SymbolicWitnessGraph } from './symbolic-witness.js';
+import { generateSymbolicTypeScript } from './backends/symbolic-typescript.js';
+import { generateSymbolicRust } from './backends/symbolic-rust.js';
 import { z } from 'zod';
 
 const backends = {
@@ -22,8 +30,8 @@ const ownedBackends = {
   rust: generateOwnedRust,
 } satisfies Record<Target, (input: OwnedBackendInput) => GeneratedFile[]>;
 
-const ConfiguredProjectSchema = z.union([ProjectSchema, MachineProjectSchema]);
-export async function readProject(path: string): Promise<Project | MachineProject> {
+const ConfiguredProjectSchema = z.union([ProjectSchema, MachineProjectSchema, SymbolicProjectSchema]);
+export async function readProject(path: string): Promise<Project | MachineProject | SymbolicProject> {
   return ConfiguredProjectSchema.parse(JSON.parse(await readFile(path, 'utf8')));
 }
 
@@ -147,7 +155,7 @@ async function writeManaged(input: { out: string; files: GeneratedFile[]; check?
 
 export async function compileProject(input: { project: string; dot: string; out: string; check?: boolean }): Promise<Automaton> {
   const project = await readProject(input.project);
-  if (project.version === 2) throw new Error('TLC206: imported DOT cannot generate finite-owned authority. Use build with the pinned TLC JAR and model sources.');
+  if (project.version !== 1) throw new Error(`TLC206: imported DOT cannot generate ${project.profile} authority. Use build with the pinned TLC JAR and model sources.`);
   const compiled = compile({ dot: await readFile(input.dot, 'utf8'), project });
   await writeGenerated({ out: input.out, files: [...compiled.files,
     { path: 'verification.json', content: JSON.stringify({ kind: 'imported-unverified', message: 'DOT alone does not establish TLC completion.' }, null, 2) + '\n' },
@@ -155,13 +163,55 @@ export async function compileProject(input: { project: string; dot: string; out:
   return compiled.automaton;
 }
 
-export async function buildProject(input: { project: string; jar: string; out: string; check?: boolean; modelOnly?: boolean }): Promise<Automaton | ExactFiniteAutomaton> {
+export async function buildProject(input: { project: string; jar: string; out: string; check?: boolean; modelOnly?: boolean }): Promise<Automaton | ExactFiniteAutomaton | SymbolicWitnessGraph> {
   const projectPath = resolve(input.project);
   const projectBytes = await readFile(projectPath);
   const project = ConfiguredProjectSchema.parse(JSON.parse(projectBytes.toString('utf8')));
   const checkProjectUnchanged = async (): Promise<void> => {
     if (!projectBytes.equals(await readFile(projectPath))) throw new Error('TLC203: project configuration changed during verification; rerun against stable inputs');
   };
+  if (project.version === 3) {
+    const spec = resolve(dirname(projectPath), project.spec);
+    const config = resolve(dirname(projectPath), project.config);
+    const run = await runSymbolicTlc({ spec, config, jar: input.jar });
+    const model = lowerSymbolicModel({ name: project.name, semantic: parseSanyXml(run.xml), config: run.config });
+    const orbitProof = input.modelOnly ? null : inspectSymbolicOrbits(model);
+    const differential = input.modelOnly ? null : await verifySymbolicWitness({ model, run, spec, config, jar: input.jar });
+    const configured = run.config.constants[model.input.domain];
+    if (configured?.kind !== 'set') throw new Error('TLC301: missing symbolic input domain');
+    const atoms = configured.values.map(value => {
+      if (value.kind !== 'model-value') throw new Error('TLC301: symbolic witness requires model atoms');
+      return value.value;
+    });
+    const witness = differential?.witness ?? importSymbolicDot({ dot: run.dot, name: model.name, domain: model.input.domain, atoms });
+    const files: GeneratedFile[] = [
+      { path: 'automaton.json', content: JSON.stringify(witness, null, 2) + '\n' },
+      { path: 'symbolic-model.json', content: JSON.stringify(model, null, 2) + '\n' },
+      { path: 'binding.json', content: JSON.stringify({ profile: project.profile, ...project.binding }, null, 2) + '\n' },
+      { path: 'semantic.xml', content: run.xml },
+      { path: 'model.dot', content: run.dot },
+      { path: 'tlc.log', content: run.log, volatile: true },
+    ];
+    if (!input.modelOnly) for (const target of new Set(project.targets)) {
+      const generated = target === 'typescript' ? generateSymbolicTypeScript({ model, className: project.binding.className }) : generateSymbolicRust({ model, className: project.binding.className });
+      files.push(...generated.map(file => ({ path: `${target}/${file.path}`, content: file.content })));
+    }
+    if (orbitProof) files.push({ path: 'orbit-proof.json', content: JSON.stringify(orbitProof, null, 2) + '\n' });
+    if (differential) files.push(
+      { path: 'input-verification.json', content: JSON.stringify(differential.evidence, null, 2) + '\n' },
+      { path: 'input-oracle.dot', content: differential.oracleDot },
+      { path: 'input-oracle.log', content: differential.oracleLog, volatile: true },
+    );
+    files.push({ path: 'verification.json', content: JSON.stringify({
+      ...run.evidence, projectSha256: sha256(projectBytes), semanticSha256: model.source.semanticSha256,
+      generation: input.modelOnly ? 'model-only' : 'symbolic-authority',
+      runtimeDomain: { kind: 'untyped-opaque-unicode-string-identities', constant: model.input.domain, finiteWitnessAtoms: atoms },
+      orbitVerification: orbitProof ? { kind: orbitProof.kind, stateCount: orbitProof.states.length, edgeCount: orbitProof.edges.length, checkDeadlock: model.checkDeadlock, invariants: model.invariants.map(item => item.name), actionProperties: model.actionProperties.map(item => item.name) } : null,
+    }, null, 2) + '\n', volatile: true, stableJsonKeys: ['kind', 'profile', 'extractor', 'xmlSha256', 'rootModule', 'moduleClosure', 'standardModules', 'configSha256', 'jarSha256', 'dotSha256', 'mode', 'projectSha256', 'semanticSha256', 'generation', 'runtimeDomain', 'orbitVerification'] });
+    await checkProjectUnchanged();
+    await writeGenerated({ out: input.out, files, ...(input.check === undefined ? {} : { check: input.check }) });
+    return witness;
+  }
   if (project.version === 2) {
     const model = await runFiniteTlc({ spec: resolve(dirname(projectPath), project.spec), config: resolve(dirname(projectPath), project.config), jar: input.jar });
     const automaton = importFiniteDot({ dot: model.dot, name: project.name });

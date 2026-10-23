@@ -2,7 +2,7 @@
 
 The initial implementation was exercised on macOS arm64 with Node.js 24, TypeScript 7.0.2, Java 17, and Rust 1.92.
 The same checks, ingestion workflow, and isolated plugin verification also passed in GitHub Actions on Linux x64.
-That Linux result describes the published v0.1.0 diagnostic baseline. The new finite-owned milestone requires its own CI result.
+The finite-owned milestone also passed [its separate Linux CI run](https://github.com/KimSeogyu/specification-guided-development/actions/runs/39996215994). Later milestones retain their own local and CI evidence in the associated pull request.
 
 ## Finite-owned milestone
 
@@ -15,6 +15,16 @@ Read [the finite-owned contract](finite-owned.md) for the actual trust boundary.
 An independent agent followed the revised Codex skill through the source plugin launcher to create a new four-state job model and native TypeScript/Rust consumers. Both retained the two Ready guard states, rejected Run before Validate, accepted the intended lifecycle, and preserved state/revision after rejections. The trial needed a consumer tsconfig rootDir adjustment and a local SVG rendering adjustment; it required no generated policy edit. It exposed an unclear terminal self-loop description, now corrected in both modeling guides. Browser interaction and actual installed agent hosts were outside that trial.
 
 Both prepared native plugin packages also pass the MCP workflow from independent copied caches, including full-state generation, packaged TypeScript 7 compilation, runtime tamper checks, Pele, and imported-authority rejection. These cache tests do not establish installed-host operation.
+
+## Symbolic input milestone
+
+The source adds pinned semantic XML parsing and a v3 equality/copy relation compiler. The configured finite witness and an independent observer module compare original TLA+ actions with every reachable state/input pair. The orbit check separately validates the admitted data-independent relation, invariants, square action properties, ambiguity, scalar comparison semantics, and configured deadlock policy.
+
+Native TypeScript and Rust consumers agree on complete receipts for A→B→C→A, including assignment origins, original stored A, latest rejected C, and the distinction between data `none` and scalar string `none`. A requirement change to Same resolves the conflict after receiving the original stored value, preserves the existing invariants, and changes both languages after regeneration. Stable generation, edited-artifact refusal, imported-DOT refusal, model-only cleanup, and both Pele scopes are exercised.
+
+Independent adversarial tests use real TLC to expose and retain checks for ignored assumptions, lost square-action stuttering, action-level pure-helper applications, typed model values, scalar type errors hidden by a two-atom fixture, and deadlock that appears only with three distinct atoms. These tests and the orbit argument do not constitute a machine-checked correctness proof for the compiler.
+
+The actual Parangsae `ManifestWrite.tla` and configuration were also compiled directly with their own co-located pinned JAR, writing only SGD scratch output. This confirms model compatibility. It does not establish application integration or authorize operational data writes.
 
 ## Reproduce
 
