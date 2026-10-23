@@ -1,6 +1,6 @@
 # Partition authority after complete-row ownership
 
-Status: planned design. The generated partition fold, composition binding, resource-bound session, and sink-coverage checks below are not implemented. [SDK PR #4](https://github.com/KimSeogyu/specification-guided-development/pull/4) merged the v5 [complete-row contract](row-owned.md). The local Parangsae integration uses those per-key owners, but its aggregate fold and storage dispatch remain handwritten. Native behavior parity does not close that authority gap.
+Status: v6 now has a source implementation of the [closed partition data fold](partition-fold.md). Its complete-row and control instances remain private and its consumed result is explicitly unbound data. The resource-bound session and sink-coverage checks below remain planned. The actual Parangsae draft still uses the v5 per-key owners with a handwritten aggregate fold; its migration and storage closure remain required work.
 
 ## Decision and alternatives
 
@@ -16,7 +16,7 @@ The current integration exposes the gap in two places. Parangsae's `crates/colle
 
 ## Finite aggregate control
 
-The standalone [control model](../examples/partition-control/model.tla) now has a [finite-owned project](../examples/partition-control/project.json) and [TLC configuration](../examples/partition-control/model.cfg). The generated collection fold and authenticated composition remain planned. The model uses only scalar state and named, unparameterized actions.
+The standalone [control model](../examples/partition-control/model.tla) now has a [finite-owned project](../examples/partition-control/project.json) and [TLC configuration](../examples/partition-control/model.cfg). V6 checks the complete composition and generates the closed collection fold. Its unbound report grants no storage permission. The model uses only scalar state and named, unparameterized actions.
 
 | State or action | Contract |
 | --- | --- |
@@ -30,19 +30,19 @@ The standalone [control model](../examples/partition-control/model.tla) now has 
 
 The actual configuration checks `TypeOK`, `CloseAdmission`, `CloseChoice`, `NoInputAfterClose`, `SingleConsumption`, `ConflictSticky`, `InsertSticky`, and `NoReopen`. Terminal deadlock checking is explicitly disabled. Real TLC rejected ambiguous or missing close choices, a refusal that produced a write, cleared insertion or refusal history, reopening, repeated consumption, and input after closing. Review first reproduced that missing close availability and cleared insertion history passed the weaker initial property set; `CloseChoice` and `InsertSticky` close those omissions without changing the actions or `Next`. Generated TypeScript 7 and Rust consumers agreed on a short accepted/rejected trace, including successful `Same` and repeated `Clash` stutters. Read the [example's verification instructions](../examples/partition-control/README.md) to rerun the model checks.
 
-These are standalone finite-control results. A caller can still fabricate observations for that standalone machine. Only the planned closed composition below can authenticate them; no controller sidecar has been added to Parangsae.
+These are standalone finite-control results. A caller can still fabricate observations for that standalone machine. Only the closed composition can authenticate its own observations; no controller sidecar has been added to Parangsae.
 
 The terminal state has no enabled explicit action. Disabling deadlock checking admits that terminal state. It does not add a successful runtime event. The square-action stutter in `Spec` also does not mint an input observation or a write permission.
 
 `Same` is a successful full-state stutter. Repeated `Clash` also stutters once `hasConflict` is true. The fold must still count every accepted `Same` and append every complete conflict pair. It cannot infer observations from state changes or deduplicate conflict reports.
 
-Closing has exactly one enabled action in each reachable open state. Generated closing logic selects that action from the checked controller relation. The application does not select a closing action or submit a Boolean. Consumption records one effect attempt. It does not establish successful persistence, fsync, or crash recovery.
+Closing has exactly one enabled action in each reachable open state. Generated closing logic selects that action from the checked controller relation. The application does not select a closing action or submit a Boolean. V6 consumption produces an unbound report. The planned storage-bound consumption records one effect attempt. It does not establish successful persistence, fsync, or crash recovery.
 
 ## Composition with per-key outcomes
 
 The generated adapter contains both authorities. It uses the exact source action IDs `Insert`, `Same`, and `Clash` in both models. There is no configurable outcome table or public `observe(WriteEffect)` method. An action rename or vocabulary mismatch requires an explicit profile change rather than a caller-provided relabeling.
 
-The composition check must establish the following obligations before generation:
+The composition gate checks the following obligations before generation:
 
 - The complete admitted row-action vocabulary matches the aggregate observation vocabulary.
 - Every row action has one enabled aggregate successor in every reachable open control state.
@@ -50,35 +50,33 @@ The composition check must establish the following obligations before generation
 - The configured model checks include the stated admission and temporal properties.
 - The generated fold delivers exactly the action produced by its own row operation. External receipts cannot enter that path.
 
-Matching action names establishes structural identity. Native behavior checks and the modeled safety properties still establish their intended business meaning. Public v5 receipts and `WriteEffect` values remain observations. Their existence grants no storage permission.
+Matching action names establishes structural identity. V6 also checks every supported row input/orbit against the complete Insert, Same, and Clash roles. It checks every finite valuation and explicit edge against the aggregate protocol, and admits the required source obligations by their resolved SANY expressions. Native behavior checks cover the collection runtime. Public v5 receipts and `WriteEffect` values remain observations. Their existence grants no storage permission.
 
-Pele should show the complete controller states beside the existing envelope model. Link an aggregate observation to its exact row action. Keep those links distinct from a checked refinement relation. This composition is not the enabled-input erasure already provided for symbolic programs.
+Pele should show the complete controller states beside the existing envelope model. Link an aggregate observation to its exact row action. Keep those links distinct from a checked refinement relation. This composition differs from the enabled-input erasure already provided for symbolic programs.
 
 ## Closed batch interface and failure boundary
 
-The first implementation unit replaces the handwritten `merge_rows` fold with a generated consuming batch operation. These types and signatures are proposed interfaces, not available APIs:
+V6 generates a consuming data operation with these available interfaces:
 
 ```rust
-// Sealed concrete Fact implementations and generated key extraction.
 trait PartitionFact: private::SupportedPartitionFact {}
-
-struct PartitionTrial<T: PartitionFact> { /* private fields */ }
-struct ClosedTrial<T: PartitionFact> { /* private fields */ }
-
-impl<T: PartitionFact> PartitionTrial<T> {
-	fn prepare(self, incoming: Vec<T>) -> Result<ClosedTrial<T>, PartitionError>;
+struct ClosedPartition<T: PartitionFact> { /* private fields */ }
+fn fold_partition<T: PartitionFact>(baseline: Vec<T>, incoming: Vec<T>)
+    -> Result<ClosedPartition<T>, PartitionError>;
+impl<T: PartitionFact> ClosedPartition<T> {
+    fn into_report(self) -> Result<UnboundPartitionReport<T>, PartitionError>;
 }
 ```
 
-Only the trusted loaded-partition factory creates `PartitionTrial`. Neither type has `Clone`, `Deserialize`, a raw-state constructor, or a mutable state reference. No resumable `push`, intermediate owner, controller, or receipt-submission method escapes the operation.
+This sketch omits generated private supertrait details. Read the [v6 guide](partition-fold.md) for actual integration. The operation accepts ordinary baseline data, checks its internal grouping, and returns no resource or writer permission. A trusted loaded-partition factory is still required for the storage interface below.
 
-Preparation owns the trial map, original rows, counts, and ordered conflict pairs. It processes the whole batch and closes the controller before returning `ClosedTrial`. Any row-binding error, disabled transition, revision exhaustion, count overflow, or invalid close discards the entire private trial. No result or sink invocation escapes that failed preparation. Audited row types cannot introduce user callbacks through custom lifecycle behavior.
+Preparation owns the trial map, original rows, counts, and ordered conflict pairs. It processes the whole batch and closes the controller before returning the private closed value. Any row-binding error, disabled transition, revision exhaustion, count overflow, invalid grouping, or invalid close discards the entire private trial. A fallible consumption follows the unique matching edge and produces an unbound report. No effect callback enters either step.
 
-This batch boundary permits an individual private row transition to precede aggregate dispatch. If aggregate dispatch fails, the consuming operation drops both private authorities and returns no plan. It does not claim the internal pair of steps is atomic or resumable. An incremental API that preserves the trial after an error would need combined preparation before either authority commits. Clones, encodings, count checks, conflict copies, and aggregate validation must finish before such a combined commit.
+This batch boundary permits an individual private row transition to precede aggregate dispatch. An aggregate failure drops both private authorities and returns no closed value. It does not claim the internal pair of steps is atomic or resumable. An incremental API that preserves the trial after an error would require a different combined-commit contract.
 
 ## Generated collection runtime
 
-The finite control model contains no collection or numeric counts. The generated fold therefore needs a separately reviewed runtime contract:
+The finite control model contains no collection or numeric counts. The generated fold has this separately reviewed runtime contract:
 
 - Replay admitted complete baseline rows into fresh owners before processing incoming rows. Baseline replay does not set `hasInserted` or increment incoming counts.
 - Use one owner per generated key. Preserve complete retained rows and their provenance through the checked row adapter.

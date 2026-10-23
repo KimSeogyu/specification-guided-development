@@ -69,7 +69,10 @@ function renderGuard(guard: SymbolicGuard, inputs: ReadonlyMap<string, string>, 
 }
 
 /** Generate an immutable-data equality/copy authority after complete orbit validation. */
-export function generateSymbolicRust(input: SymbolicBackendInput): GeneratedFile[] {
+export function generateSymbolicRust(input: SymbolicBackendInput & {
+  /** Internal composition option: omit only a top-level and/or condition wrapper. */
+  minimalGuardConditions?: true;
+}): GeneratedFile[] {
   const model = validateSymbolicModel(input.model);
   inspectSymbolicOrbits(model);
   const parameters = symbolicInputs(model);
@@ -89,7 +92,13 @@ export function generateSymbolicRust(input: SymbolicBackendInput): GeneratedFile
     if (value === undefined) throw new Error('TLC301: incomplete symbolic Init');
     return `            (${rustString(variable)}.to_owned(), ${renderValue(value)}),`;
   }).join('\n');
-  const guards = model.branches.map((branch, index) => `        if ${renderGuard(branch.guard, inputNames, legacyInput)} {
+  const condition = (guard: SymbolicGuard): string => {
+    if (input.minimalGuardConditions && (guard.kind === 'and' || guard.kind === 'or')) {
+      return guard.terms.map(term => renderGuard(term, inputNames, legacyInput)).join(guard.kind === 'and' ? ' && ' : ' || ') || (guard.kind === 'and' ? 'true' : 'false');
+    }
+    return renderGuard(guard, inputNames, legacyInput);
+  };
+  const guards = model.branches.map((branch, index) => `        if ${condition(branch.guard)} {
             if selected.is_some() { return Err(self.reject(TransitionErrorReason::Ambiguous)); }
             selected = Some(${index});
         }`).join('\n');

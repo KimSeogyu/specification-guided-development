@@ -20,6 +20,7 @@ Project v2 retains full concrete state and generates an owner that permits only 
 Project v3 adds immutable data input and compiles a supported symbolic equality/copy relation from SANY, checked against original TLA+ actions with a finite input oracle.
 Project v4 separates payload and provenance through independent data inputs and supports checked erasure to a higher-level symbolic model.
 Project v5 derives a closed whole-row binding from supported Rust equality, wrappers, and getters, then generates actual row owners and portable TypeScript DTO owners.
+Project v6 composes those rows with a finite aggregate controller and literal family projections to generate a closed partition data fold.
 Project v1 projects one string variable and generates declaration or import diagnostics.
 The [finite-owned guide](docs/finite-owned.md) describes the new source-checkout milestone; the published v0.1.0 archives contain the earlier diagnostic prototype.
 
@@ -29,6 +30,7 @@ The current source supports these profiles:
 
 | Binding | TypeScript | Rust | Checked property |
 | --- | --- | --- | --- |
+| Closed partition fold (project v6) | Authenticated rows and a single-use frozen handle | Sealed Fact fold and consuming report | Complete row/control observations, counts and ordered conflicts produce an unbound report; storage authority remains separate |
 | Whole rows (project v5) | Authenticated immutable DTOs with exact representations | Closed actual Fact types behind a private adapter | Source equality and retained metadata agree with the modeled payload/provenance relation; complete rows are prepared before commit |
 | Independent data inputs (project v4) | Fixed-arity primitive inputs and closure-owned tagged state | Fixed-arity inputs and a separate private owner crate | Complete payload/provenance updates; checked enabled-input erasure between supported models |
 | Symbolic data input (project v3) | Closure-owned tagged values | Separate private crate with owned string identities | Generated guards choose the action for the actual input; assignments retain their old-state/input origins |
@@ -87,6 +89,8 @@ node dist/cli.js visualize --ir .runtime/facts/automaton.json --ir .runtime/fact
 The generated `FactMachine.send(input)` selects Insert, Same, or Clash from the model. After A, B, and C, it retains stored A and latest rejected C. Data identities are immutable strings, distinct from scalar model strings. Read [the symbolic-owned guide](docs/symbolic-owned.md) for the source grammar, finite versus symbolic verification, and the actual Parangsae integration still required.
 
 When equal payloads can have different receipt or source metadata, use [independent data inputs](docs/product-inputs.md). The [fact-envelope example](examples/fact-envelope/README.md) models that metadata explicitly and checks its erasure to the original fact-merge contract with `sgd refine`. An erasure check covers the supplied symbolic programs; actual Fact encoding, native object ownership, and partition writes need application bindings.
+
+For a generated collection fold, read [the v6 partition guide](docs/partition-fold.md). It checks complete row roles and the aggregate protocol, generates raw key projections from audited source codecs, and returns unbound data. Loaded-resource and writer authority remain required work.
 
 For existing Rust rows, read [the whole-row binding guide](docs/row-owned.md). V5 analyzes actual source equality and the owned type closure, preserves metadata excluded or normalized by equality, and returns original model action IDs. Its library-source scope excludes all-target/feature coverage and storage authority. TypeScript DTOs preserve the audited representations; they do not infer every native constructor precondition.
 
@@ -155,6 +159,7 @@ The compiler refuses a nonempty directory without that inventory.
 Regeneration removes obsolete owned checker source when targets or profiles change, including a model-only rerun.
 Use `build --check` or `compile --check` to compare stable artifacts without updating them.
 TLC logs and run receipts are not compared byte for byte.
+Interrupted generation has [journaled process-termination recovery](docs/managed-output.md); `--check` does not repair incomplete outputs.
 
 ## Model architecture and behavior
 

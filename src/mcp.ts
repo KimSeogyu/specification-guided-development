@@ -13,17 +13,18 @@ export function createServer(): McpServer {
     catch (error) { return { ...text({ error: error instanceof Error ? error.message : String(error) }), isError: true }; }
   };
   const paths = { project: z.string().describe('Absolute path to a project JSON file.'), jar: z.string().describe('Absolute path to tla2tools.jar.'), out: z.string().describe('Absolute output directory.') };
+  const check = z.boolean().default(false).describe('Check stable generated artifacts and inventory without updating managed files. Incomplete output transactions are reported without repair.');
   server.registerTool('sgd_model', {
     description: 'Run TLC to completion and export the finite automaton. Execute only models the user authorized.',
     inputSchema: paths, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   }, args => guarded(() => buildProject({ ...args, modelOnly: true })));
   server.registerTool('sgd_build', {
-    description: 'Run TLC and generate TypeScript and Rust artifacts. V5 row-owned binds audited Rust equality and complete owned rows to payload/provenance state. V4 symbolic-owned accepts multiple disjoint data domains; V3 accepts one. These compile SANY equality/copy actions with a finite original-action TLC oracle. V2 generates finite state owners. V1 generates diagnostics.',
-    inputSchema: paths, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    description: 'Run TLC and generate TypeScript and Rust artifacts. V6 partition-fold composes complete-row and finite-control models with audited family projections into a closed fold and consumed unbound data report; it grants no storage authority. V5 row-owned binds Rust equality and complete rows to payload/provenance state. V4 symbolic-owned accepts disjoint data domains; V3 accepts one. These compile SANY equality/copy actions with a finite original-action TLC oracle. V2 generates finite state owners. V1 generates diagnostics.',
+    inputSchema: { ...paths, check }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   }, args => guarded(() => buildProject(args)));
   server.registerTool('sgd_compile', {
     description: 'Compile action-labeled DOT into v1 language-specific diagnostics. Imported DOT is unverified and cannot generate executable authority.',
-    inputSchema: { project: paths.project, dot: z.string().describe('Absolute path to action-labeled TLC DOT.'), out: paths.out },
+    inputSchema: { project: paths.project, dot: z.string().describe('Absolute path to action-labeled TLC DOT.'), out: paths.out, check },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   }, args => guarded(() => compileProject(args)));
   server.registerTool('sgd_inspect', {

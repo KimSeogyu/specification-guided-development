@@ -10,6 +10,8 @@ export interface RowRustInput {
   plan: RowBindingPlan;
   binding: RowBinding;
   rustCrateMode: 'standalone' | 'workspace';
+  /** Composite generators keep row transition entry points private to their adapter. */
+  internalVisibility?: 'private';
 }
 
 function quoted(value: string): string {
@@ -33,6 +35,7 @@ function valueExpression(value: SymbolicValue): string {
 /** Keep the generated primitive authority in its own crate; include adapter.rs privately in the audited application. */
 export function generateRowRust(input: RowRustInput): GeneratedFile[] {
   const { model, plan, binding } = validateWholeRowBinding(input);
+  const ownerVisibility = input.internalVisibility === 'private' ? '' : 'pub(crate) ';
   const stored = binding.model.pairs.find(pair => pair.name === 'stored');
   const rejected = binding.model.pairs.find(pair => pair.name === 'rejected');
   const payload = model.inputs.find(parameter => parameter.parameter === binding.model.payloadInput);
@@ -122,7 +125,7 @@ fn field(output: &mut String, name: &str, kind: &str, bytes: &[u8]) {
 ${implementations}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum WriteEffect {
+${ownerVisibility}enum WriteEffect {
 ${sourceActions.map(action => `    ${action},`).join('\n')}
 }
 
@@ -170,7 +173,7 @@ ${pairOrigin}
 }
 
 // Private state and a sealed concrete Fact bound prohibit arbitrary source equality.
-pub(crate) struct FactOwner<T: BoundFact> {
+${ownerVisibility}struct FactOwner<T: BoundFact> {
     authority: authority::${input.className},
     stored: Option<T>,
     rejected: Option<T>,
@@ -179,14 +182,14 @@ impl<T: BoundFact> Default for FactOwner<T> {
     fn default() -> Self { Self::new() }
 }
 impl<T: BoundFact> FactOwner<T> {
-    pub(crate) fn new() -> Self {
+    ${ownerVisibility}fn new() -> Self {
         Self { authority: authority::${input.className}::new(), stored: None, rejected: None }
     }
-    pub(crate) fn stored(&self) -> Option<&T> { self.stored.as_ref() }
-    pub(crate) fn rejected(&self) -> Option<&T> { self.rejected.as_ref() }
-    pub(crate) fn read(&self) -> authority::Snapshot { self.authority.read() }
+    ${ownerVisibility}fn stored(&self) -> Option<&T> { self.stored.as_ref() }
+    ${ownerVisibility}fn rejected(&self) -> Option<&T> { self.rejected.as_ref() }
+    ${ownerVisibility}fn read(&self) -> authority::Snapshot { self.authority.read() }
 
-    pub(crate) fn write(&mut self, incoming: T) -> Result<WriteEffect, RowError> {
+    ${ownerVisibility}fn write(&mut self, incoming: T) -> Result<WriteEffect, RowError> {
         let stored_pair = RowPair { payload: ${quoted(stored.payload)}, provenance: ${quoted(stored.provenance)}, empty_payload: ${initPayload[0]}, empty_provenance: ${initProvenance[0]} };
         let rejected_pair = RowPair { payload: ${quoted(rejected.payload)}, provenance: ${quoted(rejected.provenance)}, empty_payload: ${initPayload[1]}, empty_provenance: ${initProvenance[1]} };
         let before = self.read();
@@ -217,7 +220,7 @@ ${actions}
     }
 }
 `;
-  const files = generateSymbolicRust({ model, className: input.className }).map(file => {
+  const files = generateSymbolicRust({ model, className: input.className, ...(input.internalVisibility === 'private' ? { minimalGuardConditions: true } : {}) }).map(file => {
     if (file.path === 'Cargo.toml' && input.rustCrateMode === 'workspace') return { ...file, content: file.content.replace('\n[workspace]\n', '\n') };
     if (file.path !== 'README.md') return file;
     return { ...file, content: `# Generated whole-row Rust authority
