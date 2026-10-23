@@ -26,6 +26,16 @@ The controlled runner checks the complete flat local module closure and the supp
 
 This is progress on milestone 1. Parangsae integration and repeated real maintenance remain outstanding; the production goal stays active. Packaged-cache verification and a source-workflow agent trial do not count as real installed-agent acceptance.
 
+## Parangsae boundary audit and next unit
+
+A read-only audit of the live Parangsae source identified collector fact merging as the smaller meaningful first pilot. `specs/tla/ManifestWrite.tla` models `Insert(v)`, `Same(v)`, and `Clash(v)`. `crates/collector/src/manifest.rs::merge_fact` is used by `merge_rows`, then `crates/collector/src/store.rs::upsert_by_day` and `commit_merge`. Existing property tests and integrity scenarios require the original payload to survive a conflict. The application uses actual payload equality and previously persisted data.
+
+The current finite-owned profile cannot faithfully replace this boundary: the specification uses model values and parameterized input, while the implementation accepts arbitrary payloads. Encoding two fixture payloads as two string events would not prove actual application adoption. Letting a caller select Same or Clash would delegate the guard to that caller. Define supported input/value semantics and make generated code evaluate the relevant equality and update relation before integrating this pilot. Trusted existing-state loading and partition commit remain explicit additional boundaries.
+
+Execution order lifecycle is a later candidate. Its live `OrderProgress` and `OrderBook::apply` already manage private state, payload-bearing validated events, quantities, restart checkpoints, and halt effects. Its TLA+ model contains records, functions, sequences, and authority evidence outside the current executable profile. Replacing only the phase would discard required guards.
+
+The next unit must compare concrete graph parameterization with symbolic action compilation, define the exact guarantee for actual payloads, and exercise valid, repeated, and conflicting data against the existing native contract. Coordinate the selected independent branch with the owning Parangsae chat before modifying its active collector or execution work. Leave stored market data and the running collector untouched.
+
 ## Design alternatives and decision
 
 Independent design reviews compared full concrete graph execution, symbolic Action compilation through SANY, and a TLC runtime oracle. Full concrete execution preserves the existing TLC-to-graph pipeline and avoids reconstructing lost guards. It is the first implementation profile. Symbolic SANY compilation remains necessary when a Parangsae contract requires application domains outside the executable finite graph. A runtime Java oracle is not the default application path.

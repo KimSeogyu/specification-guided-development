@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { generateOwnedRust } from '../src/backends/owned-rust.js';
 import { FiniteGraphSchema, type ExactFiniteAutomaton } from '../src/finite-types.js';
+import { z } from 'zod';
 
 const runtime = resolve('.runtime/owned-rust-tests');
 const target = join(runtime, 'target');
@@ -41,11 +42,35 @@ function cargo(args: string[], cwd = consumer) {
   return result;
 }
 
-async function compileFailure(name: string, body: string, expected: RegExp): Promise<void> {
-  await put(join(consumer, 'src/bin', `${name}.rs`), `use authority::{OrderAuthority, Event};\nfn main() { ${body} }\n`);
-  const result = cargo(['check', '--bin', name]);
-  assert.notEqual(result.status, 0, `${name} unexpectedly compiled`);
-  assert.match(result.stderr, expected);
+const CargoEventSchema = z.object({ reason: z.string() }).passthrough();
+const CompilerMessageSchema = z.object({
+  reason: z.literal('compiler-message'),
+  message: z.object({
+    level: z.string(),
+    code: z.object({ code: z.string() }).passthrough().nullable(),
+    spans: z.array(z.object({
+      file_name: z.string(), is_primary: z.boolean(), line_start: z.number().int().positive(),
+    }).passthrough()),
+  }).passthrough(),
+}).passthrough();
+type RejectionCode = 'E0616' | 'E0451' | 'E0599' | 'E0277' | 'E0614';
+
+async function compileFailure(name: string, body: string, expectedCode: RejectionCode): Promise<void> {
+  const source = join(consumer, 'src/bin', `${name}.rs`);
+  await put(source, `use authority::{OrderAuthority, Event};\nfn main() { ${body} }\n`);
+  const result = cargo(['check', '--bin', name, '--message-format=json']);
+  assert.equal(result.status, 101, `${name} must fail compilation:\n${result.stderr}\n${result.stdout}`);
+  const errors = result.stdout.split(/\r?\n/).filter(line => line.length > 0)
+    .map(line => CargoEventSchema.parse(JSON.parse(line)))
+    .filter(event => event.reason === 'compiler-message')
+    .map(event => CompilerMessageSchema.parse(event).message)
+    .filter(message => message.level === 'error');
+  assert.ok(errors.length > 0, `${name} must report a source rejection, not a tool failure:\n${result.stderr}`);
+  for (const error of errors) {
+    assert.equal(error.code?.code, expectedCode, `${name} failed for an unexpected reason`);
+    assert.ok(error.spans.some(span => span.is_primary && resolve(consumer, span.file_name) === source && span.line_start === 2),
+      `${name} must identify the rejected expression in its own consumer source`);
+  }
 }
 
 before(async () => {
@@ -183,17 +208,17 @@ test('generated separate Rust authority crate enforces full-node guards without 
 });
 
 test('Rust rejects field writes and raw construction across the crate boundary', async () => {
-  await compileFailure('write-node', 'let mut owner = OrderAuthority::new(); owner.node = 2;', /field `node`.*private/);
-  await compileFailure('write-revision', 'let mut owner = OrderAuthority::new(); owner.revision = 5;', /field `revision`.*private/);
-  await compileFailure('raw-construction', 'let _ = OrderAuthority { node: 2, revision: 5 };', /fields `node` and `revision`.*private/);
-  await compileFailure('alias-write', 'let mut owner = OrderAuthority::new(); let alias = &mut owner; alias.node = 2;', /field `node`.*private/);
+  await compileFailure('write-node', 'let mut owner = OrderAuthority::new(); owner.node = 2;', 'E0616');
+  await compileFailure('write-revision', 'let mut owner = OrderAuthority::new(); owner.revision = 5;', 'E0616');
+  await compileFailure('raw-construction', 'let _ = OrderAuthority { node: 2, revision: 5 };', 'E0451');
+  await compileFailure('alias-write', 'let mut owner = OrderAuthority::new(); let alias = &mut owner; alias.node = 2;', 'E0616');
 });
 
 test('Rust rejects Clone, arbitrary restore, deserialization and mutable state references', async () => {
-  await compileFailure('clone-owner', 'let owner = OrderAuthority::new(); let _ = owner.clone();', /no method named `clone`/);
-  await compileFailure('restore-owner', 'let _ = OrderAuthority::restore("s2", 0);', /no function or associated item named `restore`/);
-  await compileFailure('deserialize-owner', 'let _: OrderAuthority = serde_json::from_str("{}").unwrap();', /Deserialize/);
-  await compileFailure('deref-owner', 'let mut owner = OrderAuthority::new(); let _ = &mut *owner;', /cannot be dereferenced/);
+  await compileFailure('clone-owner', 'let owner = OrderAuthority::new(); let _ = owner.clone();', 'E0599');
+  await compileFailure('restore-owner', 'let _ = OrderAuthority::restore("s2", 0);', 'E0599');
+  await compileFailure('deserialize-owner', 'let _: OrderAuthority = serde_json::from_str("{}").unwrap();', 'E0277');
+  await compileFailure('deref-owner', 'let mut owner = OrderAuthority::new(); let _ = &mut *owner;', 'E0614');
 });
 
 test('generated crate checks revision overflow without state change', () => {
