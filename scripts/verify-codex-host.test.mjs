@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { commandArgv, shellCommand, validateProtocol } from './verify-codex-host.mjs';
+import { commandArgv, resolveEvidenceOutput, shellCommand, validateProtocol } from './verify-codex-host.mjs';
 
 const captured = JSON.parse(await readFile(new URL('../tests/fixtures/codex-host-events.json', import.meta.url), 'utf8'));
 const replay = () => structuredClone(captured);
@@ -105,4 +109,55 @@ test('quoted paths round-trip through known native shell serialization', () => {
   assert.deepEqual(commandArgv(command), argv);
   assert.deepEqual(commandArgv(`/bin/zsh -lc ${shellCommand([command])}`), argv);
   for (const source of ['node helper | tee output', 'node $(whoami)', 'node "$HOME/file"', 'node helper\ntrue']) assert.throws(() => commandArgv(source));
+});
+
+async function paths(t) {
+  const base = await realpath(await mkdtemp(path.join(os.tmpdir(), 'sgd-host-output-test-')));
+  t.after(() => rm(base, { recursive: true }));
+  const plugin = path.join(base, 'plugin');
+  const original = path.join(base, 'fixture');
+  await mkdir(plugin);
+  await mkdir(original);
+  return { base, plugin, original };
+}
+
+test('CLI rejects output through a plugin alias before creating evidence', { skip: process.platform === 'win32' }, async t => {
+  const { base, plugin } = await paths(t);
+  const alias = path.join(base, 'alias');
+  await symlink(plugin, alias, 'dir');
+  const script = fileURLToPath(new URL('./verify-codex-host.mjs', import.meta.url));
+  // Node cannot act as a native agent. A regression must never reach one.
+  const child = spawnSync(process.execPath, [script, '--plugin', plugin, '--out', path.join(alias, 'evidence'), '--jar', path.join(base, 'unused.jar'), '--codex', process.execPath], { encoding: 'utf8', timeout: 15_000 });
+  assert.equal(child.status, 1);
+  assert.match(child.stderr, /HOST_ARGUMENT: Evidence output must remain physically outside/);
+  await assert.rejects(lstat(path.join(plugin, 'evidence')), { code: 'ENOENT' });
+});
+
+test('fixture aliases and aliased plugin roots cannot admit internal output', { skip: process.platform === 'win32' }, async t => {
+  const { base, plugin, original } = await paths(t);
+  const alias = path.join(base, 'fixture-alias');
+  const pluginAlias = path.join(base, 'plugin-alias');
+  await symlink(original, alias, 'dir');
+  await symlink(plugin, pluginAlias, 'dir');
+  await assert.rejects(resolveEvidenceOutput(plugin, path.join(alias, 'new', 'evidence'), original), { code: 'HOST_ARGUMENT' });
+  await assert.rejects(resolveEvidenceOutput(pluginAlias, path.join(plugin, 'new', 'evidence'), original), { code: 'HOST_ARGUMENT' });
+});
+
+test('allowed output captures its physical ancestor without creating directories', { skip: process.platform === 'win32' }, async t => {
+  const { base, plugin, original } = await paths(t);
+  const sibling = path.join(base, 'plugin-evidence');
+  const alias = path.join(base, 'safe-alias');
+  await mkdir(sibling);
+  await symlink(sibling, alias, 'dir');
+  const output = await resolveEvidenceOutput(plugin, path.join(alias, 'new', 'evidence'), original);
+  assert.equal(output, path.join(sibling, 'new', 'evidence'));
+  await assert.rejects(lstat(path.join(sibling, 'new')), { code: 'ENOENT' });
+});
+
+test('dangling output ancestors fail before publication', { skip: process.platform === 'win32' }, async t => {
+  const { base, plugin, original } = await paths(t);
+  const alias = path.join(base, 'dangling');
+  await symlink(path.join(plugin, 'missing'), alias, 'dir');
+  await assert.rejects(resolveEvidenceOutput(plugin, path.join(alias, 'evidence'), original), { code: 'HOST_ARGUMENT' });
+  await assert.rejects(lstat(path.join(plugin, 'missing')), { code: 'ENOENT' });
 });

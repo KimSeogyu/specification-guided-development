@@ -28,7 +28,7 @@ node scripts/verify-codex-host.mjs \
 	--jar /absolute/path/to/tla2tools.jar
 ```
 
-Use `--out /absolute/path/to/new-evidence-directory` to choose the evidence location. The directory must not exist. Use `--codex /absolute/path/to/codex` to select an already installed CLI. No model flag is accepted or supplied. Codex resolves its default under the invocation's configuration flags, including `--ignore-user-config`.
+Use `--out /absolute/path/to/new-evidence-directory` to choose the evidence location. The directory must not exist. The verifier resolves existing ancestors before creating directories and refuses output physically inside the prepared plugin or original fixture, including symlink aliases. It uses the captured physical output path. Use `--codex /absolute/path/to/codex` to select an already installed CLI. No model flag is accepted or supplied. Codex resolves its default under the invocation's configuration flags, including `--ignore-user-config`.
 
 The verifier copies the complete plugin, JAR, and original Ledger fixture into unique temporary scratch. It resolves the scratch path with realpath before constructing commands and expected receipt paths. Generated output is absent before the native invocation. It derives the MCP command, arguments, and working directory from the copied `.mcp.json` rather than importing SDK source.
 
@@ -80,4 +80,4 @@ Keep this entry point out of default CI. It needs an authenticated native host, 
 
 ## Replay protocol checks without an account
 
-Run `node --test scripts/verify-codex-host.test.mjs` for deterministic checks derived from a sanitized captured native run. They require no login or native agent. They admit repeated identical read-only helpers and reject unknown or mutating commands, repeated native checks, extra MCP calls, missing reads, unfinished actions, early native execution, approval errors, and failed turns. These replay checks validate protocol guards; they do not count as a fresh host workflow.
+Run `node --test scripts/verify-codex-host.test.mjs` for deterministic checks derived from a sanitized captured native run. They require no login or native agent. They admit repeated identical read-only helpers and reject unknown or mutating commands, repeated native checks, extra MCP calls, missing reads, unfinished actions, early native execution, approval errors, and failed turns. Filesystem checks also reject aliased output inside original inputs before any evidence directory is created. These checks validate protocol and path guards; they do not count as a fresh host workflow.

@@ -26,6 +26,29 @@ const inside = (directory, file) => file === directory || file.startsWith(`${dir
 const shellQuote = value => `'${value.replaceAll("'", "'\\''")}'`;
 const shellCommand = argv => argv.map(shellQuote).join(' ');
 
+async function physicalPath(file) {
+  let ancestor = path.resolve(file);
+  const missing = [];
+  for (;;) {
+    try { return path.join(await realpath(ancestor), ...missing); }
+    catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      const entry = await lstat(ancestor).catch(failure => { if (failure.code !== 'ENOENT') throw failure; return null; });
+      requireThat(!entry, 'HOST_ARGUMENT', 'A path has an unresolved symlink ancestor.');
+      const parent = path.dirname(ancestor);
+      requireThat(parent !== ancestor, 'HOST_ARGUMENT', 'Cannot resolve the proposed path.');
+      missing.unshift(path.basename(ancestor));
+      ancestor = parent;
+    }
+  }
+}
+
+export async function resolveEvidenceOutput(plugin, requested, originalFixture = fixture) {
+  const [pluginRoot, output, fixtureRoot] = await Promise.all([physicalPath(plugin), physicalPath(requested), physicalPath(originalFixture)]);
+  requireThat(!inside(pluginRoot, output) && !inside(fixtureRoot, output), 'HOST_ARGUMENT', 'Evidence output must remain physically outside the prepared plugin and original fixture.');
+  return output;
+}
+
 // Parse argv only. Expansion, substitutions, operators, and unsupported wrappers fail.
 function shellWords(source) {
   const words = [];
@@ -345,8 +368,7 @@ async function main() {
   const config = options(process.argv.slice(2));
   if (!config) return;
   requireThat(process.platform !== 'win32', 'HOST_PLATFORM', 'This verifier requires POSIX process groups; Windows is not supported.');
-  const output = path.resolve(config.out ?? path.join(root, '.runtime', `codex-host-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`));
-  requireThat(!inside(path.resolve(config.plugin), output) && !inside(fixture, output), 'HOST_ARGUMENT', 'Evidence output must remain outside the prepared plugin and original fixture.');
+  const output = await resolveEvidenceOutput(config.plugin, config.out ?? path.join(root, '.runtime', `codex-host-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`));
   await mkdir(path.dirname(output), { recursive: true });
   await mkdir(output);
   const result = { version: 1, scope, status: 'failed', evidence: output, workflowTimeoutSeconds: 360, claims: { pluginManifestDiscovery: false, permanentInstallation: false, persistence: false } };
