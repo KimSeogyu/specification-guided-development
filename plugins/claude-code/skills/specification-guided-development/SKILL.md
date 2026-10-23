@@ -7,6 +7,7 @@ description: Model architecture and behavior in TLA+. Generate state owners or T
 
 Read the relevant profile in [the modeling guide](references/modeling.md) before you create or change a model.
 Select the profile that matches the required guarantee.
+Project v5 `row-owned` derives a complete-row binding from supported native Rust Fact sources and explicit payload/provenance state.
 Project v4 `symbolic-owned` generates equality/copy behavior with two or three independent inputs and explicit provenance state.
 Project v3 `symbolic-owned` generates equality/copy behavior over immutable string input.
 Project v2 `finite-owned` generates a state owner with named events and no data parameters.
@@ -30,6 +31,14 @@ Use distinct named domains for v4 inputs, with one binder per domain and pairwis
 Model associated provenance as explicit state and input when its preservation is part of the contract.
 Assignment origins alone do not prove the behavior of omitted metadata.
 
+For actual owned application rows, select v5 when the Rust source and model fit its supported profiles.
+Use the application manifest, definition module, accessible Fact paths, and explicit excluded metadata fields.
+The analyzer derives payload fields and finite equivalence classes from native Eq.
+Do not write a second equality predicate or accept caller-supplied payload/provenance identities.
+Every source field must be classified.
+The Rust adapter admits only the audited concrete types through its sealed bound.
+The TypeScript output is a portable DTO representation of that Rust schema, not a TypeScript source binding or Rust constructor validator.
+
 For fixed finite state with unparameterized actions, select v2 `finite-owned`.
 Keep every modeled variable in the exact automaton.
 The compiler checks source semantics for reachable parameterized actions because TLC DOT can erase action arguments.
@@ -52,9 +61,10 @@ A matching declaration beside an independent state assignment does not enforce t
 5. Read the TLC result and inspect the exported automaton with `sgd_inspect`.
 6. Use `sgd_visualize` for a Pele diagram when a graph helps review the behavior.
 
-For v3 and v4, model-only output contains the finite witness and lowered `symbolic-model.json`.
+For v3, v4, and v5, model-only output contains the finite witness and lowered `symbolic-model.json`.
 Model-only mode does not run the input oracle or orbit validation and does not generate an owner.
 Use `sgd_build` before claiming executable validation.
+V5 model-only generation does not analyze native source and records no row binding.
 Finite configured model values alone do not prove a property for arbitrary runtime input.
 
 Stop on a model error, incomplete exploration, or unsupported construct.
@@ -65,7 +75,7 @@ A diagram does not check application behavior.
 
 ## Build and integrate a generated owner
 
-Use `sgd_build` with v2, v3, or v4.
+Use `sgd_build` with v2, v3, v4, or v5.
 The controlled runner verifies the pinned JAR and isolates the model source closure before exploration.
 `sgd_compile` rejects these executable profiles because imported DOT cannot establish executable provenance or parameter policy.
 
@@ -75,6 +85,9 @@ It also validates equality/copy orbits, configured invariants, supported square-
 The orbit result applies only to the accepted grammar over immutable string identities.
 Do not describe this as a proof for arbitrary TLA+ operators or application objects.
 For v4, the oracle covers every configured input tuple and the orbit checker uses separate domain renamings.
+V5 adds the source-derived field/codec plan and checks complete row-copy origins.
+Encoding, cloning, and row-binding checks finish before consuming a prepared primitive transition.
+Mixed payload/provenance copy origins fail instead of assembling a row from unrelated sources.
 
 Use an empty directory for the first generation.
 Keep the generated `.sgd-generated.json` inventory.
@@ -108,6 +121,16 @@ Both native targets use the ordered `inputs` in `symbolic-model.json`.
 Named input origins identify the exact parameter copied by an update.
 The same text in different input domains denotes different data atoms.
 Preserve every variable when checking square-action stuttering, including provenance.
+
+For v5 Rust, include the generated adapter as a private application module beside a separate primitive authority dependency.
+Pass an actual audited Fact to `FactOwner::<Fact>::write(row)`.
+For v5 TypeScript, call `create<Fact>Row(completeFields)` and pass its authenticated frozen token to `create<Fact>Owner().write(row)`.
+Use bigint for the complete signed i64 representation.
+Retain application parsing and native constructor preconditions separately, especially Qty/Amount positivity and Symbol validation.
+The caller cannot supply q/p, Same/Clash, an open Eq wrapper, or a forged row token.
+Preserve exact source action IDs in generated results and native exhaustive matches.
+Do not configure an outcome-label permutation.
+An action name alone does not prove its business role; retain erasure and native integration behavior checks.
 
 For an explicit high-level/low-level erasure, use `sgd_refine` with both symbolic IR files and the variable, input, and action binding.
 The check preserves enabled-input decisions, action classification, and complete projected successors under the admitted grammar.
@@ -162,6 +185,11 @@ For the v4 fact-envelope model, submit A@r1, B@r2, B@r3, and A@r4.
 Expect stored A@r1 and latest rejected B@r3, including a fresh provenance for the repeated rejected B.
 Test the actual payload adapter and the source paths that create owners and commit partitions.
 
+For v5, inspect `row-binding-plan.json` against the actual source fields, getter chains, native equality, and metadata exclusions.
+For Parangsae Kline, verify schemas 1 and 2 compare equal while preserving the first raw schema and received time.
+Verify unknown schema differences and strict fields still conflict.
+Test source changes through regeneration and `build --check`, including an omitted field and direct generated-code mutation.
+
 For the v2 approval example, reject `Submit` before `Approve`, then accept `Approve` followed by `Submit`.
 The initial and approved concrete states both have `phase = "New"`.
 Checking only `phase` loses the approval distinction.
@@ -182,6 +210,9 @@ Distinguish an implementation error, a model error, and a changed requirement be
 For a requirement change, state the affected invariant, payload equality contract, and expected behavior where relevant.
 Update TLA+ and regenerate within the authorized scope.
 V3 and v4 source changes must pass the finite witness, input oracle, and orbit validation again before executable generation.
+V5 also reanalyzes the native source and revalidates its read identities before publication.
+Rust output uses the fixed rustfmt 2021 style profile and checked output bytes.
+The informational formatter version is not an installation pin.
 Do not weaken the model only to make existing code pass.
 Do not edit generated code to change application policy.
 
@@ -204,6 +235,9 @@ Use the archive for the host's platform and architecture, or rebuild on that hos
 Do not bypass the launcher's platform check.
 TLC requires Java and the pinned `tla2tools.jar`.
 Rust artifacts require the Rust toolchain and their declared Cargo dependencies.
+Source-checkout v5 setup prepares its Rust analyzer through Cargo.
+Prepared plugins include a host-native analyzer binary and do not require the source checkout beside the cache.
+V5 Rust generation also requires rustfmt.
 Keep Codex and Claude Code installations independent.
 Do not change global agent configuration as a hidden setup or test step.
 
@@ -213,6 +247,10 @@ Generated owners protect one live object in a trusted JavaScript realm or a safe
 Trust the generated source, its dependencies, and the platform primitives.
 V3 and v4 protect equality/copy over immutable string identities under their supported grammars.
 Actual payload encoding and its relation to application fields require explicit integration evidence.
+V5 checks the admitted production Rust library/type closure and retains complete owned rows.
+Its source profile trusts unshadowed standard Rust facilities and declared genuine default-registry serde/clap derives.
+Unknown aliases, macros, source overrides, conditional bound items, and unsupported representations fail.
+It does not establish every Cargo target/feature, TypeScript source coverage, filesystem authority, partition folding, or exclusive writers.
 V2 retains finite scalar state and its observed action guards within the explored scope.
 V1 projections discard other variables and their guards.
 

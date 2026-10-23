@@ -18,6 +18,11 @@ import { inspectSymbolicOrbits } from './symbolic-semantics.js';
 import { importSymbolicDot, verifySymbolicWitness, type SymbolicWitnessGraph } from './symbolic-witness.js';
 import { generateSymbolicTypeScript } from './backends/symbolic-typescript.js';
 import { generateSymbolicRust } from './backends/symbolic-rust.js';
+import { RowProjectSchema, type RowProject } from './row-binding-types.js';
+import { analyzeRowBinding, validateWholeRowBinding, verifyRowSourcesUnchanged } from './row-binding.js';
+import { generateRowRust } from './backends/row-rust.js';
+import { generateRowTypeScript } from './backends/row-typescript.js';
+import { formatRowRust } from './rust-format.js';
 import { z } from 'zod';
 
 const backends = {
@@ -30,9 +35,20 @@ const ownedBackends = {
   rust: generateOwnedRust,
 } satisfies Record<Target, (input: OwnedBackendInput) => GeneratedFile[]>;
 
-const ConfiguredProjectSchema = z.union([ProjectSchema, MachineProjectSchema, SymbolicProjectSchema, ProductSymbolicProjectSchema]);
-export async function readProject(path: string): Promise<Project | MachineProject | SymbolicProject> {
-  return ConfiguredProjectSchema.parse(JSON.parse(await readFile(path, 'utf8')));
+const ConfiguredProjectSchema = z.discriminatedUnion('version', [ProjectSchema, MachineProjectSchema, SymbolicProjectSchema, ProductSymbolicProjectSchema, RowProjectSchema]);
+function configuredProject(value: unknown) {
+  const parsed = ConfiguredProjectSchema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  if (typeof value === 'object' && value !== null && 'version' in value && value.version === 5) {
+    const issues = parsed.error.issues.slice(0, 5).map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ');
+    const hint = parsed.error.issues.some(issue => issue.code === 'unrecognized_keys' && issue.keys.includes('outcomes'))
+      ? ' Remove outcomes; generated results use source action identifiers directly.' : '';
+    throw new Error(`TLC305: invalid row-owned project: ${issues}.${hint}`);
+  }
+  throw parsed.error;
+}
+export async function readProject(path: string): Promise<Project | MachineProject | SymbolicProject | RowProject> {
+  return configuredProject(JSON.parse(await readFile(path, 'utf8')) as unknown);
 }
 
 export function compile(input: { dot: string; project: Project }): { automaton: Automaton; files: GeneratedFile[] } {
@@ -166,16 +182,16 @@ export async function compileProject(input: { project: string; dot: string; out:
 export async function buildProject(input: { project: string; jar: string; out: string; check?: boolean; modelOnly?: boolean }): Promise<Automaton | ExactFiniteAutomaton | SymbolicWitnessGraph> {
   const projectPath = resolve(input.project);
   const projectBytes = await readFile(projectPath);
-  const project = ConfiguredProjectSchema.parse(JSON.parse(projectBytes.toString('utf8')));
+  const project = configuredProject(JSON.parse(projectBytes.toString('utf8')) as unknown);
   const checkProjectUnchanged = async (): Promise<void> => {
     if (!projectBytes.equals(await readFile(projectPath))) throw new Error('TLC203: project configuration changed during verification; rerun against stable inputs');
   };
-  if (project.version === 3 || project.version === 4) {
+  if (project.version === 3 || project.version === 4 || project.version === 5) {
     const spec = resolve(dirname(projectPath), project.spec);
     const config = resolve(dirname(projectPath), project.config);
     const run = await runSymbolicTlc({ spec, config, jar: input.jar });
     const model = lowerSymbolicModel({ name: project.name, semantic: parseSanyXml(run.xml), config: run.config,
-      profile: project.version === 4 ? 'product' : 'single' });
+      profile: project.version === 3 ? 'single' : 'product' });
     const orbitProof = input.modelOnly ? null : inspectSymbolicOrbits(model);
     const differential = input.modelOnly ? null : await verifySymbolicWitness({ model, run, spec, config, jar: input.jar });
     const inputs = symbolicInputs(model);
@@ -207,9 +223,21 @@ export async function buildProject(input: { project: string; jar: string; out: s
       { path: 'model.dot', content: run.dot },
       { path: 'tlc.log', content: run.log, volatile: true },
     ];
+    const rowApplication = project.version === 5 ? resolve(dirname(projectPath), project.application) : null;
+    const rowPlan = project.version === 5 && !input.modelOnly && rowApplication
+      ? await analyzeRowBinding({ application: rowApplication, binding: project.binding.row, out: input.out }) : null;
+    const row = project.version === 5 && rowPlan
+      ? validateWholeRowBinding({ model, binding: project.binding.row, plan: rowPlan }) : null;
+    let rowFormatter: Awaited<ReturnType<typeof formatRowRust>>['formatter'] | null = null;
+    if (row) files.push({ path: 'row-binding-plan.json', content: JSON.stringify(row.plan, null, 2) + '\n' });
     if (!input.modelOnly) for (const target of new Set(project.targets)) {
-      const generated = target === 'typescript' ? generateSymbolicTypeScript({ model, className: project.binding.className }) : generateSymbolicRust({ model, className: project.binding.className });
-      files.push(...generated.map(file => ({ path: `${target}/${file.path}`, content: file.content })));
+      const generated = row && project.version === 5
+        ? target === 'typescript' ? generateRowTypeScript({ ...row, className: project.binding.className })
+          : generateRowRust({ ...row, className: project.binding.className, rustCrateMode: project.binding.rustCrateMode })
+        : target === 'typescript' ? generateSymbolicTypeScript({ model, className: project.binding.className }) : generateSymbolicRust({ model, className: project.binding.className });
+      const formatted = row && target === 'rust' ? await formatRowRust(generated) : null;
+      if (formatted) rowFormatter = formatted.formatter;
+      files.push(...(formatted?.files ?? generated).map(file => ({ path: `${target}/${file.path}`, content: file.content })));
     }
     if (orbitProof) files.push({ path: 'orbit-proof.json', content: JSON.stringify(orbitProof, null, 2) + '\n' });
     if (differential) files.push(
@@ -220,12 +248,16 @@ export async function buildProject(input: { project: string; jar: string; out: s
     files.push({ path: 'verification.json', content: JSON.stringify({
       ...run.evidence, projectSha256: sha256(projectBytes), semanticSha256: model.source.semanticSha256,
       ...(model.version === 2 ? { symbolicIrVersion: 2, inputProfile: 'disjoint-input-product-v1' } : {}),
-      generation: input.modelOnly ? 'model-only' : 'symbolic-authority',
+      ...(project.version === 5 ? { rowBinding: row ? { profile: row.plan.profile, planSha256: sha256(JSON.stringify(row.plan)), sourceScope: 'production-library-and-audited-local-type-closure', sources: row.plan.sources,
+        formatter: rowFormatter ? { profile: rowFormatter.profile, configSha256: rowFormatter.configSha256 } : null } : null,
+        formatterVersion: rowFormatter?.version ?? null } : {}),
+      generation: input.modelOnly ? 'model-only' : row ? 'whole-row-authority' : 'symbolic-authority',
       runtimeDomain,
       orbitVerification: orbitProof ? { kind: orbitProof.kind, stateCount: orbitProof.states.length, edgeCount: orbitProof.edges.length, checkDeadlock: model.checkDeadlock, invariants: model.invariants.map(item => item.name), actionProperties: model.actionProperties.map(item => item.name) } : null,
     }, null, 2) + '\n', volatile: true, stableJsonKeys: ['kind', 'profile', 'extractor', 'xmlSha256', 'rootModule', 'moduleClosure', 'standardModules', 'configSha256', 'jarSha256', 'dotSha256', 'mode', 'projectSha256', 'semanticSha256',
-      ...(model.version === 2 ? ['symbolicIrVersion', 'inputProfile'] : []), 'generation', 'runtimeDomain', 'orbitVerification'] });
+      ...(model.version === 2 ? ['symbolicIrVersion', 'inputProfile'] : []), ...(project.version === 5 ? ['rowBinding'] : []), 'generation', 'runtimeDomain', 'orbitVerification'] });
     await checkProjectUnchanged();
+    if (row && rowApplication) await verifyRowSourcesUnchanged(rowApplication, row.plan);
     await writeGenerated({ out: input.out, files, ...(input.check === undefined ? {} : { check: input.check }) });
     return witness;
   }

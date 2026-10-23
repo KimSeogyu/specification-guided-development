@@ -80,7 +80,7 @@ export function generateSymbolicRust(input: SymbolicBackendInput): GeneratedFile
   const signature = argumentNames.map(name => `${name}: &str`).join(', ');
   const inputValues = parameters.map((parameter, index) => `        let ${inputNames.get(parameter.parameter)} = SymbolicValue::Data { domain: ${rustString(parameter.domain)}.to_owned(), value: ${argumentNames[index]}.to_owned() };`).join('\n');
   const className = input.className;
-  const reserved = ['Self', 'SymbolicValue', 'ValueExpression', 'Snapshot', 'Receipt', 'TransitionError', 'TransitionErrorReason',
+  const reserved = ['Self', 'SymbolicValue', 'ValueExpression', 'Snapshot', 'Receipt', 'PreparedTransition', 'TransitionError', 'TransitionErrorReason',
     'String', 'BTreeMap', 'Serialize', 'Result', 'Option', 'Some', 'None', 'Ok', 'Err', 'MODEL'];
   if (!/^[A-Z][A-Za-z0-9]*$/.test(className) || reserved.includes(className)) throw new Error('TLC301: Rust authority requires a distinct UpperCamelCase className');
   const variables = [...model.variables].sort();
@@ -203,6 +203,29 @@ pub struct ${className} {
     revision: u64,
 }
 
+/// An uncommitted transition that exclusively borrows its originating owner.
+/// Dropping this token leaves the owner unchanged. It cannot be copied or restored.
+pub struct PreparedTransition<'owner> {
+    owner: &'owner mut ${className},
+    values: BTreeMap<String, SymbolicValue>,
+    revision: u64,
+    receipt: Receipt,
+}
+
+impl PreparedTransition<'_> {
+    pub fn receipt(&self) -> &Receipt {
+        &self.receipt
+    }
+
+    /// All validation and allocation finished in prepare; commit only moves fields.
+    pub fn commit(self) -> Receipt {
+        let Self { owner, values, revision, receipt } = self;
+        owner.values = values;
+        owner.revision = revision;
+        receipt
+    }
+}
+
 impl ${className} {
     pub fn new() -> Self {
         Self { revision: 0, values: BTreeMap::from([
@@ -221,6 +244,12 @@ ${initial}
     /// The input is actual immutable data, never a caller-selected action.
     /// All guards and simultaneous assignment values read the old state.
     pub fn send(&mut self, ${signature}) -> Result<Receipt, TransitionError> {
+        self.prepare(${argumentNames.join(', ')}).map(PreparedTransition::commit)
+    }
+
+    /// Inspect the complete proposed receipt before the owner changes.
+    /// The exclusive token must be committed or dropped before using this owner again.
+    pub fn prepare(&mut self, ${signature}) -> Result<PreparedTransition<'_>, TransitionError> {
 ${inputValues}
         let mut selected: Option<usize> = None;
 ${guards}
@@ -233,10 +262,12 @@ ${actions}
         };
         let after = Snapshot { model: MODEL, model_revision: MODEL_REVISION, revision: revision.to_string(), values: values.clone() };
         let receipt = Receipt { action: action.to_owned(), before, after, updates };
-        self.values = values;
-        self.revision = revision;
-        Ok(receipt)
+        Ok(PreparedTransition { owner: self, values, revision, receipt })
     }
+}
+
+impl ::std::default::Default for ${className} {
+    fn default() -> Self { Self::new() }
 }
 
 #[cfg(test)]
@@ -248,6 +279,11 @@ mod tests {
         let mut owner = ${className}::new();
         owner.revision = u64::MAX;
         let before = owner.read();
+        match owner.prepare(${parameters.map((_parameter, index) => rustString(model.version === 1 ? 'fresh-overflow-input' : `fresh-overflow-input-${index}`)).join(', ')}) {
+            Err(error) => assert_eq!(error.state, before),
+            Ok(_) => panic!("no preparation follows u64::MAX"),
+        }
+        assert_eq!(owner.read(), before);
         let error = owner.send(${parameters.map((_parameter, index) => rustString(model.version === 1 ? 'fresh-overflow-input' : `fresh-overflow-input-${index}`)).join(', ')}).expect_err("no revision follows u64::MAX");
         assert_eq!(error.state, before);
         assert_eq!(owner.read(), before);
@@ -266,6 +302,8 @@ authority = { package = "${packageName}", path = "../generated/rust" }
 Import \`authority::${className}\`. Create a live owner with \`new()\`, copy its complete state with \`read()\`, and ${model.version === 1 ? 'submit actual UTF-8 input data through `send(&str)`.' : `submit actual UTF-8 input data through \`send(${parameters.map(() => '&str').join(', ')})\` in model input order (${parameters.map(parameter => `${parameter.parameter}: ${parameter.domain}`).join(', ')}).`} The generated guards choose the action. There is no caller action enum, equality callback, generic data identity, or mutable input alias. ${model.version === 1 ? 'Data are tagged with their domain and stay distinct from literal scalar strings, even when their text matches a sentinel.' : 'Data are tagged with their domain and stay distinct from literal scalar strings and other domains, even when their text matches.'} Equality is exact Rust string equality; input bytes are not normalized.
 
 The receipt contains \`action\`, \`before\`, \`after\`, and copied IR assignment origins in \`updates\`${model.version === 2 ? ', including the source parameter on each input assignment' : ''}. All guards and assignments read the old state. A rejected input preserves state and the checked u64 revision. Snapshots own their values; editing them cannot alter the authority. JSON integers and revision remain decimal strings. \`modelRevision\` identifies the canonical symbolic program.
+
+Use \`prepare(${parameters.map(() => '&str').join(', ')})\` when an adapter must validate and copy application values before committing. A successful \`PreparedTransition<'_>\` exclusively borrows its originating owner. \`receipt()\` borrows the complete proposed receipt. \`commit(self)\` consumes the token and returns that receipt after infallible field moves; dropping the token leaves state and revision unchanged. The token has no Clone, Deserialize, raw constructor, owner selector, or mutation API. The borrow checker prevents reads, sends, and another preparation on that owner while the token remains live. \`send\` uses this same prepare/commit path.
 
 Generation validates the complete equality/copy orbit space, invariants, and action properties. This profile supports equality, finite scalar membership, domain tests, Boolean logic, and simultaneous literal/input/state copying. It does not establish application-wide coverage or external-effect atomicity. The authority has no Clone, Deserialize, raw constructor, setter, or restore API. This crate forbids unsafe code and requires safe Rust callers. Trust the generated crate and dependencies. Each \`new()\` creates a distinct live object; persistent identity, reset prevention, restart, recovery, and database effects require separate contracts.
 ` },

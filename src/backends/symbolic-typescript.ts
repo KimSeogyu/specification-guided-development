@@ -70,11 +70,21 @@ ${values(variable => { const value = branch.updates[variable]; if (!value) throw
 ${values(variable => { const value = branch.updates[variable]; if (!value) throw new Error('TLC301: incomplete update'); return value.kind === 'literal' ? `Object.freeze({ kind: 'literal', value: Object.freeze(${JSON.stringify(value.value)}) })` : `Object.freeze(${JSON.stringify(value)})`; })}
         });
         const before = snapshot(state, revision);
-        const after = snapshot(next, revision + 1n);
-        const result: ${name}Result = Object.freeze({ ok: true, action: ${literal(branch.action)}, before, after, updates });
-        state = next;
-        revision += 1n;
-        return result;
+        const preparedRevision = revision;
+        const nextRevision = revision + 1n;
+        const after = snapshot(next, nextRevision);
+        const receipt: ${name}Receipt = Object.freeze({ action: ${literal(branch.action)}, before, after, updates });
+        const result: ${name}Result = Object.freeze({ ok: true, ...receipt });
+        let consumed = false;
+        const commit = Object.freeze((): ${name}Result => {
+          if (consumed) return reject('consumed-preparation');
+          consumed = true;
+          if (revision !== preparedRevision) return reject('stale-preparation');
+          state = next;
+          revision = nextRevision;
+          return result;
+        });
+        return Object.freeze({ ok: true, receipt, commit });
       }`).join('\n');
   const source = `// Generated from the validated TLA+ equality/copy relation. Regenerate; do not edit policy.
 export type ${name}Value =
@@ -95,11 +105,24 @@ export interface ${name}Snapshot {
   readonly revision: string;
   readonly values: ${name}Values;
 }
-export type ${name}Result =
-  | { readonly ok: true; readonly action: string; readonly before: ${name}Snapshot; readonly after: ${name}Snapshot; readonly updates: { readonly [variable: string]: ${name}Expression } }
-  | { readonly ok: false; readonly reason: 'invalid-input' | 'disabled' | 'ambiguous' | 'revision-exhausted'; readonly state: ${name}Snapshot };
+export interface ${name}Receipt {
+  readonly action: string;
+  readonly before: ${name}Snapshot;
+  readonly after: ${name}Snapshot;
+  readonly updates: { readonly [variable: string]: ${name}Expression };
+}
+export interface ${name}Rejection {
+  readonly ok: false;
+  readonly reason: 'invalid-input' | 'disabled' | 'ambiguous' | 'revision-exhausted' | 'stale-preparation' | 'consumed-preparation';
+  readonly state: ${name}Snapshot;
+}
+export type ${name}Result = (${name}Receipt & { readonly ok: true }) | ${name}Rejection;
+export type ${name}Preparation =
+  | { readonly ok: true; readonly receipt: ${name}Receipt; readonly commit: () => ${name}Result }
+  | ${name}Rejection;
 export interface ${name} {
   readonly read: () => ${name}Snapshot;
+  readonly prepare: (${signature}) => ${name}Preparation;
   readonly send: (${signature}) => ${name}Result;
 }
 const members = new globalThis.WeakSet<object>();
@@ -121,8 +144,8 @@ ${initial}
   });
   let revision = 0n;
   const read = Object.freeze((): ${name}Snapshot => snapshot(state, revision));
-  const reject = (reason: 'invalid-input' | 'disabled' | 'ambiguous' | 'revision-exhausted'): ${name}Result => Object.freeze({ ok: false, reason, state: read() });
-  const send = Object.freeze(${model.version === 1 ? `(${signature}): ${name}Result => {` : `function (${signature}): ${name}Result {\n    if (arguments.length !== ${parameters.length}) return reject('invalid-input');`}
+  const reject = (reason: ${name}Rejection['reason']): ${name}Rejection => Object.freeze({ ok: false, reason, state: read() });
+  const prepare = Object.freeze(${model.version === 1 ? `(${signature}): ${name}Preparation => {` : `function (${signature}): ${name}Preparation {\n    if (arguments.length !== ${parameters.length}) return reject('invalid-input');`}
 ${inputValidation}
 ${inputValues}
     let selected = -1;
@@ -134,7 +157,11 @@ ${actions}
       default: throw new Error('Corrupt generated symbolic branch');
     }
   });
-  const facade: ${name} = Object.freeze({ read, send });
+  const send = Object.freeze(${model.version === 1 ? `(${signature}): ${name}Result => {` : `function (${signature}): ${name}Result {\n    if (arguments.length !== ${parameters.length}) return reject('invalid-input');`}
+    const prepared = prepare(${argumentNames.join(', ')});
+    return prepared.ok ? prepared.commit() : prepared;
+  });
+  const facade: ${name} = Object.freeze({ read, prepare, send });
   members.add(facade);
   return facade;
 }
@@ -143,6 +170,6 @@ ${actions}
     { path: 'machine.ts', content: source },
     { path: 'package.json', content: JSON.stringify({ name: 'sgd-generated-symbolic-owner', private: true, type: 'module', scripts: { build: 'node node_modules/typescript/bin/tsc -p tsconfig.json' }, devDependencies: { typescript: '7.0.2' } }, null, 2) + '\n' },
     { path: 'tsconfig.json', content: JSON.stringify({ compilerOptions: { target: 'ES2023', module: 'NodeNext', moduleResolution: 'NodeNext', strict: true, noUncheckedIndexedAccess: true, exactOptionalPropertyTypes: true, declaration: true, noEmitOnError: true, outDir: 'dist', types: [] }, include: ['machine.ts'] }, null, 2) + '\n' },
-    { path: 'README.md', content: `# Generated symbolic TypeScript authority\n\nRun \`npm install\` and \`npm run build\`. Import \`create${name}\` and \`is${name}\` from \`./dist/machine.js\`. ${model.version === 1 ? 'Submit an immutable Unicode string identity with `send(input)`; generated guards select the model action.' : `Submit immutable Unicode string identities with \`send(${argumentNames.join(', ')})\`, in model input order (${parameters.map(parameter => `${parameter.parameter}: ${parameter.domain}`).join(', ')}); generated guards select the model action.`} A string such as \`Same\` is data, not a caller-selected action. ${model.version === 2 ? 'The fixed-arity method rejects missing, surplus, non-string, and malformed Unicode input without changing state. Each parameter has a distinct tagged domain, even when texts match. ' : ''}\`read()\` returns frozen copied tagged values. Data atoms and scalar model strings remain distinct, including the spelling \`none\`. Receipts include simultaneous assignment origins in \`updates\`${model.version === 2 ? ', with the source parameter on each input assignment' : ''}.\n\nThe accepted compiler implements equality/copy over string identities. TLC checks the separate configured finite model-value instance. The orbit checker explores equality patterns under the supported grammar. No claim extends this to arbitrary TLA+ operators, application objects, custom equality, persistence, restart, or external effects. An actual payload adapter must preserve application equality (including metadata exclusions) and connect the protected state to the real application. This authority covers one live object in a trusted JavaScript realm with unchanged generated source and platform primitives.\n` },
+    { path: 'README.md', content: `# Generated symbolic TypeScript authority\n\nRun \`npm install\` and \`npm run build\`. Import \`create${name}\` and \`is${name}\` from \`./dist/machine.js\`. ${model.version === 1 ? 'Submit an immutable Unicode string identity with `send(input)`; generated guards select the model action.' : `Submit immutable Unicode string identities with \`send(${argumentNames.join(', ')})\`, in model input order (${parameters.map(parameter => `${parameter.parameter}: ${parameter.domain}`).join(', ')}); generated guards select the model action.`} A string such as \`Same\` is data, not a caller-selected action. ${model.version === 2 ? 'The fixed-arity method rejects missing, surplus, non-string, and malformed Unicode input without changing state. Each parameter has a distinct tagged domain, even when texts match. ' : ''}\`read()\` returns frozen copied tagged values. Data atoms and scalar model strings remain distinct, including the spelling \`none\`. Receipts include simultaneous assignment origins in \`updates\`${model.version === 2 ? ', with the source parameter on each input assignment' : ''}.\n\nUse \`prepare(${argumentNames.join(', ')})\` when an adapter must validate and copy application values before committing. Preparation returns a frozen rejection or a frozen \`{ ok: true, receipt, commit }\` without changing state or revision. Inspect the complete frozen proposed receipt, then call its frozen \`commit()\` closure. A successful commit returns the same flat success shape as \`send\`. Each preparation belongs to its original owner and can commit once. A reused preparation rejects with \`consumed-preparation\`; one whose owner advanced rejects with \`stale-preparation\`. Both leave the current state unchanged. Dropping a preparation has no effect. \`send\` uses the same private prepare/commit path. No caller callback runs during preparation or commit.\n\nThe accepted compiler implements equality/copy over string identities. TLC checks the separate configured finite model-value instance. The orbit checker explores equality patterns under the supported grammar. No claim extends this to arbitrary TLA+ operators, application objects, custom equality, persistence, restart, or external effects. An actual payload adapter must preserve application equality (including metadata exclusions) and connect the protected state to the real application. This authority covers one live object in a trusted JavaScript realm with unchanged generated source and platform primitives.\n` },
   ];
 }

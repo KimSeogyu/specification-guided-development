@@ -18,7 +18,7 @@ export function createServer(): McpServer {
     inputSchema: paths, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   }, args => guarded(() => buildProject({ ...args, modelOnly: true })));
   server.registerTool('sgd_build', {
-    description: 'Run TLC and generate TypeScript and Rust artifacts. V4 symbolic-owned accepts multiple disjoint data domains; V3 accepts one. Both compile SANY equality/copy actions with a finite original-action TLC oracle. V2 generates finite state owners. V1 generates diagnostics.',
+    description: 'Run TLC and generate TypeScript and Rust artifacts. V5 row-owned binds audited Rust equality and complete owned rows to payload/provenance state. V4 symbolic-owned accepts multiple disjoint data domains; V3 accepts one. These compile SANY equality/copy actions with a finite original-action TLC oracle. V2 generates finite state owners. V1 generates diagnostics.',
     inputSchema: paths, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   }, args => guarded(() => buildProject(args)));
   server.registerTool('sgd_compile', {
