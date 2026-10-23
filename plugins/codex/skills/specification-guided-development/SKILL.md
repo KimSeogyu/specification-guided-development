@@ -89,7 +89,8 @@ Include every source file that the contract covers.
 Do not omit a source file to hide a violation.
 Preserve the generated checker's supported import syntax.
 The Rust profile rejects opaque macros, macro definitions, and custom attributes in checked files.
-Keep support macros and native tests in separate files or crates, and report their exclusion from this syntax profile.
+Keep support macros and native tests in separate files or crates.
+Report these exclusions from the syntax profile.
 
 Implement the feature after the model and bindings describe the intended contract.
 Run the generated linter after relevant changes.

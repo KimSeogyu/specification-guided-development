@@ -1,6 +1,7 @@
 # Verification
 
 The initial implementation was exercised on macOS arm64 with Node.js 24, TypeScript 7.0.2, Java 17, and Rust 1.92.
+The same checks, ingestion workflow, and isolated plugin verification also passed in GitHub Actions on Linux x64.
 
 ## Reproduce
 
