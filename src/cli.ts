@@ -3,8 +3,9 @@ import { buildProject, compileProject, writeGenerated } from './compiler.js';
 import { generateVisualization, loadAutomaton } from './visualize.js';
 import { serve } from './mcp.js';
 import { verifySymbolicErasureFiles } from './symbolic-refinement.js';
+import { version } from './version.js';
 
-const help = `sgd 0.1.0
+const help = `sgd ${version}
 
   build     --project FILE --jar FILE --out DIR [--check]
   model     --project FILE --jar FILE --out DIR
@@ -26,7 +27,7 @@ visualize renders offline Pele SVG and HTML from the same automata.
 async function main(args: string[]): Promise<void> {
   const command = args.shift();
   if (!command || command === '--help' || command === '-h') { process.stdout.write(help); return; }
-  if (command === '--version') { process.stdout.write('0.1.0\n'); return; }
+  if (command === '--version') { process.stdout.write(`${version}\n`); return; }
   if (command === 'mcp') {
     if (args.length) throw new Error('mcp accepts no arguments');
     await serve(); return;

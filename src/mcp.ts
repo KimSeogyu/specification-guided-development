@@ -4,9 +4,10 @@ import { z } from 'zod';
 import { buildProject, compileProject, writeGenerated } from './compiler.js';
 import { generateVisualization, loadAutomaton } from './visualize.js';
 import { verifySymbolicErasureFiles } from './symbolic-refinement.js';
+import { version } from './version.js';
 
 export function createServer(): McpServer {
-  const server = new McpServer({ name: 'sgd', version: '0.1.0' });
+  const server = new McpServer({ name: 'sgd', version });
   const text = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }] });
   const guarded = async (work: () => Promise<unknown>) => {
     try { return text(await work()); }

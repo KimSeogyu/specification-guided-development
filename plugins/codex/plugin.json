@@ -1,9 +1,11 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "specification-guided-development",
-  "version": "0.1.0",
+  "version": "0.2.0-alpha.1",
   "description": "Model architecture and behavior in TLA+, then compile TLC graphs into source checks.",
-  "author": { "name": "KimSeogyu" },
+  "author": {
+    "name": "KimSeogyu"
+  },
   "repository": "https://github.com/KimSeogyu/specification-guided-development",
   "license": "MIT",
   "extensions": {
@@ -12,7 +14,9 @@
       "interface": {
         "displayName": "Specification Guided Development",
         "shortDescription": "Develop under checks compiled from TLC automata",
-        "defaultPrompt": ["Use Specification Guided Development to model this feature, generate its checks, and develop under those checks."]
+        "defaultPrompt": [
+          "Use Specification Guided Development to model this feature, generate its checks, and develop under those checks."
+        ]
       }
     }
   }
