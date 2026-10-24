@@ -7,6 +7,7 @@ import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { FINITE_TLC_JAR_SHA256, runFiniteTlc, validateFiniteConfig } from '../src/finite-tlc.js';
 import { runTlc } from '../src/tlc.js';
+import { TlcFailureDiagnosticSchema, TlcFailureError } from '../src/tlc-failure.js';
 
 const hash = (value: string): string => createHash('sha256').update(value).digest('hex');
 const jar = process.env.TLA2TOOLS_JAR ? resolve(process.env.TLA2TOOLS_JAR) : undefined;
@@ -219,9 +220,25 @@ test('real SANY semantic failure cannot be mistaken for success despite its zero
   const files = await fixture();
   try {
     await writeFile(files.spec, model.replace('approved = FALSE', 'approved = UndefinedName'));
-    await assert.rejects(runFiniteTlc({ ...files, jar }), /TLC204.*SANY/s);
+    await assert.rejects(runFiniteTlc({ ...files, jar }), error => {
+      assert.ok(error instanceof TlcFailureError);
+      assert.match(error.message, /TLC204.*SANY/s);
+      assert.deepEqual(error.diagnostic.failure, { kind: 'parse_error', phase: 'sany', evidence: { kind: 'sany-error-summary', stage: 'semantic' } });
+      return true;
+    });
     await writeFile(files.spec, model.replace('VARIABLES phase', 'EXTENDS MissingExternalModule\nVARIABLES phase'));
-    await assert.rejects(runFiniteTlc({ ...files, jar }), /TLC204/);
+    await assert.rejects(runFiniteTlc({ ...files, jar }), error => {
+      assert.ok(error instanceof TlcFailureError);
+      assert.match(error.message, /TLC204/);
+      assert.deepEqual(error.diagnostic.failure, { kind: 'unknown', phase: 'sany' });
+      return true;
+    });
+    await writeFile(files.spec, model.replace('Init == /\\', 'Init == ) /\\'));
+    await assert.rejects(runFiniteTlc({ ...files, jar }), error => {
+      assert.ok(error instanceof TlcFailureError);
+      assert.deepEqual(error.diagnostic.failure, { kind: 'parse_error', phase: 'sany', evidence: { kind: 'sany-error-summary', stage: 'syntax' } });
+      return true;
+    });
   } finally { await files.dispose(); }
 });
 
@@ -251,15 +268,97 @@ test('real finite TLC rejects constraints, native side effects, overrides, and s
   } finally { await files.dispose(); }
 });
 
-test('real finite TLC rejects invariant errors and timeouts without completion evidence', { skip: !jar }, async () => {
+test('real finite TLC classifies initial and behavior invariant errors without retaining private traces', { skip: !jar }, async () => {
   assert.ok(jar);
   const files = await fixture();
   try {
-    await writeFile(files.spec, model.replace('====', 'Safe == approved = FALSE\n===='));
     await writeFile(files.config, 'SPECIFICATION Spec\nINVARIANT Safe\n');
-    await assert.rejects(runFiniteTlc({ ...files, jar }), /TLC204/);
-    await assert.rejects(runFiniteTlc({ ...files, jar, timeoutMs: 1 }), /TLC204/);
+    for (const [condition, code] of [['TRUE', 2107], ['FALSE', 2110]] satisfies [string, number][]) {
+      const source = model.replace('====', `Safe == approved = ${condition}\n====`);
+      await writeFile(files.spec, source);
+      const existing = new Set(await readdir(tmpdir()));
+      const pending = runFiniteTlc({ ...files, jar }).then(value => ({ kind: 'success', value }), error => ({ kind: 'failure', error }));
+      const snapshot = await observeSnapshot(existing, source);
+      const result = await pending;
+      assert.ok('error' in result && result.error instanceof TlcFailureError);
+      assert.match(result.error.message, /TLC204/);
+      assert.ok(result.error.cause instanceof Error, 'the actual nonzero TLC exit remains the cause');
+      assert.deepEqual(result.error.diagnostic.failure, { kind: 'invariant_violation', phase: 'tlc', invariant: 'Safe', evidence: { kind: 'pinned-tlc-message', code } });
+      assert.deepEqual(TlcFailureDiagnosticSchema.parse(result.error.diagnostic).counterexample, { status: 'not-retained' });
+      await assert.rejects(lstat(snapshot), { code: 'ENOENT' });
+    }
     assert.equal(await readFile(files.config, 'utf8'), 'SPECIFICATION Spec\nINVARIANT Safe\n');
+  } finally { await files.dispose(); }
+});
+
+test('real finite TLC owns the overall deadline before launch and during actual exploration', { skip: !jar }, async () => {
+  assert.ok(jar);
+  const files = await fixture();
+  try {
+    await assert.rejects(runFiniteTlc({ ...files, jar, timeoutMs: 1 }), error => {
+      assert.ok(error instanceof TlcFailureError);
+      assert.equal(error.diagnostic.failure.kind, 'timeout');
+      return true;
+    });
+    const source = String.raw`---- MODULE Guarded ----
+EXTENDS Naturals
+VARIABLE count
+Init == count = 0
+Advance == count' = count + 1
+Next == Advance
+Spec == Init /\ [][Next]_count
+====
+`;
+    await writeFile(files.spec, source);
+    const existing = new Set(await readdir(tmpdir()));
+    const pending = runFiniteTlc({ ...files, jar, timeoutMs: 2_000 }).then(value => ({ kind: 'success', value }), error => ({ kind: 'failure', error }));
+    const snapshot = await observeSnapshot(existing, source);
+    const result = await pending;
+    assert.ok('error' in result && result.error instanceof TlcFailureError);
+    assert.deepEqual(result.error.diagnostic.failure, { kind: 'timeout', phase: 'tlc', evidence: { kind: 'owned-deadline' } });
+    assert.ok(result.error.cause instanceof Error);
+    await assert.rejects(lstat(snapshot), { code: 'ENOENT' });
+  } finally { await files.dispose(); }
+});
+
+test('legacy PrintT output cannot enter the pinned controlled classifier or bypass source admission', { skip: !jar }, async () => {
+  assert.ok(jar);
+  const files = await fixture();
+  try {
+    await writeFile(files.spec, model.replace('VARIABLES phase', 'EXTENDS TLC\nVARIABLES phase')
+      .replace('Init == /\\', 'Init == /\\ PrintT("@!@!@STARTMSG 2110:1 @!@!@") /\\')
+      .replace('====', 'Safe == approved = TRUE\n===='));
+    await writeFile(files.config, 'SPECIFICATION Spec\nINVARIANT Safe\n');
+    await assert.rejects(runTlc({ ...files, jar }), error => {
+      assert.ok(error instanceof Error);
+      assert.equal(error instanceof TlcFailureError, false);
+      assert.match(error.message, /TLC102/);
+      assert.match(error.message, /STARTMSG 2110:1/);
+      return true;
+    });
+    await assert.rejects(runFiniteTlc({ ...files, jar }), error => {
+      assert.ok(error instanceof Error);
+      assert.equal(error instanceof TlcFailureError, false);
+      assert.match(error.message, /TLC203.*standard module TLC/);
+      return true;
+    });
+  } finally { await files.dispose(); }
+});
+
+test('actual invariant evaluation and level failures remain unknown model-check failures', { skip: !jar }, async () => {
+  assert.ok(jar);
+  const files = await fixture();
+  try {
+    await writeFile(files.config, 'SPECIFICATION Spec\nINVARIANT Safe\n');
+    for (const predicate of ['IF phase = "New" THEN 1[1] = 0 ELSE TRUE', 'phase\' = "New"']) {
+      await writeFile(files.spec, model.replace('====', `Safe == ${predicate}\n====`));
+      await assert.rejects(runFiniteTlc({ ...files, jar }), error => {
+        assert.ok(error instanceof TlcFailureError);
+        assert.match(error.message, /TLC204/);
+        assert.deepEqual(error.diagnostic.failure, { kind: 'unknown', phase: 'tlc' });
+        return true;
+      });
+    }
   } finally { await files.dispose(); }
 });
 
@@ -279,7 +378,12 @@ Spec == Init /\ [][Next]_phase
     const uncheckedProvenance = await runTlc({ ...files, jar });
     assert.match(uncheckedProvenance.dot, /label="Advance"/);
     assert.doesNotMatch(uncheckedProvenance.dot, /Advance\(/);
-    await assert.rejects(runFiniteTlc({ ...files, jar }), /TLC204.*parameterized action Advance/);
+    await assert.rejects(runFiniteTlc({ ...files, jar }), error => {
+      assert.ok(error instanceof TlcFailureError);
+      assert.match(error.message, /TLC204.*parameterized action Advance/);
+      assert.deepEqual(error.diagnostic.failure, { kind: 'unknown', phase: 'source-admission' });
+      return true;
+    });
     // Calling through an unparameterized wrapper must not erase the actual action's semantic provenance.
     const wrapped = (await readFile(files.spec, 'utf8')).replace('Next == Advance("Done") \\/ Wait', 'Wrapped == Advance("Done")\nNext == Wrapped \\/ Wait');
     await writeFile(files.spec, wrapped);

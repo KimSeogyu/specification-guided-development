@@ -85,6 +85,8 @@ The consumer supplied the following maintenance feedback. Alpha2 addresses the d
 
 C6, C7, and C8 source changes are being developed separately and are not included in alpha3. The C8 Cargo 1.92 reproducer failed when a standalone generated crate under a literal configured member prefix became a consumer path dependency, despite an exact root exclude. The corresponding glob-member and exact-exclude case succeeded. Before that dependency was connected, the consumer workspace metadata also succeeded. Check the consumer workspace after connecting the actual dependency. Metadata for the generated crate alone does not establish consumer integration. The demonstrated issue concerns Cargo placement and a missing early diagnostic.
 
+The source checkout now implements the [C7 failure diagnostic](managed-output.md#inspect-a-controlled-tlc-failure) for the controlled runner through CLI and MCP. It keeps the `error: string` field and failure status, reports evidence-supported kinds and invariant or action-property names, and marks counterexamples `not-retained`. Controlled TLC uses framed tool output, so callers must use structured identity instead of old console-prefix matches. Fresh failure-log export and retained trace paths remain unimplemented. This source change does not establish installed-plugin acceptance or complete C7.
+
 The consumer also reported a local SDK installation that differed from its lockfile while retaining the same package version. Version equality alone did not identify the resolved source. This observation supports C3 and is not attributed to an SDK defect.
 
 C1 diagnostics and automatic Pele fitting were released in alpha2 after the staged alpha1 workflow. The installed package was unchanged throughout that earlier trial.

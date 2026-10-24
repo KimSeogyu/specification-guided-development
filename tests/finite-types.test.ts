@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { FiniteGraphSchema, FiniteValueSchema, validateExecutableGraph, type ExactFiniteAutomaton } from '../src/finite-types.js';
+import { TlcFailureError } from '../src/tlc-failure.js';
 
 const graph: ExactFiniteAutomaton = {
   version: 1, kind: 'exact-finite', name: 'ScalarModel',
@@ -15,7 +16,12 @@ const graph: ExactFiniteAutomaton = {
 };
 
 function invalid(input: unknown, expected: RegExp): void {
-  assert.throws(() => validateExecutableGraph(input), expected);
+  assert.throws(() => validateExecutableGraph(input), error => {
+    assert.ok(error instanceof TlcFailureError);
+    assert.match(error.message, expected);
+    assert.deepEqual(error.diagnostic.failure, { kind: 'unknown', phase: 'executable-graph' });
+    return true;
+  });
 }
 
 function withNode(node: ExactFiniteAutomaton['nodes'][number], edges: ExactFiniteAutomaton['edges']): ExactFiniteAutomaton {

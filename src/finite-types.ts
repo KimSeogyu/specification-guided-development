@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { recordSchema } from './schema-record.js';
+import { TlcFailureError } from './tlc-failure.js';
 
 function isUnicodeScalarString(value: string): boolean {
   for (const character of value) {
@@ -108,16 +109,16 @@ export function validateExecutableGraph(input: unknown): ExactFiniteAutomaton {
   const parsed = FiniteGraphSchema.safeParse(input);
   if (!parsed.success) {
     const details = parsed.error.issues.slice(0, 8).map(issue => `${issue.path.join('.') || 'graph'}: ${issue.message}`).join('; ');
-    throw new Error(`TLC204: invalid exact finite graph: ${details}`);
+    throw new TlcFailureError(`TLC204: invalid exact finite graph: ${details}`, { kind: 'unknown', phase: 'executable-graph' });
   }
   const graph = parsed.data;
-  if (graph.actions.length === 0) throw new Error('TLC204: finite-owned authority requires at least one named action');
-  if (graph.initial.length !== 1) throw new Error('TLC204: finite-owned currently requires exactly one initial state');
+  if (graph.actions.length === 0) throw new TlcFailureError('TLC204: finite-owned authority requires at least one named action', { kind: 'unknown', phase: 'executable-graph' });
+  if (graph.initial.length !== 1) throw new TlcFailureError('TLC204: finite-owned currently requires exactly one initial state', { kind: 'unknown', phase: 'executable-graph' });
   const successors = new Map<string, string>();
   for (const edge of graph.edges) {
     const key = JSON.stringify([edge.from, edge.event]);
     const previous = successors.get(key);
-    if (previous !== undefined && previous !== edge.to) throw new Error('TLC204: ambiguous action successors require an explicit supported choice contract');
+    if (previous !== undefined && previous !== edge.to) throw new TlcFailureError('TLC204: ambiguous action successors require an explicit supported choice contract', { kind: 'unknown', phase: 'executable-graph' });
     successors.set(key, edge.to);
   }
   return graph;
