@@ -27,6 +27,7 @@
     "plugins:verify": "node scripts/verify-plugins.mjs",
     "verify:ingestion": "node scripts/verify-ingestion.mjs",
     "verify:partition": "node examples/partition-control/verify-model.mjs",
+    "verify:codec-recipe": "node scripts/verify-codec-recipe.mjs",
     "demo": "npm run build && node scripts/demo.mjs",
     "prepare": "npm run build",
     "verify:codex-host": "node scripts/verify-codex-host.mjs",

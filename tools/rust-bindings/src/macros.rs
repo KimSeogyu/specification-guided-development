@@ -132,13 +132,13 @@ pub fn audit(db: &Database) -> Result<()> {
     }
     Ok(())
 }
-struct MacroAudit<'a> {
-    db: &'a Database,
+struct MacroAudit<'a, 'inputs> {
+    db: &'a Database<'inputs>,
     module: &'a str,
     file: &'a str,
     error: Option<Error>,
 }
-impl MacroAudit<'_> {
+impl MacroAudit<'_, '_> {
     fn reject(&mut self, span: proc_macro2::Span, message: impl Into<String>) {
         if self.error.is_none() {
             self.error = Some(Error::at(self.file, span, message));
@@ -230,7 +230,7 @@ impl MacroAudit<'_> {
         )
     }
 }
-impl<'ast> Visit<'ast> for MacroAudit<'_> {
+impl<'ast> Visit<'ast> for MacroAudit<'_, '_> {
     fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
         for attribute in &item.attrs {
             self.visit_attribute(attribute);

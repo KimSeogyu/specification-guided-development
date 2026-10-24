@@ -1,13 +1,20 @@
 #![forbid(unsafe_code)]
 mod codec;
+mod codec_recipe;
+mod codec_targets;
+mod constructors;
 mod effect_check;
 mod equality;
 mod error;
 mod macros;
 mod model;
 mod source;
+mod source_inputs;
 mod targets;
 
+pub use codec_recipe::{
+    analyze_codec_recipe, CheckedCodecRecipe, CodecRecipeBinding, CodecRecipeReport,
+};
 pub use effect_check::{analyze_source_scope, SourceScopeReport};
 pub use error::{Error, Result};
 pub use model::{Binding, Codec, FactPlan, FieldPlan, Plan, SourceIdentity};
@@ -54,7 +61,21 @@ pub fn analyze_with_generated(
     let manifest = db.resolve_relative(&db.root, &binding.source.manifest)?;
     let crate_id = db.load_crate(&manifest)?;
     macros::audit(&db)?;
-    let module_parts = source::rust_path(&binding.source.module)?;
+    let facts = analyze_facts(&db, &binding.source, &crate_id)?;
+    Ok(Plan {
+        version: 1,
+        profile: "rust-whole-row-v1",
+        crate_name: db.crates[&crate_id].name.clone(),
+        sources: db.sources(),
+        facts,
+    })
+}
+pub(crate) fn analyze_facts(
+    db: &source::Database,
+    source_binding: &model::SourceBinding,
+    crate_id: &str,
+) -> Result<Vec<FactPlan>> {
+    let module_parts = source::rust_path(&source_binding.module)?;
     let module = format!(
         "{}{}",
         crate_id,
@@ -64,10 +85,10 @@ pub fn analyze_with_generated(
             .collect::<String>()
     );
     if !db.modules.contains_key(&module) {
-        return Err(Error::new(format!("bound source module {} is absent or excluded; conditional/test-only/generated types cannot supply Fact bindings", binding.source.module)));
+        return Err(Error::new(format!("bound source module {} is absent or excluded; conditional/test-only/generated types cannot supply Fact bindings", source_binding.module)));
     }
     let mut facts = Vec::new();
-    for fact in &binding.source.facts {
+    for fact in &source_binding.facts {
         let definition = db.resolve(&module, std::slice::from_ref(&fact.name))?;
         if definition.module != module {
             return Err(Error::new(format!(
@@ -75,18 +96,18 @@ pub fn analyze_with_generated(
                 fact.name
             )));
         }
-        let public = db.resolve(&crate_id, &source::rust_path(&fact.rust_path)?)?;
+        let public = db.resolve(crate_id, &source::rust_path(&fact.rust_path)?)?;
         if public.module != definition.module
             || source::item_name(&public.item) != Some(fact.name.clone())
-            || db.public_path(&definition, &crate_id)? != fact.rust_path
+            || db.public_path(&definition, crate_id)? != fact.rust_path
         {
             return Err(Error::new(format!(
                 "{}: rustPath must name its resolved accessible crate:: re-export",
                 fact.name
             )));
         }
-        codec::check_fact_ownership(&db, &definition)?;
-        let equality = equality::fields(&db, &definition)?;
+        codec::check_fact_ownership(db, &definition)?;
+        let equality = equality::fields(db, &definition)?;
         let Item::Struct(item) = &definition.item else {
             return Err(Error::new("bound Fact is not a struct"));
         };
@@ -121,14 +142,13 @@ pub fn analyze_with_generated(
             if !payload && !provenance {
                 return Err(Error::at(&definition.file, field.span(), format!("{}.{} is omitted by native Eq but is not classified as metadata; add an explicit metadata field or update native equality", fact.name, name)));
             }
-            let codec =
-                codec::codec(&db, &definition.module, &field.ty, &crate_id).map_err(|e| {
-                    Error::at(
-                        &definition.file,
-                        field.span(),
-                        format!("{}.{}: {}", fact.name, name, e.message),
-                    )
-                })?;
+            let codec = codec::codec(db, &definition.module, &field.ty, crate_id).map_err(|e| {
+                Error::at(
+                    &definition.file,
+                    field.span(),
+                    format!("{}.{}: {}", fact.name, name, e.message),
+                )
+            })?;
             if classes.is_some() && !matches!(codec, Codec::U32 { .. }) {
                 return Err(Error::new(format!(
                     "{}.{}: finite equivalence requires an exact u32 codec",
@@ -150,49 +170,13 @@ pub fn analyze_with_generated(
             fields: plans,
         });
     }
-    Ok(Plan {
-        version: 1,
-        profile: "rust-whole-row-v1",
-        crate_name: db.crates[&crate_id].name.clone(),
-        sources: db.sources(),
-        facts,
-    })
+    Ok(facts)
 }
 fn validate_binding(binding: &Binding) -> Result<()> {
     if binding.version != 1 || binding.profile != "rust-whole-row-v1" {
         return Err(Error::new("expected version 1 rust-whole-row-v1 binding"));
     }
-    source::rust_path(&binding.source.module)?;
-    if binding.source.manifest.is_empty()
-        || binding.source.manifest.starts_with('/')
-        || binding
-            .source
-            .manifest
-            .split('/')
-            .any(|part| matches!(part, "" | "." | ".."))
-        || binding.source.manifest.contains('\\')
-    {
-        return Err(Error::new(
-            "binding manifest must be an ordinary root-relative path",
-        ));
-    }
-    if binding.source.facts.is_empty() || binding.source.facts.len() > 32 {
-        return Err(Error::new("bind one to 32 concrete Fact types"));
-    }
-    let mut names = BTreeSet::new();
-    let mut paths = BTreeSet::new();
-    for fact in &binding.source.facts {
-        source::rust_path(&fact.rust_path)?;
-        if !source::identifier(&fact.name)
-            || !names.insert(&fact.name)
-            || !paths.insert(&fact.rust_path)
-            || fact.metadata.is_empty()
-            || fact.metadata.iter().any(|name| !source::identifier(name))
-            || fact.metadata.iter().collect::<BTreeSet<_>>().len() != fact.metadata.len()
-        {
-            return Err(Error::new("Fact names, paths, and explicit metadata fields must be distinct supported identifiers"));
-        }
-    }
+    validate_source_binding(&binding.source)?;
     let model = &binding.model;
     if !source::identifier(&model.payload_input)
         || !source::identifier(&model.provenance_input)
@@ -216,6 +200,40 @@ fn validate_binding(binding: &Binding) -> Result<()> {
             return Err(Error::new(
                 "row pairs require distinct names and state variables",
             ));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_source_binding(source_binding: &model::SourceBinding) -> Result<()> {
+    source::rust_path(&source_binding.module)?;
+    if source_binding.manifest.is_empty()
+        || source_binding.manifest.starts_with('/')
+        || source_binding
+            .manifest
+            .split('/')
+            .any(|part| matches!(part, "" | "." | ".."))
+        || source_binding.manifest.contains('\\')
+    {
+        return Err(Error::new(
+            "binding manifest must be an ordinary root-relative path",
+        ));
+    }
+    if source_binding.facts.is_empty() || source_binding.facts.len() > 32 {
+        return Err(Error::new("bind one to 32 concrete Fact types"));
+    }
+    let mut names = BTreeSet::new();
+    let mut paths = BTreeSet::new();
+    for fact in &source_binding.facts {
+        source::rust_path(&fact.rust_path)?;
+        if !source::identifier(&fact.name)
+            || !names.insert(&fact.name)
+            || !paths.insert(&fact.rust_path)
+            || fact.metadata.is_empty()
+            || fact.metadata.iter().any(|name| !source::identifier(name))
+            || fact.metadata.iter().collect::<BTreeSet<_>>().len() != fact.metadata.len()
+        {
+            return Err(Error::new("Fact names, paths, and explicit metadata fields must be distinct supported identifiers"));
         }
     }
     Ok(())

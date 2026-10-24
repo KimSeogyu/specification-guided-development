@@ -94,6 +94,8 @@ For a generated collection fold, read [the v6 partition guide](docs/partition-fo
 
 For existing Rust rows, read [the whole-row binding guide](docs/row-owned.md). V5 analyzes actual source equality and the owned type closure, preserves metadata excluded or normalized by equality, and returns original model action IDs. Its library-source scope excludes all-target/feature coverage and storage authority. TypeScript DTOs preserve the audited representations; they do not infer every native constructor precondition.
 
+For native row reconstruction, read [the codec recipe reference](docs/codec-recipes.md). The separate source profile checks complete column mappings and actual constructor bodies, with captured input and Cargo discovery rechecks. It returns source evidence with no storage authority. Existing project versions and MCP tools are unchanged.
+
 For declaration diagnostics, build the included v1 order model:
 
 ```sh

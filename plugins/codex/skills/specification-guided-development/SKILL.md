@@ -8,6 +8,8 @@ description: Model architecture and behavior in TLA+. Generate state owners or T
 Read the relevant profile in [the modeling guide](references/modeling.md) before you create or change a model.
 Select the profile that matches the required guarantee.
 For a closed partition data fold, read [the v6 composition guide](references/partition-fold.md).
+For checked native row reconstruction, read [the codec recipe guide](references/codec-recipes.md).
+The codec helper checks source and constructors and returns no storage authority.
 Project v6 `partition-fold` composes checked complete-row and finite-control models with source-checked literal family projections.
 Project v5 `row-owned` derives a complete-row binding from supported native Rust Fact sources and explicit payload/provenance state.
 Project v4 `symbolic-owned` generates equality/copy behavior with two or three independent inputs and explicit provenance state.
