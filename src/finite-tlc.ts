@@ -3,10 +3,9 @@ import { createHash } from 'node:crypto';
 import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve, sep } from 'node:path';
-import { promisify } from 'node:util';
 import { parseSanyXml, type SanyExpression, type SanyModule, type SanyXmlElement } from './sany-xml.js';
+import { classifyControlledTlcFailure, hasCleanTlcCompletion, TlcFailureError, type TlcPhase } from './tlc-failure.js';
 
-const execute = promisify(execFile);
 export const FINITE_TLC_JAR_SHA256 = '936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88';
 const identifier = /^[A-Za-z_][A-Za-z_0-9]*$/;
 const digest = (value: string | Uint8Array): string => createHash('sha256').update(value).digest('hex');
@@ -38,6 +37,44 @@ export interface ParsedSymbolicConfig {
 }
 export type ControlledTlcInput = { spec: string; config: string; jar: string; timeoutMs?: number };
 type ControlledProfile = 'finite-owned-v1' | 'symbolic-owned-v1';
+
+type ProcessOutcome = { kind: 'completed'; stdout: string; stderr: string }
+  | { kind: 'failed'; stdout: string; stderr: string; cause: unknown; ownedDeadline: boolean; processExited: boolean };
+
+/** Process mechanics only. Diagnostic trust comes from the controlled caller's pinned inputs. */
+export async function runProcessWithDeadline(input: {
+  command: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv; deadline: number; maxBuffer: number;
+}): Promise<ProcessOutcome> {
+  return new Promise(resolveOutcome => {
+    let timer: NodeJS.Timeout | undefined;
+    let settled = false;
+    let ownedDeadline = false;
+    try {
+      const child = execFile(input.command, input.args, {
+        cwd: input.cwd, env: input.env, encoding: 'utf8', maxBuffer: input.maxBuffer,
+      }, (cause, stdout, stderr) => {
+        settled = true;
+        clearTimeout(timer);
+        resolveOutcome(cause === null && !ownedDeadline ? { kind: 'completed', stdout, stderr }
+          : { kind: 'failed', stdout, stderr, cause, ownedDeadline,
+            processExited: cause !== null && child.signalCode === null && child.exitCode !== null && typeof cause.code === 'number' && cause.code === child.exitCode });
+      });
+      const expire = (): void => {
+        if (settled || child.exitCode !== null || child.signalCode !== null) return;
+        const remaining = input.deadline - performance.now();
+        if (remaining > 0) {
+          timer = setTimeout(expire, Math.min(remaining, 2_147_483_647));
+          return;
+        }
+        ownedDeadline = child.kill('SIGKILL');
+      };
+      expire();
+    } catch (cause) {
+      clearTimeout(timer);
+      resolveOutcome({ kind: 'failed', stdout: '', stderr: '', cause, ownedDeadline: false, processExited: false });
+    }
+  });
+}
 
 interface Token { kind: 'word' | 'string' | 'symbol'; value: string; line: number }
 
@@ -274,7 +311,7 @@ export async function runControlledTlc(input: ControlledTlcInput, profile: Contr
     throw new Error(`TLC203: Java override artifact ${name} is unsupported in the ${profile} model directory; only the explicitly supplied, verified TLC JAR may be present`);
   }
   const temp = await realpath(await mkdtemp(join(tmpdir(), profile === 'finite-owned-v1' ? 'sgd-finite-' : 'sgd-symbolic-')));
-  const started = Date.now();
+  const started = performance.now();
   const timeout = input.timeoutMs ?? 120_000;
   if (!Number.isSafeInteger(timeout) || timeout <= 0) { await rm(temp, { recursive: true, force: true }); throw new Error('TLC202: timeoutMs must be a positive safe integer'); }
   try {
@@ -291,20 +328,17 @@ export async function runControlledTlc(input: ControlledTlcInput, profile: Contr
     for (const [name, bytes] of sources) await writeFile(join(snapshot, name), bytes, { mode: 0o400 });
     const javaArgs = ['-XX:+UseParallelGC', '-Xmx512m', '-Duser.language=en', '-Duser.country=US', '-Dfile.encoding=UTF-8',
       `-Duser.home=${javaHome}`, `-Djava.io.tmpdir=${javaTemp}`, '-cp', copiedJar];
-    const run = async (args: string[]): Promise<{ stdout: string; stderr: string }> => {
-      const remaining = timeout - (Date.now() - started);
-      if (remaining <= 0) throw new Error('TLC204: finite model check timed out before completion');
-      try {
-        const { stdout, stderr } = await execute('java', [...javaArgs, ...args], {
-          cwd: snapshot, env, timeout: remaining, killSignal: 'SIGKILL', maxBuffer: 16 * 1024 * 1024,
-        });
-        return { stdout, stderr };
-      } catch (error) {
-        const output = error instanceof Error && 'stdout' in error && typeof error.stdout === 'string' ? error.stdout.slice(-12000) : '';
-        throw new Error(`TLC204: finite model check failed or timed out; no executable authority can be generated.\n${output}`, { cause: error });
-      }
+    const run = async (phase: TlcPhase, args: string[]): Promise<{ stdout: string; stderr: string }> => {
+      if (performance.now() >= started + timeout) throw new TlcFailureError('TLC204: finite model check timed out before completion', {
+        kind: 'timeout', phase, evidence: { kind: 'owned-deadline' },
+      });
+      const result = await runProcessWithDeadline({ command: 'java', args: [...javaArgs, ...args], cwd: snapshot, env,
+        deadline: started + timeout, maxBuffer: 16 * 1024 * 1024 });
+      if (result.kind === 'completed') return result;
+      throw new TlcFailureError(`TLC204: finite model check failed or timed out; no executable authority can be generated.\n${result.stdout.slice(-12000)}`,
+        classifyControlledTlcFailure({ phase, ...result, invariants: parsedConfig.invariants }), { cause: result.cause });
     };
-    const runLog = async (args: string[]): Promise<string> => { const output = await run(args); return output.stdout + output.stderr; };
+    const runLog = async (phase: TlcPhase, args: string[]): Promise<string> => { const output = await run(phase, args); return output.stdout + output.stderr; };
     const discover = (log: string): { local: string[]; standard: string[] } => {
       const local = new Set<string>();
       const standard = new Set<string>();
@@ -324,23 +358,24 @@ export async function runControlledTlc(input: ControlledTlcInput, profile: Contr
         }
         const processed = /^Semantic processing of module ([A-Za-z_][A-Za-z_0-9]*)$/.exec(line)?.[1];
         if (processed !== undefined) { semantic.add(processed); continue; }
-        throw new Error(`TLC204: SANY did not cleanly validate the complete finite model.\n${log.slice(-12000)}`);
+        throw new TlcFailureError(`TLC204: SANY did not cleanly validate the complete finite model.\n${log.slice(-12000)}`,
+          classifyControlledTlcFailure({ phase: 'sany', stdout: log, stderr: '', ownedDeadline: false, processExited: true, invariants: parsedConfig.invariants }));
       }
       if (!local.has(basename(spec)) || !semantic.has(moduleName) || [...local].some(name => !semantic.has(basename(name, '.tla')))) {
-        throw new Error('TLC204: SANY did not semantically validate the root and its complete local module closure');
+        throw new TlcFailureError('TLC204: SANY did not semantically validate the root and its complete local module closure', { kind: 'unknown', phase: 'sany' });
       }
       return { local: [...local].sort(), standard: [...standard].sort() };
     };
-    const sanyLog = await runLog(['tla2sany.SANY', basename(spec)]);
+    const sanyLog = await runLog('sany', ['tla2sany.SANY', basename(spec)]);
     const closure = discover(sanyLog);
     for (const name of sources.keys()) if (!closure.local.includes(name)) await rm(join(snapshot, name));
-    const checkedClosure = discover(await runLog(['tla2sany.SANY', basename(spec)]));
+    const checkedClosure = discover(await runLog('sany', ['tla2sany.SANY', basename(spec)]));
     if (JSON.stringify(closure) !== JSON.stringify(checkedClosure)) throw new Error('TLC203: SANY module closure changed after snapshot isolation');
     // -o skips the remote XSD fetch. A clean SANY run above is mandatory because this exporter can exit zero on errors.
-    const exported = await run(['tla2sany.xml.XMLExporter', '-o', basename(spec)]);
+    const exported = await run('xml', ['tla2sany.xml.XMLExporter', '-o', basename(spec)]);
     for (const line of exported.stderr.split(/\r?\n/).map(line => line.trim()).filter(Boolean)) {
       if (!/^Semantic processing of module [A-Za-z_][A-Za-z_0-9]*$/.test(line)) {
-        throw new Error(`TLC204: SANY XML export did not complete cleanly.\n${exported.stderr.slice(-12000)}`);
+        throw new TlcFailureError(`TLC204: SANY XML export did not complete cleanly.\n${exported.stderr.slice(-12000)}`, { kind: 'unknown', phase: 'xml' });
       }
     }
     const xml = exported.stdout;
@@ -348,10 +383,11 @@ export async function runControlledTlc(input: ControlledTlcInput, profile: Contr
     if (semantic.root !== moduleName) throw new Error('TLC203: SANY XML root differs from the isolated model root');
     if (profile === 'finite-owned-v1') assertUnparameterizedBehavior(semantic, parsedConfig);
     const dotPath = join(temp, 'model.dot');
-    const tlcLog = await runLog(['tlc2.TLC', '-modelcheck', '-workers', '1', '-fp', '0', '-seed', '0',
+    const tlcLog = await runLog('tlc', ['tlc2.TLC', '-tool', '-modelcheck', '-workers', '1', '-fp', '0', '-seed', '0',
       '-metadir', join(temp, 'states'), '-dump', 'dot,actionlabels', dotPath, '-config', '__sgd_finite.cfg', basename(spec)]);
-    if (!tlcLog.includes('Model checking completed. No error has been found.') || !/\b0 states left on queue\./.test(tlcLog) || /(?:^|\n)(?:Error:|Warning:)/.test(tlcLog)) {
-      throw new Error(`TLC204: TLC did not complete a clean exhaustive finite model check.\n${tlcLog.slice(-12000)}`);
+    if (!hasCleanTlcCompletion(tlcLog)) {
+      throw new TlcFailureError(`TLC204: TLC did not complete a clean exhaustive finite model check.\n${tlcLog.slice(-12000)}`,
+        classifyControlledTlcFailure({ phase: 'tlc', stdout: tlcLog, stderr: '', ownedDeadline: false, processExited: true, invariants: parsedConfig.invariants }));
     }
     // Reject edits during verification instead of attaching a fresh-file identity to an older snapshot.
     const currentEntries = (await readdir(sourceDirectory)).filter(name => name.endsWith('.tla')).sort();
@@ -380,7 +416,7 @@ function assertUnparameterizedBehavior(module: SanyModule, config: ParsedSymboli
     if (symbol.kind === 'definition' && symbol.arity !== 0) {
       if (level === null) throw new Error('TLC203: missing SANY level for a reachable definition application');
       if (level >= 2) {
-        throw new Error(`TLC204: finite-owned-v1 rejects reachable parameterized action ${symbol.name} at application level ${level}; TLC action labels erase arguments, so use symbolic-owned for data-bound actions`);
+        throw new TlcFailureError(`TLC204: finite-owned-v1 rejects reachable parameterized action ${symbol.name} at application level ${level}; TLC action labels erase arguments, so use symbolic-owned for data-bound actions`, { kind: 'unknown', phase: 'source-admission' });
       }
     }
   };
@@ -392,7 +428,7 @@ function assertUnparameterizedBehavior(module: SanyModule, config: ParsedSymboli
     if (symbol.kind === 'definition') {
       if (symbol.level === null) throw new Error('TLC203: missing SANY level for a reachable definition');
       if (symbol.level >= 2 && symbol.arity !== 0) {
-        throw new Error(`TLC204: finite-owned-v1 rejects reachable parameterized action ${symbol.name}; TLC action labels erase arguments, so use symbolic-owned for data-bound actions`);
+        throw new TlcFailureError(`TLC204: finite-owned-v1 rejects reachable parameterized action ${symbol.name}; TLC action labels erase arguments, so use symbolic-owned for data-bound actions`, { kind: 'unknown', phase: 'source-admission' });
       }
       inspectExpression(symbol.body);
     } else if (symbol.kind === 'unsupported') inspectRaw(symbol.raw);
