@@ -124,6 +124,7 @@ fn main() {
     println!("{}", serde_json::to_string(&traces).unwrap());
 }
 `);
+    await execute('cargo', ['fetch', '--quiet', '--manifest-path', join(native.consumer, 'Cargo.toml')], { timeout: 180_000 });
     await work(native);
   } finally { await rm(root, { recursive: true, force: true }); }
 }
