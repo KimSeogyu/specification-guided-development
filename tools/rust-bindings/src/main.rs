@@ -1,4 +1,6 @@
-use sgd_rust_bindings::{analyze_source_scope, analyze_with_generated, Error};
+use sgd_rust_bindings::{
+    analyze_codec_recipe, analyze_source_scope, analyze_with_generated, Error,
+};
 use std::path::PathBuf;
 
 fn run() -> Result<(), Error> {
@@ -6,6 +8,34 @@ fn run() -> Result<(), Error> {
     let mut binding = None;
     let mut generated = None;
     let mut args = std::env::args().skip(1).peekable();
+    if args.peek().is_some_and(|arg| arg == "codec-recipe") {
+        args.next();
+        while let Some(flag) = args.next() {
+            let value = args
+                .next()
+                .ok_or_else(|| codec_argument("use codec-recipe --root APP --binding JSON"))?;
+            match flag.as_str() {
+                "--root" if root.is_none() => root = Some(PathBuf::from(value)),
+                "--binding" if binding.is_none() => binding = Some(PathBuf::from(value)),
+                _ => {
+                    return Err(codec_argument(
+                        "codec-recipe accepts only one --root APP and --binding JSON",
+                    ))
+                }
+            }
+        }
+        let checked = analyze_codec_recipe(
+            &root.ok_or_else(|| codec_argument("missing --root APP"))?,
+            &binding.ok_or_else(|| codec_argument("missing --binding JSON"))?,
+        )?;
+        checked.recheck()?;
+        println!(
+            "{}",
+            serde_json::to_string(checked.report())
+                .map_err(|error| codec_argument(&format!("cannot encode codec report: {error}")))?
+        );
+        return Ok(());
+    }
     if args.peek().is_some_and(|arg| arg == "source-scope") {
         args.next();
         if args.next().as_deref() != Some("--root") {
@@ -57,12 +87,25 @@ fn scope_argument(message: &str) -> Error {
     error.rule_id = "TLC308";
     error
 }
+fn codec_argument(message: &str) -> Error {
+    let mut error = Error::new(message);
+    error.rule_id = "TLC309";
+    error
+}
 fn main() {
     if let Err(error) = run() {
-        if std::env::args().nth(1).as_deref() == Some("source-scope") {
+        let mode = std::env::args().nth(1);
+        if matches!(mode.as_deref(), Some("source-scope" | "codec-recipe")) {
             let mut diagnostic = serde_json::to_value(&error).expect("diagnostic serialization");
             diagnostic["storageAuthority"] = serde_json::Value::Bool(false);
-            diagnostic["profile"] = serde_json::Value::String("rust-source-scope-v1".into());
+            diagnostic["profile"] = serde_json::Value::String(
+                if mode.as_deref() == Some("codec-recipe") {
+                    "rust-codec-recipe-v1"
+                } else {
+                    "rust-source-scope-v1"
+                }
+                .into(),
+            );
             eprintln!("{diagnostic}");
             std::process::exit(2);
         }

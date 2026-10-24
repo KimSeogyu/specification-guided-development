@@ -1,5 +1,6 @@
 use crate::error::{Error, Result};
 use crate::model::SourceIdentity;
+use crate::source_inputs::SourceInputs;
 use proc_macro2::{Group, Span, TokenStream, TokenTree};
 use quote::ToTokens;
 use sha2::{Digest, Sha256};
@@ -52,12 +53,22 @@ pub struct Implementation {
     pub item: ItemImpl,
     pub conditional: bool,
 }
-pub struct Database {
+enum Inputs<'a> {
+    Direct(DirectInputs),
+    Captured(&'a mut dyn SourceInputs),
+}
+
+#[derive(Default)]
+struct DirectInputs {
+    reads: BTreeMap<String, (String, String)>,
+}
+
+pub struct Database<'a> {
     pub root: PathBuf,
     pub modules: BTreeMap<String, Module>,
     pub crates: BTreeMap<String, CrateInfo>,
     pub implementations: Vec<Implementation>,
-    reads: BTreeMap<String, (String, String)>,
+    inputs: Inputs<'a>,
     manifests: BTreeMap<String, String>,
     loading: BTreeSet<String>,
     generated: Option<PathBuf>,
@@ -146,7 +157,7 @@ pub fn item_attrs(item: &Item) -> &[Attribute] {
     }
 }
 
-impl Database {
+impl<'a> Database<'a> {
     pub fn new(root: &Path) -> Result<Self> {
         let root = root
             .canonicalize()
@@ -159,7 +170,7 @@ impl Database {
             modules: BTreeMap::new(),
             crates: BTreeMap::new(),
             implementations: Vec::new(),
-            reads: BTreeMap::new(),
+            inputs: Inputs::Direct(DirectInputs::default()),
             manifests: BTreeMap::new(),
             loading: BTreeSet::new(),
             generated: None,
@@ -168,7 +179,33 @@ impl Database {
             file_attributes: Vec::new(),
         })
     }
+    pub(crate) fn from_inputs(inputs: &'a mut dyn SourceInputs) -> Self {
+        Self {
+            root: inputs.root().to_path_buf(),
+            modules: BTreeMap::new(),
+            crates: BTreeMap::new(),
+            implementations: Vec::new(),
+            inputs: Inputs::Captured(inputs),
+            manifests: BTreeMap::new(),
+            loading: BTreeSet::new(),
+            generated: None,
+            production_items: Vec::new(),
+            validated_macros: BTreeSet::new(),
+            file_attributes: Vec::new(),
+        }
+    }
+    fn probe(&mut self, path: &Path) -> Result<bool> {
+        match &mut self.inputs {
+            Inputs::Direct(_) => Ok(path.exists()),
+            Inputs::Captured(inputs) => inputs.probe(path),
+        }
+    }
     pub fn set_generated_root(&mut self, path: &Path) -> Result<()> {
+        if matches!(self.inputs, Inputs::Captured(_)) {
+            return Err(Error::new(
+                "captured codec inputs do not support generated-source exclusions",
+            ));
+        }
         let path = if path.is_absolute() {
             path.to_path_buf()
         } else {
@@ -214,6 +251,9 @@ impl Database {
         Err(Error::new("source inside the generated output root is not one of the three controlled generated adapter/crate paths"))
     }
     pub fn relative(&self, path: &Path) -> Result<String> {
+        if let Inputs::Captured(inputs) = &self.inputs {
+            return inputs.relative(path);
+        }
         let relative = path
             .strip_prefix(&self.root)
             .map_err(|_| Error::new("source path escapes application root"))?;
@@ -256,8 +296,14 @@ impl Database {
                 "generated output cannot supply a bound source type, getter, macro, or manifest",
             ));
         }
+        if let Inputs::Captured(inputs) = &mut self.inputs {
+            return inputs.read(path);
+        }
         let relative = self.relative(path)?;
-        if let Some((text, _)) = self.reads.get(&relative) {
+        let Inputs::Direct(inputs) = &mut self.inputs else {
+            unreachable!()
+        };
+        if let Some((text, _)) = inputs.reads.get(&relative) {
             return Ok(text.clone());
         }
         let mut current = self.root.clone();
@@ -278,7 +324,7 @@ impl Database {
                 "{relative}: source must be a regular file no larger than 4 MiB"
             )));
         }
-        if self.reads.len() >= 512 {
+        if inputs.reads.len() >= 512 {
             return Err(Error::new(
                 "source closure exceeds 512 files; no partial analysis is permitted",
             ));
@@ -291,17 +337,34 @@ impl Database {
             .collect();
         let text = String::from_utf8(bytes)
             .map_err(|_| Error::new(format!("{relative}: source must be UTF-8")))?;
-        self.reads.insert(relative, (text.clone(), digest));
+        inputs.reads.insert(relative, (text.clone(), digest));
         Ok(text)
     }
     pub fn sources(&self) -> Vec<SourceIdentity> {
-        self.reads
+        let Inputs::Direct(inputs) = &self.inputs else {
+            let Inputs::Captured(inputs) = &self.inputs else {
+                unreachable!()
+            };
+            return inputs.identities();
+        };
+        inputs
+            .reads
             .iter()
             .map(|(path, (_, sha256))| SourceIdentity {
                 path: path.clone(),
                 sha256: sha256.clone(),
             })
             .collect()
+    }
+    pub(crate) fn source_text(&self, relative: &str) -> Option<&str> {
+        let path = self.root.join(relative);
+        if self.relative(&path).ok()?.as_str() != relative {
+            return None;
+        }
+        match &self.inputs {
+            Inputs::Direct(inputs) => inputs.reads.get(relative).map(|(text, _)| text.as_str()),
+            Inputs::Captured(inputs) => inputs.captured_text(&path),
+        }
     }
     pub fn load_crate(&mut self, manifest: &Path) -> Result<String> {
         let relative = self.relative(manifest)?;
@@ -443,13 +506,15 @@ impl Database {
         loop {
             let legacy = directory.join(".cargo/config");
             let modern = directory.join(".cargo/config.toml");
-            if legacy.exists() && modern.exists() {
+            let legacy_exists = self.probe(&legacy)?;
+            let modern_exists = self.probe(&modern)?;
+            if legacy_exists && modern_exists {
                 return Err(Error::new(
                     "both .cargo/config and config.toml exist; source configuration is ambiguous",
                 ));
             }
-            for path in [legacy, modern] {
-                if !path.exists() {
+            for (path, present) in [(legacy, legacy_exists), (modern, modern_exists)] {
+                if !present {
                     continue;
                 }
                 let text = self.read(&path)?;
@@ -579,7 +644,7 @@ impl Database {
                 } else {
                     let flat = dir.join(format!("{name}.rs"));
                     let nested = dir.join(&name).join("mod.rs");
-                    match (flat.exists(), nested.exists()) {
+                    match (self.probe(&flat)?, self.probe(&nested)?) {
                         (true, false) => flat,
                         (false, true) => nested,
                         (true, true) => {

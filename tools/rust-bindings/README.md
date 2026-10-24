@@ -74,3 +74,11 @@ The checker refuses receiver and trait dispatch, custom types and lifecycle code
 Before returning success, the command repeats safe Cargo discovery and verifies captured source, manifest, lockfile, and configuration bytes. It also rechecks absent configuration and alternative module paths. An added automatic binary or ambiguous module layout changes the result even when earlier source files remain unchanged. No generated directory or file is excluded in this mode. These checks detect ordinary edits across analysis phases. They do not create an atomic filesystem snapshot.
 
 This mode produces source evidence only. It does not admit current Parangsae codecs, derive loaded-resource identity, grant a filesystem namespace, or generate storage authority. Unsupported source fails instead of returning partial workspace success.
+
+## Codec recipe mode
+
+The separate `codec-recipe --root APP --binding JSON` command checks a selected native row, complete encoder/decoder leaves, a literal physical-column mapping, and actual constructor bodies. Its result has profile `rust-codec-recipe-v1`, scope `selected-codec-and-native-constructor-closure`, and `storageAuthority:false`. Failures use `TLC309` and exit 2.
+
+`analyze_codec_recipe` returns a `CheckedCodecRecipe`. The report is borrowed through `report()` and cannot reconstruct the private capture. `recheck()` repeats safe discovery, bytes, and absence checks. The new reader shares bounded inputs with source-scope, while a separate default-registry metadata policy keeps the older registry-free source-scope contract unchanged. Discovered targets are inventory evidence. Their bodies and effects are not thereby admitted.
+
+Read [the codec recipe reference](../../docs/codec-recipes.md) for binding syntax, constructor grammar, foreign trust, metadata feature scope, and remaining generated-source and actual IO boundaries. The real Funding fixture and source mutations live in `tests/fixtures/rust-codec-recipe` at the repository root. This mode does not introduce an SGD project schema, native writer, or application-wide authority result.

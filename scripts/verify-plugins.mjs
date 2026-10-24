@@ -511,6 +511,36 @@ async function verifySourceScope({ plugin, name }) {
   return { pureTargets: 'library and two auto-binaries admitted', addedWriter: 'reexported std::fs::write refused in new auto-binary', storageAuthority: false };
 }
 
+async function verifyCodecRecipe({ plugin, name }) {
+  const root = join(temporary, name, 'codec-recipe');
+  await cp(resolve('tests/fixtures/rust-codec-recipe/parangsae'), root, { recursive: true });
+  const binding = JSON.parse(await readFile(resolve('tests/fixtures/rust-codec-recipe/codec-binding.json'), 'utf8'));
+  const { analyzeCodecRecipe, recheckCodecRecipe } = await import(pathToFileURL(join(plugin, 'runtime/dist/codec-recipe.js')).href);
+  const report = await analyzeCodecRecipe({ application: root, binding });
+  assert.equal(report.profile, 'rust-codec-recipe-v1');
+  assert.equal(report.storageAuthority, false);
+  assert.equal(report.scope, 'selected-codec-and-native-constructor-closure');
+  assert.equal(report.discovery.scope, 'discovered-targets-only');
+  assert.equal(report.columns.length, 9);
+  assert.ok(report.columns.some(column => column.column === 'received_ts_us' && column.field === 'received_ts'));
+  assert.ok(Object.isFrozen(report));
+  await recheckCodecRecipe({ report });
+  await assert.rejects(recheckCodecRecipe({ report: JSON.parse(JSON.stringify(report)) }), /TLC309:/);
+  const source = join(root, 'crates/collector/src/funding_codec.rs');
+  const original = await readFile(source, 'utf8');
+  const needle = 'raw_calc_time_us: row.raw_calc_time.micros(),';
+  assert.equal(original.split(needle).length, 2);
+  await writeFile(source, original.replace(needle, 'raw_calc_time_us: row.funding_time.micros(),'));
+  await assert.rejects(analyzeCodecRecipe({ application: root, binding }), error => {
+    assert.match(error.message, /TLC309:/);
+    assert.match(error.message, /funding_codec\.rs/);
+    assert.match(error.message, /encode_funding_row/);
+    return true;
+  });
+  await assert.rejects(recheckCodecRecipe({ report }), /TLC309:/);
+  return { nativeFields: 'all nine Funding fields and checked constructors', rawFieldSubstitution: 'same-scalar wrong source refused', capturedReport: 'complete reanalysis; copied report cannot restore context', storageAuthority: false };
+}
+
 try {
   for (const name of ['codex', 'claude-code']) {
     const plugin = join(temporary, `${name} copied cache`);
@@ -542,10 +572,11 @@ try {
       const row = await verifyRowOwned({ client, plugin, name });
       const partitionOwned = await verifyPartitionOwned({ client, plugin, name, fixture: row.fixture });
       const sourceScope = await verifySourceScope({ plugin, name });
-      results.push({ plugin: name, environment: 'isolated copied plugin cache; not an installed agent host', actualInstalledAgentHost: 'not exercised', nativeRuntime: `${process.platform}-${process.arch}`, tools, modelCheck: 'completed', generatedTypeScript: 'accepted', pele: 'rendered', finiteOwned, symbolicOwned, productOwned, rowOwned: row.details, partitionOwned, sourceScope });
+      const codecRecipe = await verifyCodecRecipe({ plugin, name });
+      results.push({ plugin: name, environment: 'isolated copied plugin cache; not an installed agent host', actualInstalledAgentHost: 'not exercised', nativeRuntime: `${process.platform}-${process.arch}`, tools, modelCheck: 'completed', generatedTypeScript: 'accepted', pele: 'rendered', finiteOwned, symbolicOwned, productOwned, rowOwned: row.details, partitionOwned, sourceScope, codecRecipe });
     } finally { await client.close(); }
   }
   await mkdir(resolve('.runtime'), { recursive: true });
   await writeFile(resolve('.runtime/plugin-verification.json'), JSON.stringify(results, null, 2) + '\n');
-  process.stdout.write('Both isolated copied plugin caches completed MCP, real TLC, v1 diagnostics, v2 finite-owned, v3 symbolic-owned, v4 product-input, v5 source-bound whole rows, and v6 closed partition data folds with their bundled control templates. The bundled Rust analyzer, packaged TypeScript 7.0.2, complete payload/provenance behavior, input-tuple oracle, supplied-IR erasure, Pele, v5-to-v6 migration, Noop/Refused complete-row behavior, immutable --check, tamper checks, unverified DOT refusal, and the bundled closed source-scope pure-target/writer-refusal checks passed. Actual installed-agent hosts and completed Parangsae adoption were not established by these copied-cache fixtures.\n');
+  process.stdout.write('Both isolated copied plugin caches completed MCP, real TLC, v1 diagnostics, v2 finite-owned, v3 symbolic-owned, v4 product-input, v5 source-bound whole rows, and v6 closed partition data folds with their bundled control templates. The bundled Rust analyzer, packaged TypeScript 7.0.2, complete payload/provenance behavior, input-tuple oracle, supplied-IR erasure, Pele, v5-to-v6 migration, Noop/Refused complete-row behavior, immutable --check, tamper checks, unverified DOT refusal, the bundled closed source-scope pure-target/writer-refusal checks, and complete Funding codec/constructor analysis with wrong-field refusal passed. Codec reports retain no storage authority. Actual installed-agent hosts and completed Parangsae adoption were not established by these copied-cache fixtures.\n');
 } finally { await rm(temporary, { recursive: true, force: true }); }

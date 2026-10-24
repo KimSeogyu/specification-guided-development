@@ -1,0 +1,521 @@
+{
+  "version": 1,
+  "profile": "rust-codec-recipe-v1",
+  "execution": "Apply each case to a fresh independent copy. Never compile or execute the mutated application. Call the real analyzer for before-analysis cases. Call the original checked capture recheck for after-capture cases. Assert that no mutation marker file was created.",
+  "cases": [
+    {
+      "id": "symbol-constructor-safe-write",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Inspect the complete actual Symbol constructor body.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/core/src/symbol.rs",
+          "from": "    pub fn new(raw: &str) -> Result<Self, SymbolError> {",
+          "to": "    pub fn new(raw: &str) -> Result<Self, SymbolError> {\n        let _ = std::fs::write(\".sgd-codec-mutation-must-not-exist\", b\"effect\");"
+        }
+      ],
+      "v5Contrast": "The representation and getter stay unchanged. Existing v5 row analysis alone does not audit this constructor effect."
+    },
+    {
+      "id": "utc-constructor-safe-write",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Inspect statements before the integer wrapper constructor result.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/core/src/time.rs",
+          "from": "    pub const fn from_micros(micros: i64) -> Self {\n        Self(micros)\n    }",
+          "to": "    pub fn from_micros(micros: i64) -> Self {\n        let _ = std::fs::write(\".sgd-codec-mutation-must-not-exist\", b\"effect\");\n        Self(micros)\n    }"
+        }
+      ],
+      "v5Contrast": "Removing const permits ordinary safe Rust IO. The representation and getter remain exact."
+    },
+    {
+      "id": "timestamp-template-constructor-safe-write",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Inspect the expanded constructor after checking the timestamp macro template.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/core/src/timestamps.rs",
+          "from": "            pub const fn from_micros(ts: UtcMicros) -> Self {\n                Self(ts)\n            }",
+          "to": "            pub fn from_micros(ts: UtcMicros) -> Self {\n                let _ = std::fs::write(\".sgd-codec-mutation-must-not-exist\", b\"effect\");\n                Self(ts)\n            }"
+        }
+      ]
+    },
+    {
+      "id": "symbol-length-contract-expanded",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Preserve the actual 32-byte Symbol limit.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/core/src/symbol.rs",
+          "from": "raw.len() > 32",
+          "to": "raw.len() > 64"
+        }
+      ]
+    },
+    {
+      "id": "symbol-predicate-contract-expanded",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Preserve uppercase ASCII letters or digits.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/core/src/symbol.rs",
+          "from": "byte.is_ascii_uppercase() || byte.is_ascii_digit()",
+          "to": "byte.is_ascii_alphabetic() || byte.is_ascii_digit()"
+        }
+      ]
+    },
+    {
+      "id": "symbol-wrong-error-variant",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Preserve the concrete native validation errors.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/core/src/symbol.rs",
+          "from": "return Err(SymbolError::Length);",
+          "to": "return Err(SymbolError::Charset);"
+        }
+      ]
+    },
+    {
+      "id": "symbol-normalizing-copy",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Require the exact owned String copy without normalization.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/core/src/symbol.rs",
+          "from": "Ok(Self(raw.to_owned()))",
+          "to": "Ok(Self(raw.to_uppercase()))"
+        }
+      ]
+    },
+    {
+      "id": "utc-constructor-changed-value",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Require an exact inverse of the checked representation getter.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/core/src/time.rs",
+          "from": "        Self(micros)\n    }",
+          "to": "        Self(micros.saturating_add(1))\n    }"
+        }
+      ]
+    },
+    {
+      "id": "ratio-constructor-clamps-signed-value",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Preserve signed Ratio values without price or quantity admission rules.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/core/src/fixed.rs",
+          "from": "    pub const fn from_ticks(ticks: i64) -> Self {\n        Self(ticks)\n    }",
+          "to": "    pub const fn from_ticks(ticks: i64) -> Self {\n        Self(if ticks < 0 { 0 } else { ticks })\n    }"
+        }
+      ]
+    },
+    {
+      "id": "receipt-omitted-by-equality",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Preserve received_ts even though native PartialEq omits it.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/collector/src/funding_codec.rs",
+          "from": "        received_ts_us: row.received_ts.micros().micros(),",
+          "to": "        received_ts_us: 0,"
+        }
+      ]
+    },
+    {
+      "id": "decode-receipt-replaced",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Reconstruct the original receipt instead of a default receipt.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/collector/src/funding_codec.rs",
+          "from": "        received_ts: ReceivedTs::from_micros(UtcMicros::from_micros(row.received_ts_us)),",
+          "to": "        received_ts: ReceivedTs::from_micros(UtcMicros::from_micros(0)),"
+        }
+      ]
+    },
+    {
+      "id": "schema-normalized-for-storage",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Persist exact raw schema values independently of equality or CSV schema classes.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/collector/src/funding_codec.rs",
+          "from": "        schema_version: row.schema_version,\n    }\n}",
+          "to": "        schema_version: 3,\n    }\n}"
+        }
+      ]
+    },
+    {
+      "id": "interval-csv-tightening",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Keep storage decoder admission separate from CSV interval restrictions.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/collector/src/funding_codec.rs",
+          "from": "        interval_hours: row.interval_hours,\n        rate: Ratio::from_ticks(row.rate_ticks),",
+          "to": "        interval_hours: 8,\n        rate: Ratio::from_ticks(row.rate_ticks),"
+        }
+      ]
+    },
+    {
+      "id": "symbol-input-bypass",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Validate the actual incoming Symbol value rather than a known valid replacement.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/collector/src/funding_codec.rs",
+          "from": "        symbol: Symbol::new(&row.symbol)?,",
+          "to": "        symbol: Symbol::new(\"BTCUSDT\")?,"
+        }
+      ]
+    },
+    {
+      "id": "descriptor-field-duplication",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Require a complete native-field bijection.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/collector/src/funding_codec.rs",
+          "from": "    (\"funding_time_us\", \"funding_time\"),",
+          "to": "    (\"funding_time_us\", \"raw_calc_time\"),"
+        }
+      ]
+    },
+    {
+      "id": "descriptor-column-duplication",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Require unique persisted column names.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/collector/src/funding_codec.rs",
+          "from": "    (\"funding_time_us\", \"funding_time\"),",
+          "to": "    (\"raw_calc_time_us\", \"funding_time\"),"
+        }
+      ]
+    },
+    {
+      "id": "new-native-field",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Refuse a native field until equality, provenance, wire, and both leaf recipes classify it.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/collector/src/vision/rows.rs",
+          "from": "pub struct FundingFact {\n    pub symbol: Symbol,",
+          "to": "pub struct FundingFact {\n    pub source_note: String,\n    pub symbol: Symbol,"
+        }
+      ]
+    },
+    {
+      "id": "unused-effectful-helper",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Inspect unused private bodies in the selected codec module.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/collector/src/funding_codec.rs",
+          "from": "pub(crate) const FUNDING_COLUMNS:",
+          "to": "fn unused_writer() {\n    let _ = std::fs::write(\".sgd-codec-mutation-must-not-exist\", b\"effect\");\n}\n\npub(crate) const FUNDING_COLUMNS:"
+        }
+      ]
+    },
+    {
+      "id": "encode-effect-before-projection",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Reject statements before an otherwise exact projection.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/collector/src/funding_codec.rs",
+          "from": "pub(crate) fn encode_funding_row(row: &FundingFact) -> FundingWire {\n    FundingWire {",
+          "to": "pub(crate) fn encode_funding_row(row: &FundingFact) -> FundingWire {\n    let _ = std::fs::write(\".sgd-codec-mutation-must-not-exist\", b\"effect\");\n    FundingWire {"
+        }
+      ]
+    },
+    {
+      "id": "function-value-call",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Reject function-value escape even for a constructor admitted by direct call.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/collector/src/funding_codec.rs",
+          "from": "    Ok(FundingFact {\n        symbol: Symbol::new(&row.symbol)?,",
+          "to": "    let constructor = Symbol::new;\n    Ok(FundingFact {\n        symbol: constructor(&row.symbol)?,"
+        }
+      ]
+    },
+    {
+      "id": "custom-drop",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Reject lifecycle code that executes after a projection or constructor.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/collector/src/vision/rows.rs",
+          "from": "impl Eq for FundingFact {}",
+          "to": "impl Eq for FundingFact {}\n\nimpl Drop for FundingFact {\n    fn drop(&mut self) {\n        let _ = std::fs::write(\".sgd-codec-mutation-must-not-exist\", b\"effect\");\n    }\n}"
+        }
+      ]
+    },
+    {
+      "id": "conditional-selected-writer",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Reject conditional extra bodies in the selected codec module.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/collector/src/funding_codec.rs",
+          "from": "pub(crate) const FUNDING_COLUMNS:",
+          "to": "#[cfg(unix)]\nfn platform_writer() {\n    let _ = std::fs::write(\".sgd-codec-mutation-must-not-exist\", b\"effect\");\n}\n\npub(crate) const FUNDING_COLUMNS:"
+        }
+      ]
+    },
+    {
+      "id": "encode-clock-swap",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Bind same-scalar physical timestamp columns to the declared native fields.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/collector/src/funding_codec.rs",
+          "from": "        raw_calc_time_us: row.raw_calc_time.micros(),\n        funding_time_us: row.funding_time.micros(),",
+          "to": "        raw_calc_time_us: row.funding_time.micros(),\n        funding_time_us: row.raw_calc_time.micros(),"
+        }
+      ]
+    },
+    {
+      "id": "decode-clock-swap",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Bind native timestamp fields to their declared physical columns.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/collector/src/funding_codec.rs",
+          "from": "        raw_calc_time: UtcMicros::from_micros(row.raw_calc_time_us),\n        funding_time: UtcMicros::from_micros(row.funding_time_us),",
+          "to": "        raw_calc_time: UtcMicros::from_micros(row.funding_time_us),\n        funding_time: UtcMicros::from_micros(row.raw_calc_time_us),"
+        }
+      ]
+    },
+    {
+      "id": "paired-clock-swap",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Check the physical column contract independently. These changed leaf functions still invert each other.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/collector/src/funding_codec.rs",
+          "from": "        raw_calc_time_us: row.raw_calc_time.micros(),\n        funding_time_us: row.funding_time.micros(),",
+          "to": "        raw_calc_time_us: row.funding_time.micros(),\n        funding_time_us: row.raw_calc_time.micros(),"
+        },
+        {
+          "operation": "replace-once",
+          "path": "crates/collector/src/funding_codec.rs",
+          "from": "        raw_calc_time: UtcMicros::from_micros(row.raw_calc_time_us),\n        funding_time: UtcMicros::from_micros(row.funding_time_us),",
+          "to": "        raw_calc_time: UtcMicros::from_micros(row.funding_time_us),\n        funding_time: UtcMicros::from_micros(row.raw_calc_time_us),"
+        }
+      ]
+    },
+    {
+      "id": "display-error-conversion",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Reject an uninspected Display and error conversion path.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/collector/src/funding_codec.rs",
+          "from": "pub(crate) fn decode_funding_row(row: FundingWire) -> Result<FundingFact, SymbolError> {",
+          "to": "pub(crate) fn decode_funding_row(row: FundingWire) -> Result<FundingFact, String> {"
+        },
+        {
+          "operation": "replace-once",
+          "path": "crates/collector/src/funding_codec.rs",
+          "from": "        symbol: Symbol::new(&row.symbol)?,",
+          "to": "        symbol: Symbol::new(&row.symbol).map_err(|error| error.to_string())?,"
+        }
+      ]
+    },
+    {
+      "id": "new-autobin-after-capture",
+      "phase": "after-capture",
+      "expected": "recheck-refusal",
+      "requirement": "Rediscover automatic targets. Target discovery does not prove that their effects were checked.",
+      "edits": [
+        {
+          "operation": "create-absent-file",
+          "path": "crates/collector/src/bin/late_writer.rs",
+          "contents": "fn main() { let _ = std::fs::write(\"not-executed\", b\"effect\"); }\n"
+        }
+      ]
+    },
+    {
+      "id": "new-local-config-after-capture",
+      "phase": "after-capture",
+      "expected": "recheck-refusal",
+      "requirement": "Recheck previously absent local configuration even when its content is otherwise admitted.",
+      "edits": [
+        {
+          "operation": "create-absent-file",
+          "path": ".cargo/config.toml",
+          "contents": "[alias]\ncodec_fixture = \"check\"\n"
+        }
+      ]
+    },
+    {
+      "id": "alternate-module-after-capture",
+      "phase": "after-capture",
+      "expected": "recheck-refusal",
+      "requirement": "Recheck alternative module-file absence rather than hashing only previously read files.",
+      "edits": [
+        {
+          "operation": "create-absent-file",
+          "path": "crates/collector/src/funding_codec/mod.rs",
+          "contents": "pub fn unselected() {}\n"
+        }
+      ]
+    },
+    {
+      "id": "build-script-after-capture",
+      "phase": "after-capture",
+      "expected": "recheck-refusal",
+      "requirement": "Refuse a new local build script during safe rediscovery before Cargo metadata.",
+      "edits": [
+        {
+          "operation": "create-absent-file",
+          "path": "crates/collector/build.rs",
+          "contents": "fn main() {}\n"
+        }
+      ]
+    },
+    {
+      "id": "symbol-parameter-shadows-ok",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "A constructor parameter cannot supply the bare standard Result variant identity.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/core/src/symbol.rs",
+          "from": "    pub fn new(raw: &str) -> Result<Self, SymbolError> {\n        if raw.is_empty() || raw.len() > 32 {\n            return Err(SymbolError::Length);\n        }\n        if !raw\n            .bytes()\n            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())\n        {\n            return Err(SymbolError::Charset);\n        }\n        Ok(Self(raw.to_owned()))\n    }\n",
+          "to": "    pub fn new(Ok: &str) -> Result<Self, SymbolError> {\n        if Ok.is_empty() || Ok.len() > 32 {\n            return Err(SymbolError::Length);\n        }\n        if !Ok\n            .bytes()\n            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())\n        {\n            return Err(SymbolError::Charset);\n        }\n        Ok(Self(Ok.to_owned()))\n    }\n"
+        }
+      ]
+    },
+    {
+      "id": "symbol-parameter-shadows-err",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "A constructor parameter cannot supply the bare standard Result variant identity.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/core/src/symbol.rs",
+          "from": "    pub fn new(raw: &str) -> Result<Self, SymbolError> {\n        if raw.is_empty() || raw.len() > 32 {\n            return Err(SymbolError::Length);\n        }\n        if !raw\n            .bytes()\n            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())\n        {\n            return Err(SymbolError::Charset);\n        }\n        Ok(Self(raw.to_owned()))\n    }\n",
+          "to": "    pub fn new(Err: &str) -> Result<Self, SymbolError> {\n        if Err.is_empty() || Err.len() > 32 {\n            return Err(SymbolError::Length);\n        }\n        if !Err\n            .bytes()\n            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())\n        {\n            return Err(SymbolError::Charset);\n        }\n        Ok(Self(Err.to_owned()))\n    }\n"
+        }
+      ]
+    },
+    {
+      "id": "decoder-parameter-shadows-ok",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "The leaf parameter cannot shadow its bare standard Ok call.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/collector/src/funding_codec.rs",
+          "from": "pub(crate) fn decode_funding_row(row: FundingWire) -> Result<FundingFact, SymbolError> {\n    Ok(FundingFact {\n        symbol: Symbol::new(&row.symbol)?,\n        raw_calc_time: UtcMicros::from_micros(row.raw_calc_time_us),\n        funding_time: UtcMicros::from_micros(row.funding_time_us),\n        interval_hours: row.interval_hours,\n        rate: Ratio::from_ticks(row.rate_ticks),\n        event_ts: EventTs::from_micros(UtcMicros::from_micros(row.event_ts_us)),\n        available_ts: AvailableTs::from_micros(UtcMicros::from_micros(row.available_ts_us)),\n        received_ts: ReceivedTs::from_micros(UtcMicros::from_micros(row.received_ts_us)),\n        schema_version: row.schema_version,\n    })\n}\n",
+          "to": "pub(crate) fn decode_funding_row(Ok: FundingWire) -> Result<FundingFact, SymbolError> {\n    Ok(FundingFact {\n        symbol: Symbol::new(&Ok.symbol)?,\n        raw_calc_time: UtcMicros::from_micros(Ok.raw_calc_time_us),\n        funding_time: UtcMicros::from_micros(Ok.funding_time_us),\n        interval_hours: Ok.interval_hours,\n        rate: Ratio::from_ticks(Ok.rate_ticks),\n        event_ts: EventTs::from_micros(UtcMicros::from_micros(Ok.event_ts_us)),\n        available_ts: AvailableTs::from_micros(UtcMicros::from_micros(Ok.available_ts_us)),\n        received_ts: ReceivedTs::from_micros(UtcMicros::from_micros(Ok.received_ts_us)),\n        schema_version: Ok.schema_version,\n    })\n}\n"
+        }
+      ]
+    },
+    {
+      "id": "descriptor-element-attribute",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Inspect attributes on every descriptor expression, not only its declaration.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/collector/src/funding_codec.rs",
+          "from": "    (\"symbol\", \"symbol\"),",
+          "to": "    #[allow(unused)] (\"symbol\", \"symbol\"),"
+        }
+      ]
+    },
+    {
+      "id": "descriptor-literal-attribute",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Inspect attributes nested inside a descriptor tuple.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/collector/src/funding_codec.rs",
+          "from": "    (\"symbol\", \"symbol\"),",
+          "to": "    (#[allow(unused)] \"symbol\", \"symbol\"),"
+        }
+      ]
+    },
+    {
+      "id": "nonexistent-qualified-result-type",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Do not invent a four-segment standard Result type identity.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/collector/src/funding_codec.rs",
+          "from": "-> Result<FundingFact, SymbolError>",
+          "to": "-> std::result::Result::Result<FundingFact, SymbolError>"
+        }
+      ]
+    }
+  ]
+}

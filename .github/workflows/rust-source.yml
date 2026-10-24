@@ -19,4 +19,6 @@ jobs:
           components: rustfmt, clippy
       - run: cargo fmt --check --manifest-path tools/rust-bindings/Cargo.toml
       - run: cargo test --locked --manifest-path tools/rust-bindings/Cargo.toml
+      - name: Run actual native Funding codec behavior
+        run: cargo test --offline --locked --manifest-path tests/fixtures/rust-codec-recipe/parangsae/Cargo.toml --target-dir .runtime/codec-native-behavior
       - run: cargo clippy --locked --manifest-path tools/rust-bindings/Cargo.toml --all-targets -- -D warnings

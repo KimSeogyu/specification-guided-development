@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "profile": "rust-codec-recipe-v1",
+  "source": {
+    "manifest": "crates/collector/Cargo.toml",
+    "module": "crate::vision::rows",
+    "fact": {
+      "name": "FundingFact",
+      "rustPath": "crate::vision::FundingFact",
+      "metadata": ["received_ts"]
+    }
+  },
+  "codec": {
+    "module": "crate::funding_codec",
+    "encode": "encode_funding_row",
+    "decode": "decode_funding_row",
+    "wire": "crate::sgd_wire::FundingWire",
+    "descriptor": "FUNDING_COLUMNS"
+  }
+}
