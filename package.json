@@ -1,6 +1,6 @@
 {
   "name": "specification-guided-development",
-  "version": "0.2.0-alpha.3",
+  "version": "0.2.0-alpha.4",
   "description": "TLA+ models, TLC automata, generated TypeScript and Rust linters, and agent plugins for specification-guided development.",
   "type": "module",
   "license": "MIT",

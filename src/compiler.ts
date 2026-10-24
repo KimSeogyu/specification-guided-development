@@ -22,9 +22,9 @@ import { RowProjectSchema, type RowProject } from './row-binding-types.js';
 import { analyzeRowBinding, validateWholeRowBinding, verifyRowSourcesUnchanged } from './row-binding.js';
 import { generateRowRust } from './backends/row-rust.js';
 import { generateRowTypeScript } from './backends/row-typescript.js';
-import { formatRowRust } from './rust-format.js';
 import { z } from 'zod';
-import { writeGenerated } from './managed-output.js';
+import { writePreparedGenerated } from './managed-output.js';
+import { compilerFile, capturedFile, formatterReceipt, prepareArtifacts, type ArtifactFile } from './artifacts.js';
 import { PartitionProjectSchema, type PartitionProject, type PartitionPlan } from './partition-types.js';
 import { readPartitionContract } from './partition-contract.js';
 import { validatePartitionPlan, validatePartitionControlSource } from './partition-composition.js';
@@ -90,15 +90,16 @@ export async function compileProject(input: { project: string; dot: string; out:
   const project = await readProject(input.project);
   if (project.version !== 1) throw new Error(`TLC206: imported DOT cannot generate ${project.profile} authority. Use build with the pinned TLC JAR and model sources.`);
   const compiled = compile({ dot: await readFile(input.dot, 'utf8'), project });
-  await writeGenerated({ out: input.out, files: [...compiled.files,
+  const prepared = await prepareArtifacts([...compiled.files,
     { path: 'verification.json', content: JSON.stringify({ kind: 'imported-unverified', message: 'DOT alone does not establish TLC completion.' }, null, 2) + '\n' },
-  ], ...(input.check === undefined ? {} : { check: input.check }) });
+  ].map(compilerFile));
+  await writePreparedGenerated({ out: input.out, prepared, ...(input.check === undefined ? {} : { check: input.check }) });
   return compiled.automaton;
 }
 
 type BuildInput = { project: string; jar: string; out: string; check?: boolean; modelOnly?: boolean };
 type BuildAutomaton = Automaton | ExactFiniteAutomaton | SymbolicWitnessGraph;
-type ArtifactBase = { files: GeneratedFile[]; recheck: () => Promise<void> };
+type ArtifactBase = { files: ArtifactFile[]; recheck: () => Promise<void> };
 type LegacyArtifacts = ArtifactBase & (
   | { kind: 'row'; automaton: SymbolicWitnessGraph; row: ReturnType<typeof validateWholeRowBinding> }
   | { kind: 'finite'; automaton: ExactFiniteAutomaton; run: Awaited<ReturnType<typeof runControlledTlc>> }
@@ -168,47 +169,45 @@ async function collectLegacyArtifacts(input: BuildInput & { generateBackends?: b
       ? { kind: 'untyped-opaque-unicode-string-identities', constant: firstInput.domain, finiteWitnessAtoms: firstAtoms }
       : { kind: 'disjoint-untyped-opaque-unicode-string-identities', inputs,
         domains: Object.fromEntries(Object.entries(domains).map(([domain, atoms]) => [domain, { finiteWitnessAtoms: atoms }])) };
-    const files: GeneratedFile[] = [
-      { path: 'automaton.json', content: JSON.stringify(witness, null, 2) + '\n' },
-      { path: 'symbolic-model.json', content: JSON.stringify(model, null, 2) + '\n' },
-      { path: 'binding.json', content: JSON.stringify({ profile: project.profile, ...project.binding }, null, 2) + '\n' },
-      { path: 'semantic.xml', content: run.xml },
-      { path: 'model.dot', content: run.dot },
-      { path: 'tlc.log', content: run.log, volatile: true },
+    const files: ArtifactFile[] = [
+      compilerFile({ path: 'automaton.json', content: JSON.stringify(witness, null, 2) + '\n' }),
+      compilerFile({ path: 'symbolic-model.json', content: JSON.stringify(model, null, 2) + '\n' }),
+      compilerFile({ path: 'binding.json', content: JSON.stringify({ profile: project.profile, ...project.binding }, null, 2) + '\n' }),
+      capturedFile({ path: 'semantic.xml', content: run.xml }),
+      capturedFile({ path: 'model.dot', content: run.dot }),
+      capturedFile({ path: 'tlc.log', content: run.log, volatile: true }),
     ];
     const rowApplication = project.version === 5 ? input.rowApplicationRoot ?? await realpath(resolve(dirname(projectPath), project.application)) : null;
     const rowPlan = project.version === 5 && !input.modelOnly && rowApplication
       ? await analyzeRowBinding({ application: rowApplication, binding: project.binding.row, out: input.out }) : null;
     const row = project.version === 5 && rowPlan
       ? validateWholeRowBinding({ model, binding: project.binding.row, plan: rowPlan }) : null;
-    let rowFormatter: Awaited<ReturnType<typeof formatRowRust>>['formatter'] | null = null;
-    if (row) files.push({ path: 'row-binding-plan.json', content: JSON.stringify(row.plan, null, 2) + '\n' });
+    if (row) files.push(compilerFile({ path: 'row-binding-plan.json', content: JSON.stringify(row.plan, null, 2) + '\n' }));
     if (!input.modelOnly && input.generateBackends !== false) for (const target of new Set(project.targets)) {
       const generated = row && project.version === 5
         ? target === 'typescript' ? generateRowTypeScript({ ...row, className: project.binding.className })
           : generateRowRust({ ...row, className: project.binding.className, rustCrateMode: project.binding.rustCrateMode })
         : target === 'typescript' ? generateSymbolicTypeScript({ model, className: project.binding.className }) : generateSymbolicRust({ model, className: project.binding.className });
-      const formatted = row && target === 'rust' ? await formatRowRust(generated) : null;
-      if (formatted) rowFormatter = formatted.formatter;
-      files.push(...(formatted?.files ?? generated).map(file => ({ path: `${target}/${file.path}`, content: file.content })));
+      files.push(...generated.map(file => compilerFile({ ...file, path: `${target}/${file.path}` })));
     }
-    if (orbitProof) files.push({ path: 'orbit-proof.json', content: JSON.stringify(orbitProof, null, 2) + '\n' });
+    if (orbitProof) files.push(compilerFile({ path: 'orbit-proof.json', content: JSON.stringify(orbitProof, null, 2) + '\n' }));
     if (differential) files.push(
-      { path: 'input-verification.json', content: JSON.stringify(differential.evidence, null, 2) + '\n' },
-      { path: 'input-oracle.dot', content: differential.oracleDot },
-      { path: 'input-oracle.log', content: differential.oracleLog, volatile: true },
+      compilerFile({ path: 'input-verification.json', content: JSON.stringify(differential.evidence, null, 2) + '\n' }),
+      capturedFile({ path: 'input-oracle.dot', content: differential.oracleDot }),
+      capturedFile({ path: 'input-oracle.log', content: differential.oracleLog, volatile: true }),
     );
-    files.push({ path: 'verification.json', content: JSON.stringify({
+    const verification: GeneratedFile = { path: 'verification.json', content: JSON.stringify({
       ...run.evidence, projectSha256: sha256(projectBytes), semanticSha256: model.source.semanticSha256,
       ...(model.version === 2 ? { symbolicIrVersion: 2, inputProfile: 'disjoint-input-product-v1' } : {}),
       ...(project.version === 5 ? { rowBinding: row ? { profile: row.plan.profile, planSha256: sha256(JSON.stringify(row.plan)), sourceScope: 'production-library-and-audited-local-type-closure', sources: row.plan.sources,
-        formatter: rowFormatter ? { profile: rowFormatter.profile, configSha256: rowFormatter.configSha256 } : null } : null,
-        formatterVersion: rowFormatter?.version ?? null } : {}),
+        formatter: null } : null,
+        formatterVersion: null } : {}),
       generation: input.modelOnly ? 'model-only' : row ? 'whole-row-authority' : 'symbolic-authority',
       runtimeDomain,
       orbitVerification: orbitProof ? { kind: orbitProof.kind, stateCount: orbitProof.states.length, edgeCount: orbitProof.edges.length, checkDeadlock: model.checkDeadlock, invariants: model.invariants.map(item => item.name), actionProperties: model.actionProperties.map(item => item.name) } : null,
     }, null, 2) + '\n', volatile: true, stableJsonKeys: ['kind', 'profile', 'extractor', 'xmlSha256', 'rootModule', 'moduleClosure', 'standardModules', 'configSha256', 'jarSha256', 'dotSha256', 'mode', 'projectSha256', 'semanticSha256',
-      ...(model.version === 2 ? ['symbolicIrVersion', 'inputProfile'] : []), ...(project.version === 5 ? ['rowBinding'] : []), 'generation', 'runtimeDomain', 'orbitVerification'] });
+      ...(model.version === 2 ? ['symbolicIrVersion', 'inputProfile'] : []), ...(project.version === 5 ? ['rowBinding'] : []), 'generation', 'runtimeDomain', 'orbitVerification'] };
+    files.push(row && input.generateBackends !== false ? formatterReceipt(verification, 'row-binding') : compilerFile(verification));
     const recheck = async (): Promise<void> => {
       await checkProjectUnchanged();
       await recheckControlledInputs({ spec, config, jar: input.jar, evidence: run.evidence });
@@ -225,21 +224,21 @@ async function collectLegacyArtifacts(input: BuildInput & { generateBackends?: b
     const model = { ...run, evidence: { kind: 'tlc-finite-completed', profile: 'finite-owned-v1', ...run.evidence } };
     const automaton = importFiniteDot({ dot: model.dot, name: project.name });
     if (!input.modelOnly) validateExecutableGraph(automaton);
-    const files: GeneratedFile[] = [
+    const files: ArtifactFile[] = [
       { path: 'automaton.json', content: JSON.stringify(automaton, null, 2) + '\n' },
       { path: 'binding.json', content: JSON.stringify({ profile: project.profile, ...project.binding }, null, 2) + '\n' },
-    ];
+    ].map(compilerFile);
     if (!input.modelOnly && input.generateBackends !== false) {
       for (const target of new Set(project.targets)) {
         const generated = ownedBackends[target]({ automaton, className: project.binding.className });
-        files.push(...generated.map(file => ({ path: `${target}/${file.path}`, content: file.content })));
+        files.push(...generated.map(file => compilerFile({ ...file, path: `${target}/${file.path}` })));
       }
     }
     files.push(
-      { path: 'model.dot', content: model.dot },
-      { path: 'tlc.log', content: model.log, volatile: true },
-      { path: 'verification.json', content: JSON.stringify({ ...model.evidence, projectSha256: sha256(projectBytes) }, null, 2) + '\n', volatile: true,
-        stableJsonKeys: ['kind', 'profile', 'rootModule', 'moduleClosure', 'standardModules', 'configSha256', 'jarSha256', 'dotSha256', 'projectSha256', 'mode'] },
+      capturedFile({ path: 'model.dot', content: model.dot }),
+      capturedFile({ path: 'tlc.log', content: model.log, volatile: true }),
+      compilerFile({ path: 'verification.json', content: JSON.stringify({ ...model.evidence, projectSha256: sha256(projectBytes) }, null, 2) + '\n', volatile: true,
+        stableJsonKeys: ['kind', 'profile', 'rootModule', 'moduleClosure', 'standardModules', 'configSha256', 'jarSha256', 'dotSha256', 'projectSha256', 'mode'] }),
     );
     const recheck = async (): Promise<void> => {
       await checkProjectUnchanged();
@@ -249,12 +248,12 @@ async function collectLegacyArtifacts(input: BuildInput & { generateBackends?: b
   }
   const model = await runTlc({ spec: resolve(dirname(projectPath), project.spec), config: resolve(dirname(projectPath), project.config), jar: input.jar });
   const compiled = compile({ dot: model.dot, project });
-  const files = input.modelOnly ? compiled.files.filter(file => file.path === 'automaton.json' || file.path === 'binding.json') : compiled.files;
+  const files = (input.modelOnly ? compiled.files.filter(file => file.path === 'automaton.json' || file.path === 'binding.json') : compiled.files).map(compilerFile);
   files.push(
-    { path: 'model.dot', content: model.dot },
-    { path: 'tlc.log', content: model.log, volatile: true },
-    { path: 'verification.json', content: JSON.stringify(model.evidence, null, 2) + '\n', volatile: true,
-      stableJsonKeys: ['kind', 'specSha256', 'configSha256', 'dotSha256'] },
+    capturedFile({ path: 'model.dot', content: model.dot }),
+    capturedFile({ path: 'tlc.log', content: model.log, volatile: true }),
+    compilerFile({ path: 'verification.json', content: JSON.stringify(model.evidence, null, 2) + '\n', volatile: true,
+      stableJsonKeys: ['kind', 'specSha256', 'configSha256', 'dotSha256'] }),
   );
   return { kind: 'model', automaton: compiled.automaton, files, recheck: checkProjectUnchanged };
 }
@@ -267,10 +266,11 @@ export async function buildProject(input: BuildInput): Promise<BuildAutomaton> {
   const artifact = project.version === 6
     ? await collectPartitionArtifacts({ ...input, out, projectPath: path, projectBytes: bytes, project })
     : await collectLegacyArtifacts({ ...input, out });
+  const prepared = await prepareArtifacts(artifact.files);
   if (!bytes.equals(await readFile(path))) throw new Error('TLC203: project configuration changed before publication');
   await artifact.recheck();
   if (out !== await physicalOutput(input.out)) throw new Error('TLC103: output root changed during verification; rerun against stable paths');
-  await writeGenerated({ out, files: artifact.files, ...(input.check === undefined ? {} : { check: input.check }) });
+  await writePreparedGenerated({ out, prepared, ...(input.check === undefined ? {} : { check: input.check }) });
   return artifact.automaton;
 }
 
@@ -296,25 +296,22 @@ async function collectPartitionArtifacts(input: Omit<BuildInput, 'project'> & { 
   const metadata = await readPartitionContract({ spec: resolve(directory, input.project.models.families.spec), operator: input.project.models.families.operator, jar: input.jar });
   const plan: PartitionPlan = validatePartitionPlan({ version: 1, kind: 'closed-partition-fold', runtimeProfile: 'unbound-partition-v1',
     row: row.row, control: control.automaton, contract: metadata.contract });
-  const files: GeneratedFile[] = [
-    { path: 'partition-plan.json', content: JSON.stringify(plan, null, 2) + '\n' },
-    { path: 'automaton.json', content: JSON.stringify(control.automaton, null, 2) + '\n' },
-    { path: 'symbolic-model.json', content: JSON.stringify(plan.row.model, null, 2) + '\n' },
-    { path: 'row-binding-plan.json', content: JSON.stringify(plan.row.plan, null, 2) + '\n' },
-    { path: 'binding.json', content: JSON.stringify({ profile: 'partition-fold', ...input.project.binding }, null, 2) + '\n' },
+  const files: ArtifactFile[] = [
+    compilerFile({ path: 'partition-plan.json', content: JSON.stringify(plan, null, 2) + '\n' }),
+    compilerFile({ path: 'automaton.json', content: JSON.stringify(control.automaton, null, 2) + '\n' }),
+    compilerFile({ path: 'symbolic-model.json', content: JSON.stringify(plan.row.model, null, 2) + '\n' }),
+    compilerFile({ path: 'row-binding-plan.json', content: JSON.stringify(plan.row.plan, null, 2) + '\n' }),
+    compilerFile({ path: 'binding.json', content: JSON.stringify({ profile: 'partition-fold', ...input.project.binding }, null, 2) + '\n' }),
     ...row.files.map(file => ({ ...file, path: `models/row/${file.path}` })),
     ...control.files.map(file => ({ ...file, path: `models/control/${file.path}` })),
-    { path: 'models/control/semantic.xml', content: control.run.xml },
-    { path: 'models/families/semantic.xml', content: metadata.xml },
-    { path: 'models/families/tlc.log', content: metadata.log, volatile: true },
+    capturedFile({ path: 'models/control/semantic.xml', content: control.run.xml }),
+    capturedFile({ path: 'models/families/semantic.xml', content: metadata.xml }),
+    capturedFile({ path: 'models/families/tlc.log', content: metadata.log, volatile: true }),
   ];
-  let formatter: Awaited<ReturnType<typeof formatRowRust>>['formatter'] | null = null;
   for (const target of new Set(input.project.targets)) {
     const backendInput = { plan, className: input.project.binding.className, rustCrateMode: input.project.binding.rustCrateMode };
     const generated = target === 'rust' ? generatePartitionRust(backendInput) : generatePartitionTypeScript(backendInput);
-    const formatted = target === 'rust' ? await formatRowRust(generated) : null;
-    if (formatted) formatter = formatted.formatter;
-    files.push(...(formatted?.files ?? generated).map(file => ({ ...file, path: `${target}/${file.path}` })));
+    files.push(...generated.map(file => compilerFile({ ...file, path: `${target}/${file.path}` })));
   }
   const receipt = {
     kind: 'controlled-partition-fold', profile: 'unbound-partition-v1', generation: 'closed-data-fold',
@@ -323,12 +320,12 @@ async function collectPartitionArtifacts(input: Omit<BuildInput, 'project'> & { 
     sourceScope: 'production-library-and-audited-local-type-closure',
     contract: metadata.contract, source: plan.row.plan.sources,
     control: control.run.evidence, metadata: metadata.evidence,
-    formatter: formatter ? { profile: formatter.profile, configSha256: formatter.configSha256 } : null,
-    formatterVersion: formatter?.version ?? null,
+    formatter: null,
+    formatterVersion: null,
     storageAuthority: false,
   };
-  files.push({ path: 'verification.json', content: JSON.stringify(receipt, null, 2) + '\n', volatile: true,
-    stableJsonKeys: Object.keys(receipt).filter(key => key !== 'formatterVersion') });
+  files.push(formatterReceipt({ path: 'verification.json', content: JSON.stringify(receipt, null, 2) + '\n', volatile: true,
+    stableJsonKeys: Object.keys(receipt).filter(key => key !== 'formatterVersion') }, 'root'));
   const recheck = async (): Promise<void> => {
     if (application !== await realpath(resolve(directory, input.project.application)) ||
       application !== await realpath(resolve(dirname(rowPath), rowProject.application))) throw new Error('TLC306: partition application root changed during verification');

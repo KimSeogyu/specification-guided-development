@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { z } from 'zod';
 import type { GeneratedFile } from './types.js';
 import { checkGeneratedOutput } from './output-check.js';
+import { compilerFile, prepareArtifacts, preparedFiles, type PreparedArtifacts } from './artifacts.js';
 
 const execute = promisify(execFile);
 const inventoryName = '.sgd-generated.json';
@@ -415,7 +416,7 @@ async function pendingJournal(root: string): Promise<Transaction | null> {
   catch { fail('incomplete output transaction journal is invalid. Preserve its files and inspect it manually.'); }
 }
 
-async function manage(root: string, lease: Lease, files: GeneratedFile[], check: boolean): Promise<void> {
+async function manage(root: string, lease: Lease, files: readonly GeneratedFile[], check: boolean): Promise<void> {
   await cleanupRetired(root, check);
   const pending = await pendingJournal(root);
   if (pending) {
@@ -463,12 +464,19 @@ async function manage(root: string, lease: Lease, files: GeneratedFile[], check:
 
 /** Per-file atomic publication with journaled recovery after a verifiably inactive writer. */
 export async function writeGenerated(input: { out: string; files: GeneratedFile[]; check?: boolean }): Promise<void> {
+  const prepared = await prepareArtifacts(input.files.map(compilerFile));
+  await writePreparedGenerated({ out: input.out, prepared, ...(input.check === undefined ? {} : { check: input.check }) });
+}
+
+/** Publish only immutable artifacts whose syntax normalization has completed. */
+export async function writePreparedGenerated(input: { out: string; prepared: PreparedArtifacts; check?: boolean }): Promise<void> {
+  const files = preparedFiles(input.prepared);
   await mkdir(input.out, { recursive: true });
   const root = await realpath(input.out);
   const identity = await processIdentity();
   const owner = await newOwner(identity);
   const lease = await acquire(root, input.check === true, owner, identity);
-  try { await manage(root, lease, input.files, input.check === true); }
+  try { await manage(root, lease, files, input.check === true); }
   finally {
     let pending = true;
     try { await lstat(join(root, journalName)); }
