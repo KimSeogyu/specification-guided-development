@@ -1,11 +1,14 @@
 #![forbid(unsafe_code)]
 mod codec;
+mod effect_check;
 mod equality;
 mod error;
 mod macros;
 mod model;
 mod source;
+mod targets;
 
+pub use effect_check::{analyze_source_scope, SourceScopeReport};
 pub use error::{Error, Result};
 pub use model::{Binding, Codec, FactPlan, FieldPlan, Plan, SourceIdentity};
 use quote::ToTokens;

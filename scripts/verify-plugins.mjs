@@ -479,6 +479,38 @@ process.stdout.write(JSON.stringify({fieldCounts,noop:'original order, duplicate
     pele: 'complete finite control and symbolic row relations rendered', check: 'MCP check:true and packaged CLI --check preserved every managed byte', unverifiedAuthority: 'rejected without output', rustRuntime: 'not executed in this copied-cache flow', installedAgentHost: 'not exercised', actualParangsaeAdoption: 'not established by this copied-cache fixture' };
 }
 
+
+async function verifySourceScope({ plugin, name }) {
+  const root = join(temporary, name, 'source-scope');
+  await mkdir(join(root, 'src/bin'), { recursive: true });
+  await writeFile(join(root, 'Cargo.toml'), '[package]\nname = "source_scope_fixture"\nversion = "0.1.0"\nedition = "2021"\n[workspace]\n');
+  await writeFile(join(root, 'Cargo.lock'), 'version = 4\n[[package]]\nname = "source_scope_fixture"\nversion = "0.1.0"\n');
+  await writeFile(join(root, 'src/lib.rs'), 'pub fn keep(value: i64) -> i64 { value }\n');
+  for (const bin of ['one', 'two']) {
+    await writeFile(join(root, `src/bin/${bin}.rs`), 'fn main() { let keep = source_scope_fixture::keep; let _ = keep(1); }\n');
+  }
+  const binary = join(plugin, 'runtime/bin', `sgd-rust-bindings${process.platform === 'win32' ? '.exe' : ''}`);
+  const arguments_ = ['source-scope', '--root', root];
+  const options = { cwd: root, encoding: 'utf8', timeout: 90_000, maxBuffer: 16 * 1024 * 1024 };
+  const report = JSON.parse(execFileSync(binary, arguments_, options));
+  assert.equal(report.profile, 'rust-source-scope-v1');
+  assert.equal(report.scope, 'all-discovered-targets-unconditional-closed-source');
+  assert.equal(report.storageAuthority, false);
+  assert.deepEqual(report.targets.map(target => target.name).sort(), ['one', 'source_scope_fixture', 'two']);
+  assert.ok(report.references.some(reference => reference.resolved.includes('keep')));
+  await writeFile(join(root, 'src/bin/escape.rs'), 'use std::fs::write as save; fn main() { let _ = save("never-executed", b"probe"); }\n');
+  assert.throws(() => execFileSync(binary, arguments_, options), error => {
+    assert.equal(error.status, 2);
+    const diagnostic = JSON.parse(String(error.stderr));
+    assert.equal(diagnostic.ruleId, 'TLC308');
+    assert.equal(diagnostic.storageAuthority, false);
+    assert.match(diagnostic.message, /std::fs::write/);
+    return true;
+  });
+  await assert.rejects(access(join(root, 'never-executed')), { code: 'ENOENT' });
+  return { pureTargets: 'library and two auto-binaries admitted', addedWriter: 'reexported std::fs::write refused in new auto-binary', storageAuthority: false };
+}
+
 try {
   for (const name of ['codex', 'claude-code']) {
     const plugin = join(temporary, `${name} copied cache`);
@@ -509,10 +541,11 @@ try {
       const productOwned = await verifyProductOwned({ client, plugin, name, abstractIr: join(temporary, name, 'symbolic-owned/symbolic-model.json') });
       const row = await verifyRowOwned({ client, plugin, name });
       const partitionOwned = await verifyPartitionOwned({ client, plugin, name, fixture: row.fixture });
-      results.push({ plugin: name, environment: 'isolated copied plugin cache; not an installed agent host', actualInstalledAgentHost: 'not exercised', nativeRuntime: `${process.platform}-${process.arch}`, tools, modelCheck: 'completed', generatedTypeScript: 'accepted', pele: 'rendered', finiteOwned, symbolicOwned, productOwned, rowOwned: row.details, partitionOwned });
+      const sourceScope = await verifySourceScope({ plugin, name });
+      results.push({ plugin: name, environment: 'isolated copied plugin cache; not an installed agent host', actualInstalledAgentHost: 'not exercised', nativeRuntime: `${process.platform}-${process.arch}`, tools, modelCheck: 'completed', generatedTypeScript: 'accepted', pele: 'rendered', finiteOwned, symbolicOwned, productOwned, rowOwned: row.details, partitionOwned, sourceScope });
     } finally { await client.close(); }
   }
   await mkdir(resolve('.runtime'), { recursive: true });
   await writeFile(resolve('.runtime/plugin-verification.json'), JSON.stringify(results, null, 2) + '\n');
-  process.stdout.write('Both isolated copied plugin caches completed MCP, real TLC, v1 diagnostics, v2 finite-owned, v3 symbolic-owned, v4 product-input, v5 source-bound whole rows, and v6 closed partition data folds with their bundled control templates. The bundled Rust analyzer, packaged TypeScript 7.0.2, complete payload/provenance behavior, input-tuple oracle, supplied-IR erasure, Pele, v5-to-v6 migration, Noop/Refused complete-row behavior, immutable --check, tamper checks, and unverified DOT refusal passed. Actual installed-agent hosts and completed Parangsae adoption were not established by these copied-cache fixtures.\n');
+  process.stdout.write('Both isolated copied plugin caches completed MCP, real TLC, v1 diagnostics, v2 finite-owned, v3 symbolic-owned, v4 product-input, v5 source-bound whole rows, and v6 closed partition data folds with their bundled control templates. The bundled Rust analyzer, packaged TypeScript 7.0.2, complete payload/provenance behavior, input-tuple oracle, supplied-IR erasure, Pele, v5-to-v6 migration, Noop/Refused complete-row behavior, immutable --check, tamper checks, unverified DOT refusal, and the bundled closed source-scope pure-target/writer-refusal checks passed. Actual installed-agent hosts and completed Parangsae adoption were not established by these copied-cache fixtures.\n');
 } finally { await rm(temporary, { recursive: true, force: true }); }
