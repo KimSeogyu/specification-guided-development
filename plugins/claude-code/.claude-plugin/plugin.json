@@ -1,6 +1,6 @@
 {
   "name": "specification-guided-development",
-  "version": "0.2.0-alpha.1",
+  "version": "0.2.0-alpha.2",
   "description": "Model architecture and behavior in TLA+, then compile TLC graphs into source checks.",
   "author": {
     "name": "KimSeogyu"
