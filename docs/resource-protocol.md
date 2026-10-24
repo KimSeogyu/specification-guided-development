@@ -68,7 +68,7 @@ The [original fixture model](../tests/fixtures/resource-protocol/ResourceProtoco
 | `replacements` | Zero except after a successful Write completion |
 | `effect` | `none`, `Write`, `None`, or `Diagnostic` |
 
-The binding maps model parameter and variable identifiers. It contains no native source paths/spans, trusted writer, permission, equality callback, action table, or allowed-source list. This first profile uses the fixed scalar role vocabulary above. Other state shapes need an explicit profile extension.
+The binding maps model parameter and variable identifiers. It contains no native source paths/spans, trusted writer, permission, equality callback, action table, or allowed-source list. Binding version 1 uses the fixed scalar role vocabulary above. Its `replacements` counter records successful Write completion. A failed completion with zero does not establish that a physical destination stayed unchanged.
 
 After separate controlled SANY/TLC, lowering, and original-action oracle checks, use the compiler API with an explicit coverage composition:
 
@@ -98,10 +98,58 @@ Orbit labels are local to each canonical state. The checker reevaluates each ori
 
 The result is explicitly `kind: "abstract-resource-protocol"` with `storageAuthority: false`. It assumes supplied IR represents its source. Fresh controlled SANY/TLC, the original-action oracle, and final source rechecks provide separate provenance. The result authenticates no loaded file, native path, archive coverage, writer, persistence, or filesystem isolation.
 
+## Observed Write outcomes
+
+Binding version 2 adds one required role, `writeOutcome`, to the eleven existing roles. `ResourceProtocolBindingV2Schema` and `ResourceProtocolBindingV2` describe this shape. The original `ResourceProtocolBindingSchema` and `ResourceProtocolBinding` remain version 1, including the schema's object API. `VersionedResourceProtocolBindingSchema` parses either explicit version. Neither version accepts optional or extra roles. The original validation functions remain version 1. `validateObservedResourceProtocol` and `validateObservedResourceProtocolSource` accept version 2.
+
+The [ResourceOutcomes model](../tests/fixtures/resource-outcomes/ResourceOutcomes.tla) supplies the supported version 2 source forms. `Fixture.cfg` checks independent coverage. `ResourceOutcomes.cfg` requires coverage before the Write attempt. Both lower to IR version 3. The separate validator accepts binding version 2:
+
+```ts
+const observedBinding = ResourceProtocolBindingV2Schema.parse({
+	...binding,
+	version: 2,
+	variables: { ...binding.variables, writeOutcome: 'writeOutcome' },
+});
+const checked = validateObservedResourceProtocol({
+	model: observedModel, binding: observedBinding, coverage: 'required-before-write',
+});
+```
+
+The result has `profile: "observed-write-v2"`. Version 1 reports `profile: "abstract-resource-v1"`. Both results retain evidence format `version: 1` and `storageAuthority: false`. There is no new project schema, CLI build profile, or native storage API.
+
+| `writeOutcome` | Observation |
+| --- | --- |
+| `none` | No Write decision has been consumed |
+| `Pending` | Write has been consumed, but no final replacement result is recorded |
+| `NotReplaced` | This owner failed before invoking replacement of its selected destination |
+| `Indeterminate` | This owner invoked replacement and cannot confirm its result |
+| `Replaced` | This owner observed a successful replacement return |
+
+`Pending` can include an operation in flight. It does not establish that replacement has not begun. `NotReplaced` concerns this owner's replacement of the selected destination. Temporary files, directories, diagnostics, or external writers can have separate effects. `Replaced` records an acknowledgment at that point, without a durability claim.
+
+The complete relation requires four terminal Write results:
+
+| Result | Phase | Outcome | Confirmed replacements |
+| --- | --- | --- | --- |
+| Success | `Done` | `Replaced` | 1 |
+| Failure before replacement invocation | `Failed` | `NotReplaced` | 0 |
+| Uncertain replacement failure | `Failed` | `Indeterminate` | 0 |
+| Failure after confirmed replacement | `Failed` | `Replaced` | 1 |
+
+In version 2, zero means zero confirmed replacements. `Indeterminate` with zero must not be interpreted as an unchanged file. Rust's [rename API](https://doc.rust-lang.org/std/fs/fn.rename.html) documents platform differences and a non-exhaustive error list. This profile conservatively treats an error after invocation as uncertain unless a later native profile supplies stronger evidence. A successful rename followed by a later error retains `Replaced` and one. [File synchronization](https://doc.rust-lang.org/std/fs/struct.File.html#method.sync_all) is separate from this acknowledgment.
+
+The version 2 Write-only source predicate permits a confirmed replacement in either terminal phase. A separate complete Write observation predicate constrains each outcome, count, phase, and consumed Write. Terminal preservation covers all twelve variables. The relation checker infers finite event roles from successors and requires every difficult failure path. Replacing the only `Indeterminate` branch with another `NotReplaced` branch is refused because the required outcome is missing. Coherently renamed events remain valid. Native source admission must establish which real error produces each observation.
+
+Noop, Refused, read failure, and coverage failure retain `writeOutcome = "none"` and zero replacements. `attempts` remains the shared consumption count for Write, Noop, and Diagnostic. It does not count native rename calls. Coverage still precedes consumption of Write in the required composition.
+
+The native owner must eventually produce these observations internally from the actual selected operation. A caller-supplied event cannot authenticate a filesystem result. Native code must preflight every fallible completion transition and count before the corresponding effect. Source admission must separately establish at most one replacement invocation. Neither profile restores state after process loss or establishes crash durability, isolation, or safe blind retries.
+
 ## Evidence and remaining binding
 
 Real controlled tests cover both source compositions and independently replace each required property body with `TRUE`. Generic TLC and orbit checks accept the weakened declarations when guards remain safe; the protocol checker refuses the missing source obligation. Another real source removes the Load identity guard and weakens Affinity. Generic lowering, orbit exploration, and the original-action oracle agree with that unsafe declared relation; the new checker refuses it.
 
 The [generic mixed-input native fixtures](../tests/mixed-input-backends.test.ts) compare complete TS7 and Rust traces with the interpreter, including every finite choice, Unicode, scalar/data spelling collisions, precision, preparation reuse, detached snapshots, invalid primitives, and compile-time enum/privacy failures. Generated Rust crates also pass Clippy with warnings denied. The eleven-role protocol has separate [source/law](../tests/resource-protocol-laws.test.ts) and [lowering/rendering](../tests/protocol-input-profile.test.ts) checks. These tests establish the stated compiler layer, not a native source-to-file authority trial.
+
+The twelve-role profile has [controlled source and law checks](../tests/resource-outcomes.test.ts), including the original-action oracle, required-predicate weakening, missing failure paths, incorrect outcomes, wrong resources, and terminal observation changes. Its [native backend checks](../tests/resource-outcome-backends.test.ts) compare complete interpreter, TypeScript 7, and Rust traces. The native test consumer also observes real file replacement followed by an intentional later error. This demonstrates the observation distinction, while the consumer still supplies abstract events. It does not establish generated IO ownership or a source gate.
 
 The [partition authority design](partition-authority-design.md) still requires private native resource identity, actual selected open/decode, static codec and writer ownership, archive/coverage composition, an admitted filesystem/lease protocol, and complete source/target/sink coverage. A public `send(resource, event)` call cannot certify that an actual file was present or absent. The resource implementation must produce those observations internally from the real operation and the checked v6 fold. The [production goal](production-goal.md) remains incomplete until actual Parangsae maintenance proves the full workflow.
