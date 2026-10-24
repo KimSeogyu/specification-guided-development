@@ -1,5 +1,7 @@
 # Native plugin delivery verification
 
+The later [Parangsae native pilot](native-parangsae-pilot.md) records permanent installation of the public alpha and native MCP calls through both hosts. The disposable upgrade trials below retain their original scope.
+
 ## Observed scope
 
 On 2026-10-24, the complete `0.2.0-alpha.1` candidate was tested against the actual public `0.1.0` packages on macOS arm64. The hosts were Codex CLI 0.163.0 and Claude Code 2.1.304. This record describes disposable native installations, not permanent Parangsae deployment or a public release announcement.
@@ -24,4 +26,4 @@ A disposable trusted-project experiment supplied only a project catalogue and pl
 
 An earlier Codex run failed during process-group shutdown with `EPERM`, and its original operation result was lost. The verifier now preserves operation and shutdown failures separately, records bounded RPC diagnostics, and serializes shutdown requests. A subsequent complete run passed. The earlier underlying shutdown cause remains unknown.
 
-The trials do not establish model inference, agent skill use, TLA+ authoring, completed TLC verification through the installed agent, executable authority, or sustainable Parangsae maintenance. The MCP input was imported v1 diagnostic data. Claude host-to-MCP operation, permanent Parangsae installation, and native Windows installation remain separate gates. Native startup egress and MCP subprocess isolation were not established. The [production goal](production-goal.md) remains incomplete.
+These disposable trials do not establish model inference, agent skill use, TLA+ authoring, completed TLC verification through the installed agent, executable authority, or sustainable Parangsae maintenance. Their MCP input was imported v1 diagnostic data. The later permanent pilot separately verifies Parangsae installation and Claude host-to-MCP operation. Existing Desktop session activation, a complete installed-agent workflow, and native Windows installation remain separate gates. Native startup egress and MCP subprocess isolation were not established. The [production goal](production-goal.md) remains incomplete.

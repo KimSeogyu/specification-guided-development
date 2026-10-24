@@ -22,7 +22,7 @@ Project v4 separates payload and provenance through independent data inputs and 
 Project v5 derives a closed whole-row binding from supported Rust equality, wrappers, and getters, then generates actual row owners and portable TypeScript DTO owners.
 Project v6 composes those rows with a finite aggregate controller and literal family projections to generate a closed partition data fold.
 Project v1 projects one string variable and generates declaration or import diagnostics.
-The [finite-owned guide](docs/finite-owned.md) describes the new source-checkout milestone; the published v0.1.0 archives contain the earlier diagnostic prototype.
+The [finite-owned guide](docs/finite-owned.md) describes project v2. The public [v0.2.0-alpha.1 release](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.2.0-alpha.1) includes the later compiler and native plugin milestones. The older v0.1.0 archives retain the diagnostic prototype.
 
 ## What works
 
@@ -200,6 +200,10 @@ Read [the development method](docs/development-method.md) for modeling choices, 
 
 ## Use an agent plugin
 
+The public `v0.2.0-alpha.1` archives contain complete plugins for macOS arm64: [Codex](https://github.com/KimSeogyu/specification-guided-development/releases/download/v0.2.0-alpha.1/specification-guided-development-codex-0.2.0-alpha.1-darwin-arm64.tar.gz) and [Claude Code](https://github.com/KimSeogyu/specification-guided-development/releases/download/v0.2.0-alpha.1/specification-guided-development-claude-code-0.2.0-alpha.1-darwin-arm64.tar.gz).
+For an extracted archive, use its standalone marketplace preparer as described in the [native plugin guide](docs/plugins.md#prepare-the-packages).
+Other platforms and architectures require source preparation on the target host.
+
 The repository contains independent native packages for Codex and Claude Code.
 Each package includes its own modeling skill and local MCP configuration.
 Packaging copies the compiled CLI and production dependencies into each plugin.
@@ -245,6 +249,8 @@ Archive names end with the host platform and architecture, such as `-darwin-arm6
 The launcher checks `runtime/runtime-platform.json` and rejects a runtime for another host.
 An ordinary npm source package does not include these runtime dependencies.
 See [plugin setup](docs/plugins.md) for cache checks and troubleshooting.
+
+The [Parangsae native pilot](docs/native-parangsae-pilot.md) records permanent installation and successful native MCP calls through both released plugins. Fresh CLI sessions passed, while the existing Parangsae Desktop chat reported no SGD tools after installation. The full installed-agent modeling and development workflow remains an acceptance requirement.
 
 ## Understand the guarantee
 
