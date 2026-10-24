@@ -14,7 +14,7 @@ Recovery first checks every recorded path. Each must match its recorded before o
 
 ## Explain stale output
 
-This report is available in [v0.2.0-alpha.2](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.2.0-alpha.2). Earlier release archives and pinned SDKs keep their previous behavior until upgraded.
+This report was introduced in alpha2 and is included in [v0.2.0-alpha.3](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.2.0-alpha.3). Installed runtimes and pinned SDKs retain their packaged behavior until upgraded.
 
 A completed output comparison that fails with `TLC104` reports all differing artifacts. The CLI keeps its nonzero exit and JSON `error` string. MCP keeps `isError: true` and its JSON text `error`. Both add a `diagnostic` object with schema `sgd-stale-output-v1`.
 

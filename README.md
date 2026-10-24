@@ -22,7 +22,8 @@ Project v4 separates payload and provenance through independent data inputs and 
 Project v5 derives a closed whole-row binding from supported Rust equality, wrappers, and getters, then generates actual row owners and portable TypeScript DTO owners.
 Project v6 composes those rows with a finite aggregate controller and literal family projections to generate a closed partition data fold.
 Project v1 projects one string variable and generates declaration or import diagnostics.
-The [finite-owned guide](docs/finite-owned.md) describes project v2. The public [v0.2.0-alpha.2 release](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.2.0-alpha.2) includes the later compiler and native plugin milestones, structured stale-output diagnostics, and automatic Pele fitting. The older v0.1.0 archives retain the diagnostic prototype.
+The [finite-owned guide](docs/finite-owned.md) describes project v2. The public [v0.2.0-alpha.3 release](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.2.0-alpha.3) includes the later compiler and native plugin milestones, structured stale-output diagnostics, automatic Pele fitting, read-only release awareness, and ZIP packaging. The older v0.1.0 archives retain the diagnostic prototype.
+The current source version is unreleased `0.2.0-alpha.4`. Its [common artifact preparation contract](docs/artifact-contract.md) is separate from the published alpha3 runtimes.
 
 ## What works
 
@@ -200,8 +201,9 @@ Read [the development method](docs/development-method.md) for modeling choices, 
 
 ## Use an agent plugin
 
-The public `v0.2.0-alpha.2` archives contain complete plugins for macOS arm64: [Codex](https://github.com/KimSeogyu/specification-guided-development/releases/download/v0.2.0-alpha.2/specification-guided-development-codex-0.2.0-alpha.2-darwin-arm64.tar.gz) and [Claude Code](https://github.com/KimSeogyu/specification-guided-development/releases/download/v0.2.0-alpha.2/specification-guided-development-claude-code-0.2.0-alpha.2-darwin-arm64.tar.gz).
+The public `v0.2.0-alpha.3` archives contain complete plugins for macOS arm64: [Codex TAR](https://github.com/KimSeogyu/specification-guided-development/releases/download/v0.2.0-alpha.3/specification-guided-development-codex-0.2.0-alpha.3-darwin-arm64.tar.gz), [Claude Code TAR](https://github.com/KimSeogyu/specification-guided-development/releases/download/v0.2.0-alpha.3/specification-guided-development-claude-code-0.2.0-alpha.3-darwin-arm64.tar.gz), and [Claude Code ZIP](https://github.com/KimSeogyu/specification-guided-development/releases/download/v0.2.0-alpha.3/specification-guided-development-claude-code-0.2.0-alpha.3-darwin-arm64.zip).
 For an extracted archive, use its standalone marketplace preparer as described in the [native plugin guide](docs/plugins.md#prepare-the-packages).
+The [Claude remote-feed instructions](docs/plugins.md#use-the-macos-arm64-release-feed) describe the staged HTTPS ZIP catalogue and native auto-update opt-in. Its URL becomes live after the feed files merge into `main`. Native migration and background delivery remain unverified.
 Other platforms and architectures require source preparation on the target host.
 
 The repository contains independent native packages for Codex and Claude Code.
@@ -250,7 +252,7 @@ The launcher checks `runtime/runtime-platform.json` and rejects a runtime for an
 An ordinary npm source package does not include these runtime dependencies.
 See [plugin setup](docs/plugins.md) for cache checks and troubleshooting.
 
-The [Parangsae native pilot](docs/native-parangsae-pilot.md) records permanent installation and successful native MCP calls through both released plugins. Fresh CLI sessions passed, while the existing Parangsae Desktop chat reported no SGD tools after installation. The full installed-agent modeling and development workflow remains an acceptance requirement.
+The [Parangsae native pilot](docs/native-parangsae-pilot.md) remains on alpha2, with successful fresh native MCP calls through both plugins. Its existing Desktop chat's current serving version remains unobserved. Alpha3 publication does not establish a pilot upgrade, automatic delivery, or the complete installed-agent development workflow.
 
 ## Understand the guarantee
 

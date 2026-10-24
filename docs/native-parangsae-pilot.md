@@ -58,6 +58,14 @@ A separate feature check used both actual installed payloads through direct CLI 
 
 The alpha1 methodology trial retains its original version, interventions, failed attempt, and separate final recheck. The alpha2 upgrade and feature probes do not establish a complete alpha2 development workflow or actual application feature maintenance.
 
+## Alpha3 release and pending delivery
+
+The public [v0.2.0-alpha.3 release](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.2.0-alpha.3) adds read-only release awareness and ZIP packaging. Its macOS arm64 assets are the Codex TAR, Claude Code TAR, Claude Code ZIP, and release manifest. The published tag and downloaded assets matched the frozen candidate. Neither pilot installation has been upgraded from alpha2 to alpha3.
+
+The first alpha3 preparation attempt failed when the bundled Codex TAR preparer reported that its input source had changed. The underlying cause remains unobserved. The unchanged archive bytes then passed a separate fresh validation of each archived package, including unmodified preparers, strict complete payload and mode comparisons, and copied-runtime operation. The original copied-plugin suite result was retained rather than rerun. The first failure remains recorded, and single-pass preparation reliability is unestablished.
+
+The [remote feed files](plugins.md#use-the-macos-arm64-release-feed) are staged for publication on `main` and point to the genuine public Claude ZIP. The pilot variant preserves its existing marketplace name and qualified plugin ID. Their public URLs become live only after the feed change merges. Live-feed verification, directory-to-remote migration, native alpha3 operation, and a genuine background update remain pending. The existing Desktop chat's serving version remains a separate observation.
+
 ## Remaining acceptance
 
 The complete installed-Codex modeling and development workflow remains untested. The staged Claude trial uses a separate example inside the pilot workspace. It does not establish an actual Parangsae feature change or continued maintenance.
@@ -73,11 +81,14 @@ The consumer supplied the following maintenance feedback. Alpha2 addresses the d
 | C5: Preserve fixed integration behavior | The consumer already fixed the exported TypeScript package entry point and stdout-only child diagnostics. Retain packaged regression coverage for those cases. They are not open SDK defects. |
 | C6: Summarize successful tool calls | Return output paths and verification summaries by default from model/build. Provide the complete IR through explicit detail or inspect. Preserve access to the underlying evidence. |
 | C7: Classify TLC failures | Preserve failure behavior and logs. Report a structured failure kind, invariant name, and trace path when actual TLC evidence supports them. Distinguish invariant violation, timeout, parsing failure, and unknown failure. |
+| C8: Diagnose Rust crate placement | Diagnose unsupported standalone Cargo placement before publishing generated output. Guide output selection without edits to generated manifests. Distinguish literal configured member prefixes from glob-selected members, current dependency-graph validation from prospective placement restrictions, and preserve supported workspace modes. |
+
+C6, C7, and C8 source changes are being developed separately and are not included in alpha3. The C8 Cargo 1.92 reproducer failed when a standalone generated crate under a literal configured member prefix became a consumer path dependency, despite an exact root exclude. The corresponding glob-member and exact-exclude case succeeded. Before that dependency was connected, the consumer workspace metadata also succeeded. Check the consumer workspace after connecting the actual dependency. Metadata for the generated crate alone does not establish consumer integration. The demonstrated issue concerns Cargo placement and a missing early diagnostic.
 
 The consumer also reported a local SDK installation that differed from its lockfile while retaining the same package version. Version equality alone did not identify the resolved source. This observation supports C3 and is not attributed to an SDK defect.
 
 C1 diagnostics and automatic Pele fitting were released in alpha2 after the staged alpha1 workflow. The installed package was unchanged throughout that earlier trial.
 
-The [source alpha3 update check](plugins.md#check-public-release-metadata-from-source) and once-per-conversation skill reminder are implemented but unreleased. They inspect public metadata for the running runtime. The current directory catalogues cannot fetch new release archives by themselves. A fetchable remote catalogue, complete ZIP distribution for Claude auto-update, and catalogue migration remain future delivery work. Codex native auto-update remains unestablished.
+The released [alpha3 update check](plugins.md#check-public-release-metadata) and once-per-conversation skill reminder inspect public metadata for the running runtime. They provide no installed-plugin or Desktop inventory and do not update the pilot. Its current directory catalogues cannot fetch new archives by themselves. The staged remote feeds and public ZIP enable the next delivery trials. Source migration and actual background delivery remain unverified. Codex native auto-update remains unestablished.
 
 The consumer's composite-state and journal findings belong to the application team and fall outside the Fact-fold contract. This deployment grants no new all-target coverage, storage authority, persistence guarantee, or effect atomicity. Continued feature, requirement-change, and defect-fix trials remain necessary. The [production goal](production-goal.md) is incomplete.
