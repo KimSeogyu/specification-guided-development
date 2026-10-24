@@ -1,5 +1,6 @@
 import { ContractComparisonError, ContractVerificationError } from './contract-check.js';
 import { ContractGraphError } from './contract-graph.js';
+import { TlcFailureError } from './tlc-failure.js';
 
 /** Preserve the owning obligation instead of reducing a failed contract to an error string. */
 export function contractDiagnostic(error: unknown) {
@@ -9,6 +10,7 @@ export function contractDiagnostic(error: unknown) {
   };
   if (error instanceof ContractVerificationError) return {
     schema: 'sgd-contract-failure-v1' as const, kind: 'verification-failure' as const, ...error.diagnostic,
+    ...(error.cause instanceof TlcFailureError ? { cause: error.cause.diagnostic } : {}),
   };
   if (error instanceof ContractGraphError) return {
     schema: 'sgd-contract-failure-v1' as const, ...error.diagnostic,

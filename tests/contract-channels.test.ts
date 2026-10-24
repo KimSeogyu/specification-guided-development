@@ -98,5 +98,18 @@ test('real CLI generation and MCP check preserve scoped evidence and retained lo
       findings: z.array(z.object({ kind: z.string() })) }) }).parse(refused.payload);
     assert.ok(error.diagnostic.findings.some(finding => finding.kind === 'missing-binding'));
     assert.equal(await readFile(report, 'utf8'), edited);
+    await writeFile(join(data.candidate, 'SystemContracts.tla'), contractDeclaration);
+    const modelPath = join(data.candidate, 'payload', 'ManifestWrite.tla');
+    const model = await readFile(modelPath, 'utf8');
+    await writeFile(modelPath, model.replace('phase = "absent"', 'phase = "broken"'));
+    const modelFailure = toolResult(await client.callTool({ name: 'sgd_check_contracts', arguments: { ...data.args, jar, out } }));
+    assert.equal(modelFailure.isError, true);
+    z.object({ diagnostic: z.object({ schema: z.literal('sgd-contract-failure-v1'), ruleId: z.literal('TLC313'),
+      owner: z.literal('Payload'), stage: z.literal('model'), cause: z.object({ schema: z.literal('sgd-tlc-failure-v1'),
+        failure: z.object({ kind: z.literal('invariant_violation'), invariant: z.literal('TypeOK') }),
+        counterexample: z.object({ status: z.literal('not-retained') }),
+      }),
+    }) }).parse(modelFailure.payload);
+    assert.equal(await readFile(report, 'utf8'), edited);
   } finally { await client.close(); await server.close(); await rm(data.root, { recursive: true, force: true }); }
 });
