@@ -69,15 +69,16 @@ In a source checkout, use `node dist/cli.js` with the same commands and options.
 | `inspect` | `--ir` | Reads the automaton for inspection |
 | `visualize` | `--ir`, `--out` | Produces a Pele visualization of the automaton |
 | `refine` | `--abstract`, `--concrete`, `--binding`, `--out` | Checks a supported symbolic enabled-input erasure and writes managed evidence |
+| `check-contracts` | `--project`, `--baseline`, `--jar`, `--out` | Compares controlled model sources against a supplied baseline and writes scoped evidence |
 | `mcp` | None | Serves the compiler tools over standard input and output |
 
-The `build`, `compile`, and `refine` commands also accept `--check`.
+The `build`, `compile`, `refine`, and `check-contracts` commands also accept `--check`.
 That option checks the owned output inventory and stable generated artifacts.
 It fails on a missing or changed stable artifact or a changed output set.
 TLC logs and run receipts contain variable execution data and are not compared byte for byte.
 The `visualize` command accepts repeated `--ir` options to show several models together.
 
-The MCP server exposes `sgd_model`, `sgd_build`, `sgd_compile`, `sgd_inspect`, `sgd_visualize`, and `sgd_refine`.
+The MCP server exposes `sgd_model`, `sgd_build`, `sgd_compile`, `sgd_inspect`, `sgd_visualize`, `sgd_refine`, `sgd_check_contracts`, and `sgd_update_status`.
 Model and build calls accept `project`, `jar`, and `out` paths.
 Both return `sgd-build-summary-v1` by default. The summary reports graph scope and counts, completed checks, prepared artifact paths, and evidence freshness. Its artifact list includes files added during [canonical artifact preparation](artifact-contract.md).
 Set `detail: "full"` to return the complete automaton IR. `sgd_inspect`, CLI `model` and `build` commands, and the JavaScript `buildProject()` API retain their complete IR responses. The additive `buildProjectReport()` API returns both `automaton` and `summary` from one build execution.
@@ -88,6 +89,12 @@ Inspect calls accept one `ir` path.
 Visualize calls accept an `ir` array and an `out` path.
 Refine calls accept `abstract`, `concrete`, and `binding` paths and return read-only evidence. This checks supplied IR; a fresh build provides separate source/TLC provenance.
 Use absolute paths in MCP calls because the server can run from the installed plugin cache.
+
+Contract comparisons accept absolute `project`, `baseline`, `jar`, and `out` paths, plus optional `check`.
+They return a compact summary and an evidence index for both model sets.
+Required native obligations that lack supported enforcement fail the comparison.
+The supplied-baseline result does not establish independently selected acceptance or a protected CI gate.
+Read [the structural contract guide](structural-contracts.md) for the exact comparison, publication, and log-retention scope.
 
 ## Generated files
 

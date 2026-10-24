@@ -10,7 +10,7 @@ import { checkGeneratedOutput } from './output-check.js';
 import { compilerFile, prepareArtifacts, preparedFiles, type PreparedArtifacts } from './artifacts.js';
 
 const execute = promisify(execFile);
-const inventoryName = '.sgd-generated.json';
+export const inventoryName = '.sgd-generated.json';
 const lockName = '.sgd-output.lock';
 const journalName = '.sgd-transaction.json';
 const retiredPrefix = '.sgd-retired-lock-';
@@ -308,10 +308,10 @@ async function cleanupRetired(root: string, check: boolean): Promise<void> {
   }
 }
 
-function outputPath(root: string, name: string): string {
+export function managedOutputPath(root: string, name: string): string {
   const path = resolve(root, name);
   const rel = relative(root, path);
-  const first = rel.split(/[\\/]/)[0];
+  const first = rel.split(/[\\/]/)[0]?.normalize('NFC').toLowerCase();
   if (!name || !rel || rel === '..' || rel.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)
     || isAbsolute(rel) || first === inventoryName || first === lockName || first === journalName || first?.startsWith(retiredPrefix)) {
     fail('invalid output path');
@@ -345,16 +345,18 @@ function inventory(bytes: string | null): string[] {
   return Inventory.parse(JSON.parse(Buffer.from(bytes, 'base64').toString('utf8'))).files;
 }
 
-function validatePaths(root: string, names: string[]): void {
-  const paths = names.map(name => outputPath(root, name));
-  if (new Set(paths).size !== paths.length) fail('duplicate output file');
-  paths.sort();
-  for (const [index, path] of paths.entries()) {
-    const next = paths[index + 1];
-    if (next?.startsWith(`${path}${process.platform === 'win32' ? '\\' : '/'}`)) {
-      fail('output paths cannot contain both a file and its descendant');
+export function validateManagedOutputPaths(root: string, names: readonly string[]): string[] {
+  const actual = names.map(name => managedOutputPath(root, name));
+  if (new Set(actual).size !== actual.length) fail('duplicate output file');
+  const folded = actual.map(path => path.normalize('NFC').toLowerCase());
+  const identities = new Set(folded);
+  if (identities.size !== folded.length) fail('case-insensitive output paths collide');
+  for (const path of folded) {
+    for (let parent = dirname(path); parent !== dirname(parent); parent = dirname(parent)) {
+      if (identities.has(parent)) fail('case-insensitive output paths collide: a file contains another target');
     }
   }
+  return actual;
 }
 
 function validateJournal(root: string, lease: Lease, transaction: Transaction): void {
@@ -367,9 +369,9 @@ function validateJournal(root: string, lease: Lease, transaction: Transaction): 
     before = inventory(transaction.inventory.before);
     after = inventory(transaction.inventory.after);
   } catch { fail('incomplete output transaction contains an invalid inventory; its files were preserved'); }
-  validatePaths(root, before);
-  validatePaths(root, after);
-  validatePaths(root, transaction.files.map(file => file.path));
+  validateManagedOutputPaths(root, before);
+  validateManagedOutputPaths(root, after);
+  validateManagedOutputPaths(root, transaction.files.map(file => file.path));
   const union = [...new Set([...before, ...after])].sort();
   if (JSON.stringify(union) !== JSON.stringify(transaction.files.map(file => file.path).sort())) fail('invalid output transaction inventory');
   for (const file of transaction.files) {
@@ -400,9 +402,9 @@ async function publish(root: string, lease: Lease, path: string, before: string 
 
 async function replay(root: string, lease: Lease, transaction: Transaction): Promise<void> {
   validateJournal(root, lease, transaction);
-  for (const file of transaction.files) await matchesRecorded(root, outputPath(root, file.path), file.before, file.after);
+  for (const file of transaction.files) await matchesRecorded(root, managedOutputPath(root, file.path), file.before, file.after);
   await matchesRecorded(root, join(root, inventoryName), transaction.inventory.before, transaction.inventory.after);
-  for (const [index, file] of transaction.files.entries()) await publish(root, lease, outputPath(root, file.path), file.before, file.after, index);
+  for (const [index, file] of transaction.files.entries()) await publish(root, lease, managedOutputPath(root, file.path), file.before, file.after, index);
   await publish(root, lease, join(root, inventoryName), transaction.inventory.before, transaction.inventory.after, transaction.files.length);
   await flushDirectory(root);
   await rm(join(root, journalName));
@@ -424,19 +426,19 @@ async function manage(root: string, lease: Lease, files: readonly GeneratedFile[
     await replay(root, lease, pending);
   }
   const wanted = files.map(file => file.path).sort();
-  validatePaths(root, wanted);
-  for (const name of wanted) await rejectSymlinks(root, outputPath(root, name));
+  validateManagedOutputPaths(root, wanted);
+  for (const name of wanted) await rejectSymlinks(root, managedOutputPath(root, name));
   const beforeInventory = await currentBytes(root, join(root, inventoryName));
   const previous = inventory(beforeInventory);
-  validatePaths(root, previous);
-  for (const name of previous) await rejectSymlinks(root, outputPath(root, name));
+  validateManagedOutputPaths(root, previous);
+  for (const name of previous) await rejectSymlinks(root, managedOutputPath(root, name));
   if (beforeInventory === null && (await readdir(root)).some(name => name !== lockName)) {
     fail('output directory has no generated-file inventory. Use an empty directory.');
   }
   if (check) {
     const checked = [];
     for (const file of files) {
-      const bytes = await currentBytes(root, outputPath(root, file.path));
+      const bytes = await currentBytes(root, managedOutputPath(root, file.path));
       checked.push({ file, current: bytes === null ? null : Buffer.from(bytes, 'base64') });
     }
     checkGeneratedOutput({ previous, files: checked });
@@ -444,9 +446,9 @@ async function manage(root: string, lease: Lease, files: readonly GeneratedFile[
   }
   const changes: Transaction['files'] = [];
   const names = [...new Set([...previous, ...wanted])].sort();
-  validatePaths(root, names);
+  validateManagedOutputPaths(root, names);
   for (const name of names) {
-    const before = await currentBytes(root, outputPath(root, name));
+    const before = await currentBytes(root, managedOutputPath(root, name));
     if (!previous.includes(name) && before !== null) fail(`refusing to overwrite unowned output file ${name}`);
     const generated = files.find(file => file.path === name);
     changes.push({ path: name, before, after: generated ? Buffer.from(generated.content).toString('base64') : null });

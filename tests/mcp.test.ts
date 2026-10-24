@@ -33,7 +33,7 @@ test('MCP negotiates tools and reports a failed read as a tool error', async () 
     const cli = await promisify(execFile)(process.execPath, ['--import', 'tsx', fileURLToPath(new URL('../src/cli.ts', import.meta.url)), '--version']);
     assert.equal(cli.stdout.trim(), metadata.version);
     const list=await client.listTools();
-    assert.deepEqual(list.tools.map(tool=>tool.name).sort(),['sgd_build','sgd_compile','sgd_inspect','sgd_model','sgd_refine','sgd_update_status','sgd_visualize']);
+    assert.deepEqual(list.tools.map(tool=>tool.name).sort(),['sgd_build','sgd_check_contracts','sgd_compile','sgd_inspect','sgd_model','sgd_refine','sgd_update_status','sgd_visualize']);
     for (const name of ['sgd_build', 'sgd_compile']) {
       const tool = list.tools.find(tool => tool.name === name);
       assert.ok(tool);

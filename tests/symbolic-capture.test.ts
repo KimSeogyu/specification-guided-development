@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
-import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, lstat, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
   captureSymbolicProject, compareCapturedAcceptance, inspectSymbolicCapture, inspectSymbolicProject,
-  readSymbolicCaptureForCompiler, recheckSymbolicCapture, verifyCapturedErasure,
+  readSymbolicCaptureForCompiler, readSymbolicCaptureSources, recheckSymbolicCapture, verifyCapturedErasure,
 } from '../src/symbolic-capture.js';
 
 const jar = process.env.TLA2TOOLS_JAR ? resolve(process.env.TLA2TOOLS_JAR) : undefined;
@@ -23,6 +23,7 @@ test('pure capture readers reject untyped values, supplied IR, and model-only-sh
   for (const value of inputs) {
     assert.throws(() => Reflect.apply(inspectSymbolicCapture, undefined, [value]), unauthenticated);
     assert.throws(() => Reflect.apply(readSymbolicCaptureForCompiler, undefined, [value]), unauthenticated);
+    assert.throws(() => Reflect.apply(readSymbolicCaptureSources, undefined, [value]), unauthenticated);
     await assert.rejects(async () => Reflect.apply(recheckSymbolicCapture, undefined, [value]), unauthenticated);
     await assert.rejects(async () => Reflect.apply(verifyCapturedErasure, undefined, [{ abstract: value, concrete: value, binding }]), unauthenticated);
     await assert.rejects(async () => Reflect.apply(compareCapturedAcceptance, undefined, [{ baseline: value, candidate: value }]), unauthenticated);
@@ -153,6 +154,7 @@ test('real model-only output and reflected constructors cannot mint checked capt
   const data = readSymbolicCaptureForCompiler(pair.abstract);
   for (const supplied of [modelOnly, data, data.model, { ...inspectSymbolicCapture(pair.abstract) }]) {
     assert.throws(() => Reflect.apply(inspectSymbolicCapture, undefined, [supplied]), unauthenticated);
+    assert.throws(() => Reflect.apply(readSymbolicCaptureSources, undefined, [supplied]), unauthenticated);
     await assert.rejects(async () => Reflect.apply(verifyCapturedErasure, undefined, [{ abstract: supplied, concrete: pair.concrete, binding }]), unauthenticated);
   }
   const constructor = Object.getPrototypeOf(pair.abstract).constructor;
@@ -160,6 +162,7 @@ test('real model-only output and reflected constructors cannot mint checked capt
   try { forged = Reflect.construct(constructor, []); }
   catch (error) { assert.ok(error instanceof Error); return; }
   assert.throws(() => Reflect.apply(inspectSymbolicCapture, undefined, [forged]), unauthenticated);
+  assert.throws(() => Reflect.apply(readSymbolicCaptureSources, undefined, [forged]), unauthenticated);
   await assert.rejects(async () => Reflect.apply(verifyCapturedErasure, undefined, [{ abstract: forged, concrete: pair.concrete, binding }]), unauthenticated);
 });
 
@@ -189,4 +192,85 @@ test('real capture recheck detects original input edits and new supported-namesp
     await writeFile(unrelated, 'outside the controlled flat-module namespace');
     await recheckSymbolicCapture(pair.abstract);
   } finally { await rm(unrelated, { force: true }); }
+});
+
+test('real source reader preserves captured bytes after original edits and exposes frozen identity data without JAR contents', { skip: !jar, timeout: 180_000 }, async () => {
+  assert.ok(jar);
+  const pair = await captures();
+  const sources = readSymbolicCaptureSources(pair.abstract);
+  assert.deepEqual(Object.keys(sources).sort(), ['directories', 'files', 'inputs']);
+  assert.deepEqual(new Set(sources.files.map(file => file.kind)), new Set(['project', 'configuration', 'module']));
+  assert.ok(Object.isFrozen(sources));
+  for (const records of [sources.files, sources.inputs, sources.directories]) {
+    assert.ok(Object.isFrozen(records));
+    assert.ok(records.every(record => Object.isFrozen(record)));
+  }
+  for (const file of sources.files) assert.deepEqual(Buffer.from(file.bytesBase64, 'base64'), await readFile(file.path));
+  assert.ok(!sources.files.some(file => file.path === jar || /\.jar$/i.test(file.path)));
+  const jarInput = sources.inputs.find(input => input.path === jar);
+  assert.ok(jarInput);
+  assert.deepEqual(Object.keys(jarInput).sort(), ['device', 'inode', 'path', 'physicalPath']);
+  const jarStat = await lstat(jar, { bigint: true });
+  assert.equal(jarInput.physicalPath, await realpath(jar));
+  assert.equal(jarInput.device, jarStat.dev);
+  assert.equal(jarInput.inode, jarStat.ino);
+  assert.equal(typeof jarInput.device, 'bigint');
+  assert.equal(typeof jarInput.inode, 'bigint');
+  assert.deepEqual(sources.directories, [{ path: pair.abstractDirectory, physicalPath: await realpath(pair.abstractDirectory) }]);
+
+  const file = sources.files[0];
+  const location = sources.inputs[0];
+  const directory = sources.directories[0];
+  assert.ok(file && location && directory);
+  assert.equal(Reflect.set(file, 'bytesBase64', Buffer.from('changed view').toString('base64')), false);
+  assert.equal(Reflect.set(location, 'inode', -1n), false);
+  assert.equal(Reflect.set(directory, 'physicalPath', '/changed-view'), false);
+  const originals: { path: string; bytes: Buffer }[] = [];
+  for (const kind of ['module', 'configuration']) {
+    const input = sources.files.find(file => file.kind === kind);
+    assert.ok(input);
+    originals.push({ path: input.path, bytes: Buffer.from(input.bytesBase64, 'base64') });
+  }
+  try {
+    for (const original of originals) await writeFile(original.path, Buffer.concat([original.bytes, Buffer.from('\n\\* edited after capture\n')]));
+    await assert.rejects(recheckSymbolicCapture(pair.abstract), /changed/);
+    const archived = readSymbolicCaptureSources(pair.abstract);
+    assert.notEqual(archived, sources);
+    assert.deepEqual(archived, sources);
+    for (const original of originals) {
+      const file = archived.files.find(file => file.path === original.path);
+      assert.ok(file);
+      assert.deepEqual(Buffer.from(file.bytesBase64, 'base64'), original.bytes);
+      assert.notDeepEqual(await readFile(file.path), original.bytes);
+    }
+  } finally {
+    for (const original of originals) await writeFile(original.path, original.bytes);
+  }
+  assert.deepEqual(readSymbolicCaptureSources(pair.abstract), sources);
+  await recheckSymbolicCapture(pair.abstract);
+});
+
+test('real capture rejects a same-byte replacement file and accepts the restored original inode', { skip: !jar, timeout: 180_000 }, async () => {
+  const pair = await captures();
+  const sources = readSymbolicCaptureSources(pair.abstract);
+  const module = sources.files.find(file => file.kind === 'module');
+  assert.ok(module);
+  const location = sources.inputs.find(input => input.path === module.path);
+  assert.ok(location);
+  const original = Buffer.from(module.bytesBase64, 'base64');
+  const held = `${module.path}.held-original`;
+  await rename(module.path, held);
+  try {
+    await writeFile(module.path, original);
+    assert.deepEqual(await readFile(module.path), original);
+    const replacement = await lstat(module.path, { bigint: true });
+    assert.notEqual(replacement.ino, location.inode);
+    await assert.rejects(recheckSymbolicCapture(pair.abstract), /input identity changed/);
+    assert.deepEqual(readSymbolicCaptureSources(pair.abstract), sources);
+  } finally {
+    await rm(module.path, { force: true });
+    await rename(held, module.path);
+  }
+  assert.equal((await lstat(module.path, { bigint: true })).ino, location.inode);
+  await recheckSymbolicCapture(pair.abstract);
 });

@@ -1,6 +1,7 @@
 # Required structural contracts
 
-Status: implementation design. No released command currently checks project contract closure.
+Status: source implementation for controlled model comparison against supplied baseline sources.
+This does not establish application-wide native coverage or a protected preservation gate.
 The [development method](development-method.md) describes the current workflow requirements.
 This design makes required relationships and missing enforcement machine-checkable.
 
@@ -122,4 +123,33 @@ Required missing or unsupported native obligations fail before the runner report
 Pinned SANY/TLC integration tests cover a payload/envelope composition, removal of a selected property, undeclared baseline selectors, and missing or unsupported writer authority.
 Captured-model tests additionally reject a self-loop replacement for insertion, forged evidence, and changed original inputs.
 The result remains a supplied-baseline comparison, with `preservationGate` and `independentlySelectedBaseline` both `not-established`.
-There is no public command, managed root-report publication, or protected CI baseline selector yet.
+The source CLI `check-contracts` and MCP `sgd_check_contracts` publish managed evidence from the same private collector.
+The protected CI baseline selector remains unimplemented.
+
+## Run and inspect the comparison
+
+Use the [contract comparison guide](../plugins/codex/skills/specification-guided-development/references/contracts.md) for project shape, baseline selection, and scope.
+The independent Claude Code package contains the same workflow in its own reference.
+
+```sh
+sgd check-contracts --project /work/candidate/system.json --baseline /work/baseline/system.json --jar /tools/tla2tools.jar --out /work/evidence
+```
+
+The output contains `comparison.json`, `contract-graph.json`, `obligations.json`, and `evidence-index.json`.
+The index locates both sides' original source archives, automata, semantic XML, orbit checks, oracle results, and logs.
+The metadata evidence preserves actual TLA module filenames for replay.
+The tool does not copy its JAR into the evidence directory.
+
+Use a separate output root outside the watched model directories.
+The compiler rejects source/output overlap, source aliases, protected-input hardlinks, and collisions with its managed files.
+All writers share reserved-name and case/NFC path checks.
+These checks do not provide filesystem-wide atomic isolation against a hostile concurrent writer.
+
+Persistent source identities use explicit roles and project-relative references where the input configuration permits relocation.
+Original source bytes remain unchanged. Explicit absolute source references keep their original meaning.
+Short sorted directory slots avoid case and filename-length collisions between contract IDs.
+Use the index to resolve IDs instead of constructing directory names.
+
+With `--check`, the compiler recomputes the comparison and checks stable output without refreshing stored artifacts.
+The response identifies existing logs as retained output and states that the new invocation's logs were not published.
+Failures preserve previous output. Previous output is not evidence that the failed invocation passed.

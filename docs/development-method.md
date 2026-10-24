@@ -179,7 +179,8 @@ State the uncovered behavior at each stage.
 
 The root-structure and diagnosis steps are workflow requirements.
 Current tools do not check complete application contract closure or mechanically authorize a local repair.
-The [required structural contracts design](structural-contracts.md) defines the planned acceptance boundary and failure cases; it is not an available command.
+Use [structural contract comparison](structural-contracts.md) to compare supported v3/v4 source models against a supplied baseline.
+Independent baseline selection and native application authority remain unestablished.
 Report evidence separately for model checks, generated enforcement, native binding, composition, scheduling, and persistence.
 A green leaf model does not establish its enclosing properties or application coverage.
 
