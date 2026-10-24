@@ -20,13 +20,13 @@ const jar = process.env.TLA2TOOLS_JAR ? resolve(process.env.TLA2TOOLS_JAR) : und
 const tsc = resolve('node_modules/typescript/bin/tsc');
 const example = resolve('examples/fact-envelope');
 const Frame = z.object({ v: z.string(), provenance: z.string() }).strict();
-const Snapshot = z.object({ model: z.string(), modelRevision: z.string(), revision: z.string(), values: z.record(SymbolicValueSchema) }).strict();
-const Trace = z.array(z.object({ input: Frame, action: z.string(), before: Snapshot, after: Snapshot, updates: z.record(SymbolicExpressionSchema) }).strict());
+const Snapshot = z.object({ model: z.string(), modelRevision: z.string(), revision: z.string(), values: z.record(z.string(), SymbolicValueSchema) }).strict();
+const Trace = z.array(z.object({ input: Frame, action: z.string(), before: Snapshot, after: Snapshot, updates: z.record(z.string(), SymbolicExpressionSchema) }).strict());
 const Traces = z.array(Trace);
 const RuntimeDomains = z.object({
   kind: z.literal('disjoint-untyped-opaque-unicode-string-identities'),
   inputs: z.array(z.object({ parameter: z.string(), domain: z.string() }).strict()),
-  domains: z.record(z.object({ finiteWitnessAtoms: z.array(z.string()) }).strict()),
+  domains: z.record(z.string(), z.object({ finiteWitnessAtoms: z.array(z.string()) }).strict()),
 }).strict();
 
 function interpretedTrace(model: SymbolicModelV2, inputs: z.infer<typeof Frame>[]): z.infer<typeof Trace> {
@@ -74,7 +74,7 @@ test('real v4 build retains all domains and provenance in source, witness, oracl
     assert.deepEqual(model, lowerSymbolicModel({ name: model.name, semantic: parseSanyXml(xml), config: parseSymbolicConfig(await readFile(join(models, 'FactWriteEnvelope.cfg'), 'utf8')), profile: 'product' }));
     const oracle = z.object({ kind: z.literal('tlc-finite-input-oracle'), scope: z.literal('configured-reachable-state-input-product'),
       checkedCases: z.number(), acceptedCases: z.number(), disabledCases: z.number(),
-      inputs: z.array(z.object({ parameter: z.string(), domain: z.string() })), domains: z.record(z.array(z.string())),
+      inputs: z.array(z.object({ parameter: z.string(), domain: z.string() })), domains: z.record(z.string(), z.array(z.string())),
     }).parse(JSON.parse(await readFile(join(out, 'input-verification.json'), 'utf8')));
     assert.deepEqual(oracle.inputs, model.inputs);
     assert.deepEqual(oracle.domains, witness.domains);
@@ -82,7 +82,7 @@ test('real v4 build retains all domains and provenance in source, witness, oracl
     assert.equal(oracle.acceptedCases, oracle.checkedCases);
     assert.equal(oracle.disabledCases, 0);
     assert.match(await readFile(join(out, 'input-oracle.log'), 'utf8'), /Model checking completed\. No error has been found\./);
-    const receipt = z.record(z.unknown()).parse(JSON.parse(await readFile(join(out, 'verification.json'), 'utf8')));
+    const receipt = z.record(z.string(), z.unknown()).parse(JSON.parse(await readFile(join(out, 'verification.json'), 'utf8')));
     assert.equal(receipt.profile, 'symbolic-owned-v1');
     assert.equal(receipt.symbolicIrVersion, 2);
     assert.equal(receipt.inputProfile, 'disjoint-input-product-v1');
@@ -119,9 +119,9 @@ test('real v4 build retains all domains and provenance in source, witness, oracl
     for (const file of [...inventory.files.filter(path => path.startsWith('typescript/') || path.startsWith('rust/')), 'input-verification.json', 'input-oracle.dot', 'orbit-proof.json']) {
       await assert.rejects(access(join(out, file)), { code: 'ENOENT' });
     }
-    assert.equal(z.record(z.unknown()).parse(JSON.parse(await readFile(join(out, 'verification.json'), 'utf8'))).generation, 'model-only');
+    assert.equal(z.record(z.string(), z.unknown()).parse(JSON.parse(await readFile(join(out, 'verification.json'), 'utf8'))).generation, 'model-only');
     assert.deepEqual(SymbolicWitnessSchema.parse(JSON.parse(await readFile(join(out, 'automaton.json'), 'utf8'))).version, 2);
-    const project = z.record(z.unknown()).parse(JSON.parse(await readFile(input.project, 'utf8')));
+    const project = z.record(z.string(), z.unknown()).parse(JSON.parse(await readFile(input.project, 'utf8')));
     await writeFile(input.project, JSON.stringify({ ...project, version: 3 }));
     await assert.rejects(buildProject({ ...input, out: join(temp, 'wrong-profile'), modelOnly: true }), /TLC301.*(?:one|single)/i);
     await assert.rejects(access(join(temp, 'wrong-profile')), { code: 'ENOENT' });

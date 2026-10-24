@@ -1,14 +1,15 @@
 import { lstat, readFile } from 'node:fs/promises';
 import { z } from 'zod';
+import { recordSchema } from './schema-record.js';
 import { inspectSymbolicOrbits, sameSymbolicValue, stepSymbolic, type SymbolicState } from './symbolic-semantics.js';
 import { symbolicFiniteValueKey, symbolicInputDefinitions, validateSymbolicModel, type SymbolicInput, type SymbolicInputFrameValue, type SymbolicModel, type SymbolicValue } from './symbolic-types.js';
 
 const Identifier = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).refine(name => name !== '__proto__');
 export const SymbolicErasureBindingSchema = z.object({
   version: z.literal(1),
-  variables: z.record(Identifier, Identifier),
-  inputs: z.record(Identifier, Identifier),
-  actions: z.record(Identifier, Identifier),
+  variables: recordSchema(Identifier, Identifier),
+  inputs: recordSchema(Identifier, Identifier),
+  actions: recordSchema(Identifier, Identifier),
 }).strict();
 export type SymbolicErasureBinding = z.infer<typeof SymbolicErasureBindingSchema>;
 const fail: (message: string) => never = message => { throw new Error(`TLC304: ${message}`); };

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { recordSchema } from './schema-record.js';
 import { FiniteValueSchema, type FiniteValue } from './finite-types.js';
 import { sha256 } from './dot.js';
 
@@ -45,9 +46,9 @@ const SymbolicProgramHead = {
   variables: z.array(Identifier).min(1),
 };
 const SymbolicProgramTail = {
-  initial: z.record(Identifier, FiniteValueSchema),
+  initial: recordSchema(Identifier, FiniteValueSchema),
   branches: z.array(z.object({
-    action: Identifier, guard: SymbolicGuardSchema, updates: z.record(Identifier, SymbolicExpressionSchema),
+    action: Identifier, guard: SymbolicGuardSchema, updates: recordSchema(Identifier, SymbolicExpressionSchema),
     source: SourceSchema.nullable(),
   }).strict()).min(1),
   invariants: z.array(z.object({ name: Identifier, predicate: SymbolicGuardSchema }).strict()),

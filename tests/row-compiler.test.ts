@@ -66,7 +66,7 @@ test('real v5 source build preserves all native fields, wrapper codecs, finite c
     assert.ok(plan.sources.some(source => source.path === 'crates/core/src/timestamps.rs'));
     assert.ok(plan.sources.every(source => !source.path.startsWith('generated/')));
     const receiptBytes = await readFile(join(data.out, 'verification.json'), 'utf8');
-    const receipt = z.record(z.unknown()).parse(JSON.parse(receiptBytes));
+    const receipt = z.record(z.string(), z.unknown()).parse(JSON.parse(receiptBytes));
     assert.equal(receipt.generation, 'whole-row-authority');
     const binding = z.object({ profile: z.literal('rust-whole-row-v1'), sourceScope: z.literal('production-library-and-audited-local-type-closure'), sources: z.array(z.object({ path: z.string(), sha256: z.string() })), formatter: z.object({ profile: z.literal('rustfmt-2021-v1'), configSha256: z.string() }) }).parse(receipt.rowBinding);
     assert.deepEqual(binding.sources, plan.sources); assert.match(z.string().parse(receipt.formatterVersion), /^rustfmt /);
@@ -83,7 +83,7 @@ test('real v5 source build preserves all native fields, wrapper codecs, finite c
     assert.deepEqual(await Promise.all(inventory.files.map(file => readFile(join(data.out, file)))), before);
     await writeFile(join(data.out, 'verification.json'), JSON.stringify({ ...receipt, formatterVersion: 'rustfmt informational-version-from-another-host' }));
     await buildProject({ ...input, check: true });
-    const receiptBinding = z.record(z.unknown()).parse(receipt.rowBinding);
+    const receiptBinding = z.record(z.string(), z.unknown()).parse(receipt.rowBinding);
     for (const formatter of [{ ...binding.formatter, profile: 'changed-style' }, { ...binding.formatter, configSha256: '0'.repeat(64) }]) {
       await writeFile(join(data.out, 'verification.json'), JSON.stringify({ ...receipt, rowBinding: { ...receiptBinding, formatter } }));
       await assert.rejects(buildProject({ ...input, check: true }), /TLC104: stale receipt field rowBinding/);
@@ -104,7 +104,7 @@ test('real v5 source build preserves all native fields, wrapper codecs, finite c
     await buildProject(input);
     await buildProject({ ...input, modelOnly: true });
     for (const file of [...inventory.files.filter(file => file.startsWith('typescript/') || file.startsWith('rust/')), 'row-binding-plan.json', 'input-verification.json', 'orbit-proof.json']) await assert.rejects(access(join(data.out, file)), { code: 'ENOENT' });
-    const modelOnly = z.record(z.unknown()).parse(JSON.parse(await readFile(join(data.out, 'verification.json'), 'utf8')));
+    const modelOnly = z.record(z.string(), z.unknown()).parse(JSON.parse(await readFile(join(data.out, 'verification.json'), 'utf8')));
     assert.equal(modelOnly.generation, 'model-only'); assert.equal(modelOnly.rowBinding, null);
   } finally { await rm(data.root, { recursive: true, force: true }); }
 });
@@ -137,7 +137,7 @@ test('real Rust equality source controls portable TS7 complete-row behavior and 
     async function replay(equality: string) {
       await execute(process.execPath, [tsc, '-p', join(data.out, 'typescript/tsconfig.json')], { timeout: 30_000 });
       const output = await execute(process.execPath, [runner, pathToFileURL(join(data.out, 'typescript/dist/machine.js')).href, equality], { timeout: 30_000 });
-      return z.array(z.object({ effect: z.string(), observation: z.record(z.unknown()) })).parse(JSON.parse(output.stdout));
+      return z.array(z.object({ effect: z.string(), observation: z.record(z.string(), z.unknown()) })).parse(JSON.parse(output.stdout));
     }
     const equivalent = await replay('equivalent'); assert.equal(equivalent[1]?.effect, 'Same');
     await cp(join(fixtureRoot, 'rows-main.rs'), join(data.application, 'crates/collector/src/vision/rows.rs'));
