@@ -11,11 +11,8 @@ import { MachineProjectSchema, validateExecutableGraph, type MachineProject, typ
 import { importFiniteDot } from './finite-dot.js';
 import { runControlledTlc, type ControlledTlcEvidence } from './finite-tlc.js';
 import { ProductSymbolicProjectSchema, SymbolicProjectSchema, symbolicInputs, type SymbolicProject } from './symbolic-types.js';
-import { runSymbolicTlc } from './symbolic-tlc.js';
-import { parseSanyXml } from './sany-xml.js';
-import { lowerSymbolicModel } from './symbolic-lower.js';
-import { inspectSymbolicOrbits } from './symbolic-semantics.js';
-import { importSymbolicDot, verifySymbolicWitness, type SymbolicWitnessGraph } from './symbolic-witness.js';
+import type { SymbolicWitnessGraph } from './symbolic-witness.js';
+import { captureSymbolicProject, inspectSymbolicProject, readSymbolicCaptureForCompiler, recheckSymbolicCapture } from './symbolic-capture.js';
 import { generateSymbolicTypeScript } from './backends/symbolic-typescript.js';
 import { generateSymbolicRust } from './backends/symbolic-rust.js';
 import { RowProjectSchema, type RowProject } from './row-binding-types.js';
@@ -151,42 +148,19 @@ async function collectLegacyArtifacts(input: BuildInput & { generateBackends?: b
   if (project.version === 3 || project.version === 4 || project.version === 5) {
     const spec = resolve(dirname(projectPath), project.spec);
     const config = resolve(dirname(projectPath), project.config);
-    const run = await runSymbolicTlc({ spec, config, jar: input.jar });
+    const capture = input.modelOnly ? null : await captureSymbolicProject({ project: projectPath, jar: input.jar });
+    const { run, model, orbitProof, differential, witness, runtimeDomain } = capture
+      ? readSymbolicCaptureForCompiler(capture) : await inspectSymbolicProject({ project: projectPath, jar: input.jar });
     checks.push({ kind: 'controlled-tlc', role, profile: run.evidence.profile, scope: 'configured-bounded-witness',
       rootModule: run.evidence.rootModule, invariants: run.config.invariants, properties: run.config.properties, checkDeadlock: run.config.checkDeadlock });
-    const model = lowerSymbolicModel({ name: project.name, semantic: parseSanyXml(run.xml), config: run.config,
-      profile: project.version === 3 ? 'single' : 'product' });
     checks.push({ kind: 'symbolic-source', role, profile: model.version === 1 ? 'single-input' : 'disjoint-input-product',
       scope: 'accepted-SANY-equality-copy-grammar', inputs: [...symbolicInputs(model)] });
-    const orbitProof = input.modelOnly ? null : inspectSymbolicOrbits(model);
     if (orbitProof) checks.push({ kind: 'symbolic-orbit', role, profile: orbitProof.kind, scope: 'accepted-equality-copy-grammar',
       states: orbitProof.states.length, edges: orbitProof.edges.length, disabledCases: orbitProof.disabled.length,
       invariants: model.invariants.map(item => item.name), actionProperties: model.actionProperties.map(item => item.name), checkDeadlock: model.checkDeadlock });
-    const differential = input.modelOnly ? null : await verifySymbolicWitness({ model, run, spec, config, jar: input.jar });
     if (differential) checks.push({ kind: 'input-oracle', role, profile: differential.evidence.kind, scope: differential.evidence.scope,
       states: differential.evidence.stateCount, checkedCases: differential.evidence.checkedCases,
       acceptedCases: differential.evidence.acceptedCases, disabledCases: differential.evidence.disabledCases });
-    const inputs = symbolicInputs(model);
-    const domains: Record<string, string[]> = Object.fromEntries(inputs.map(({ domain }) => {
-      const configured = run.config.constants[domain];
-      if (configured?.kind !== 'set') throw new Error('TLC301: missing symbolic input domain');
-      const atoms = configured.values.map(value => {
-        if (value.kind !== 'model-value') throw new Error('TLC301: symbolic witness requires model atoms');
-        return value.value;
-      });
-      return [domain, atoms];
-    }));
-    const firstInput = inputs[0];
-    if (!firstInput) throw new Error('TLC301: symbolic model has no input');
-    const firstAtoms = domains[firstInput.domain];
-    if (!firstAtoms) throw new Error('TLC301: missing symbolic witness input domain');
-    const witness = differential?.witness ?? (model.version === 1
-      ? importSymbolicDot({ dot: run.dot, name: model.name, domain: firstInput.domain, atoms: firstAtoms })
-      : importSymbolicDot({ dot: run.dot, name: model.name, domains }));
-    const runtimeDomain = model.version === 1
-      ? { kind: 'untyped-opaque-unicode-string-identities', constant: firstInput.domain, finiteWitnessAtoms: firstAtoms }
-      : { kind: 'disjoint-untyped-opaque-unicode-string-identities', inputs,
-        domains: Object.fromEntries(Object.entries(domains).map(([domain, atoms]) => [domain, { finiteWitnessAtoms: atoms }])) };
     const files: ArtifactFile[] = [
       compilerFile({ path: 'automaton.json', content: JSON.stringify(witness, null, 2) + '\n' }),
       compilerFile({ path: 'symbolic-model.json', content: JSON.stringify(model, null, 2) + '\n' }),
@@ -231,7 +205,8 @@ async function collectLegacyArtifacts(input: BuildInput & { generateBackends?: b
     files.push(evidenceFile(row && input.generateBackends !== false ? formatterReceipt(verification, 'row-binding') : compilerFile(verification), 'verification'));
     const recheck = async (): Promise<void> => {
       await checkProjectUnchanged();
-      await recheckControlledInputs({ spec, config, jar: input.jar, evidence: run.evidence });
+      if (capture) await recheckSymbolicCapture(capture);
+      else await recheckControlledInputs({ spec, config, jar: input.jar, evidence: run.evidence });
       if (row && rowApplication && project.version === 5) {
         if (await realpath(resolve(dirname(projectPath), project.application)) !== rowApplication) throw new Error('TLC305: row application root changed during verification');
         await verifyRowSourcesUnchanged(rowApplication, row.plan);
