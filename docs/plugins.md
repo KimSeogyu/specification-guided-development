@@ -49,8 +49,8 @@ For Codex, point a local marketplace entry's `source.path` to the extracted dire
 The source repository's marketplace already points to the corresponding prepared plugin directory.
 An ordinary `npm pack` archive excludes the nested runtime dependencies and is not a prepared plugin distribution.
 
-The unreleased `0.2.0-alpha.3` source also supports ZIP archives. The public alpha2 release retains its two TAR archives and `release-manifest.json`.
-To create ZIPs from that source, run:
+Since `0.2.0-alpha.3`, packaging also supports ZIP archives. The public alpha3 release contains two TAR archives, one Claude Code ZIP, and `release-manifest.json`.
+To create ZIPs from a source checkout, run:
 
 ```sh
 node plugins/package.mjs --archive-out .runtime/plugin-zip-packages --archive-format zip
@@ -60,9 +60,9 @@ This option requires `zip`. Use `unzip` for extraction. The ZIP fixtures also re
 It produces a complete `.zip` archive for each host, with plugin files directly at the archive root, including hidden manifests and executable permissions.
 Extract a Codex ZIP before using the existing local marketplace procedure.
 TAR remains the CLI and `archivePlugins` API default.
-In this source version, existing archive filenames are refused before CLI runtime preparation.
+Existing archive filenames are refused before CLI runtime preparation.
 Each archive is published atomically without replacement. The host pair is not one atomic publication. Use a new output directory after a partial failure.
-Claude remote feed publication with immutable ZIPs, directory-source migration, and background auto-update verification remain future work.
+The staged Claude release feeds use immutable published ZIPs. Directory-source migration and an actual background auto-update remain unverified.
 
 Each new archive includes a standalone marketplace preparation tool. After extracting the matching release, run the tool for your selected host:
 
@@ -111,7 +111,30 @@ Neither launch configuration assumes that the original checkout remains beside t
 
 ## Use Claude Code
 
-Register the prepared checkout with Claude Code:
+### Use the macOS arm64 release feed
+
+The alpha3 ZIP is public. The feed files in this change must merge into `main` before the following URL is live.
+After that publication, run these commands from the application project root:
+
+```sh
+claude plugin marketplace add https://raw.githubusercontent.com/KimSeogyu/specification-guided-development/main/marketplaces/claude-code/alpha/darwin-arm64/marketplace.json --scope local
+claude plugin install specification-guided-development@specification-guided-development-claude --scope local
+```
+
+For native auto-update opt-in, open `/plugin`, select **Marketplaces**, choose `specification-guided-development-claude`, and select **Enable auto-update**.
+The plugin's local activation scope is separate from the native marketplace registry, which may be user-scoped.
+Native archive downloads and the read-only release-status reminder are separate operations.
+After a newer version is downloaded, run `/reload-plugins` or start a fresh session to load it. Existing-session replacement is a separate observation.
+An actual SGD remote installation, directory-source migration, and background update have not yet been verified.
+
+The pilot feed variant, [parangsae-marketplace.json](https://raw.githubusercontent.com/KimSeogyu/specification-guided-development/main/marketplaces/claude-code/alpha/darwin-arm64/parangsae-marketplace.json), retains `specification-guided-development@parangsae-sgd-claude` for the existing pilot.
+Its migration remains pending, and the pilot remains on alpha2.
+Use the registered marketplace's existing identity when planning a source change.
+These feeds target macOS arm64. Codex native automatic delivery remains unestablished.
+
+### Use a prepared source marketplace
+
+For a source-prepared package on a supported host, register the prepared checkout with Claude Code:
 
 ```sh
 claude plugin marketplace add /absolute/path/to/specification-guided-development --scope local
@@ -141,13 +164,13 @@ A source merge or a new release download does not update that installed runtime.
 Keep each host's registered marketplace name and qualified plugin ID unchanged.
 Record the installed version and current user and project activation settings before changing them.
 
-1. Download and extract the matching complete archive from the [public release](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.2.0-alpha.2).
+1. Download and extract the matching complete archive from the [public release](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.2.0-alpha.3).
    Check the archive against that release's `release-manifest.json`.
    Run its standalone preparer into a new directory as described above. Its printed install commands are for a new installation.
 2. Copy the complete prepared plugin, including its runtime, dependencies, and executable permissions, into a new version directory inside the existing marketplace:
 
 	```text
-	EXISTING_MARKETPLACE/releases/0.2.0-alpha.2/plugin/
+	EXISTING_MARKETPLACE/releases/0.2.0-alpha.3/plugin/
 	```
 
    Keep the previous payload unchanged. Refuse an occupied destination with different content.
@@ -156,8 +179,8 @@ Record the installed version and current user and project activation settings be
 
 	| Host | Catalogue inside the existing marketplace | Change |
 	| --- | --- | --- |
-	| Codex | `.agents/plugins/marketplace.json` | Set the selected `source.path` to `./releases/0.2.0-alpha.2/plugin`. |
-	| Claude Code | `.claude-plugin/marketplace.json` | Set the selected `source` to `./releases/0.2.0-alpha.2/plugin` and its `version` to `0.2.0-alpha.2`. |
+	| Codex | `.agents/plugins/marketplace.json` | Set the selected `source.path` to `./releases/0.2.0-alpha.3/plugin`. |
+	| Claude Code | `.claude-plugin/marketplace.json` | Set the selected `source` to `./releases/0.2.0-alpha.3/plugin` and its `version` to `0.2.0-alpha.3`. |
 
    Re-read the live catalogue before publication. If its bytes differ from your saved copy, stop and review the concurrent change.
    Publish the temporary file with an atomic rename in the same directory.
@@ -197,10 +220,10 @@ The directory marketplace prepared above has no remote archive source. Its auto-
 Prepare the new payload and update its catalogue before requesting the native update.
 Codex automatic updates for this delivery path remain unverified.
 
-### Check public release metadata from source
+### Check public release metadata
 
-The `0.2.0-alpha.3` source adds a read-only update check. This feature is unreleased and is absent from the public alpha2 archives.
-After building that source, run:
+The alpha3 release includes the read-only update check. Alpha2 runtimes do not contain it.
+From a built source checkout, run:
 
 ```sh
 node dist/cli.js update-status --host codex --channel alpha
@@ -214,9 +237,9 @@ Network failure, timeout, rate limiting, invalid metadata, or a bounded response
 
 This result describes the running runtime. Installed plugin inventory, existing Desktop sessions, archive contents, and the application's SDK pin need separate observations.
 The check downloads metadata only and changes no installation or host settings.
-The source skills request it once per conversation when the tool is available and mention a newer release once.
+The packaged skills request it once per conversation when the tool is available and mention a newer release once.
 The check and reminder do not install an update or schedule a background job.
-A remote catalogue with complete fetchable packages, native Claude auto-update delivery, and migration from the current directory catalogues remain future work.
+The staged remote catalogue points to the published Claude ZIP. Live-feed verification, native source migration, and observed background delivery remain separate pending gates.
 
 ## Check a copied package
 
