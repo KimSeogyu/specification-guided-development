@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-import { access, cp, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { access, chmod, cp, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 const pluginNames = ['codex', 'claude-code'];
+const archiveFormats = ['tar.gz', 'zip'];
 const manifestPaths = [
   'plugins/codex/plugin.json',
   'plugins/codex/.codex-plugin/plugin.json',
@@ -131,6 +132,7 @@ export async function packagePlugins(root) {
         version: 1, platform: process.platform, arch: process.arch,
       }, null, 2) + '\n');
       await cp(join(root, 'LICENSE'), join(staging, 'LICENSE'));
+      await chmod(staging, 0o755);
       await rm(join(plugin, 'runtime'), { recursive: true, force: true });
       await rename(staging, join(plugin, 'runtime'));
       await writeFile(join(plugin, 'scripts/prepare-marketplace.mjs'), marketplacePreparer);
@@ -140,8 +142,43 @@ export async function packagePlugins(root) {
   }
 }
 
-export async function archivePlugins({ root, out }) {
+async function resolveDestination(path) {
+  const suffix = [];
+  let parent = resolve(path);
+  for (;;) {
+    try { return resolve(await realpath(parent), ...suffix.reverse()); }
+    catch (error) {
+      if (error.code !== 'ENOENT' || dirname(parent) === parent) throw error;
+      suffix.push(basename(parent));
+      parent = dirname(parent);
+    }
+  }
+}
+
+async function planArchives({ root, out, format }) {
+  if (!archiveFormats.includes(format)) throw new Error('Plugin archive format must be tar.gz or zip.');
   const { pkg } = await releaseMetadata(root);
+  const output = resolve(out);
+  const destination = await resolveDestination(output);
+  for (const name of pluginNames) {
+    const path = relative(await realpath(join(root, 'plugins', name)), destination);
+    if (!path || (!isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`))) {
+      throw new Error('Plugin archive output must be outside both plugin source directories.');
+    }
+  }
+  const archives = pluginNames.map(name => ({
+    name, path: join(output, `specification-guided-development-${name}-${pkg.version}-${process.platform}-${process.arch}.${format}`),
+  }));
+  for (const { path } of archives) {
+    try { await lstat(path); }
+    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+    throw new Error(`Plugin archive already exists: ${path}`);
+  }
+  return { pkg, output, archives };
+}
+
+export async function archivePlugins({ root, out, format = 'tar.gz' }) {
+  const { pkg, output, archives } = await planArchives({ root, out, format });
   for (const name of pluginNames) {
     const plugin = join(root, 'plugins', name);
     await access(join(plugin, 'runtime', 'dist', 'cli.js'));
@@ -155,34 +192,58 @@ export async function archivePlugins({ root, out }) {
       throw new Error('Plugin runtime does not match this host. Rebuild before archiving.');
     }
   }
-  await mkdir(out, { recursive: true });
-  const archives = [];
-  for (const name of pluginNames) {
-    const plugin = join(root, 'plugins', name);
-    const archive = resolve(out, `specification-guided-development-${name}-${pkg.version}-${process.platform}-${process.arch}.tar.gz`);
-    const result = spawnSync('tar', [
-      '-czf', archive, '--exclude=.runtime-*', '--exclude=.DS_Store', '-C', plugin, '.',
-    ], { encoding: 'utf8', env: { ...process.env, COPYFILE_DISABLE: '1' } });
-    if (result.error || result.status !== 0) {
-      await rm(archive, { force: true });
-      throw new Error(`Cannot create plugin archive: ${result.error?.message ?? result.stderr.trim()}`);
+  await mkdir(output, { recursive: true });
+  const staging = await mkdtemp(join(output, '.runtime-plugin-archives-'));
+  try {
+    for (const { name, path } of archives) {
+      const plugin = resolve(root, 'plugins', name);
+      const temporary = join(staging, `${name}.${format}`);
+      const command = format === 'zip' ? 'zip' : 'tar';
+      const args = format === 'zip' ? [
+        '-qry', temporary, '.', '-x', '.runtime-*', '.runtime-*/*', '*/.runtime-*', '*/.runtime-*/*', '.DS_Store', '*/.DS_Store',
+      ] : [
+        '-czf', temporary, '--exclude=.runtime-*', '--exclude=.DS_Store', '-C', plugin, '.',
+      ];
+      const result = spawnSync(command, args, {
+        cwd: plugin, encoding: 'utf8', env: { ...process.env, COPYFILE_DISABLE: '1' },
+      });
+      if (result.error || result.status !== 0) {
+        throw new Error(`Cannot create plugin archive with ${command}: ${result.error?.message ?? result.stderr.trim()}`);
+      }
+      await link(temporary, path);
     }
-    archives.push(archive);
+  } finally {
+    await rm(staging, { recursive: true, force: true });
   }
-  return archives;
+  return archives.map(({ path }) => path);
+}
+
+function packagingOptions(args) {
+  const usage = 'Usage: node plugins/package.mjs [--archive-out DIR [--archive-format tar.gz|zip]]';
+  const options = new Map();
+  for (let index = 0; index < args.length; index += 2) {
+    const option = args[index];
+    const value = args[index + 1];
+    if (!['--archive-out', '--archive-format'].includes(option) || options.has(option) || !value || value.startsWith('--')) {
+      throw new Error(usage);
+    }
+    options.set(option, value);
+  }
+  const out = options.get('--archive-out');
+  const format = options.get('--archive-format') ?? 'tar.gz';
+  if (!archiveFormats.includes(format) || (options.has('--archive-format') && !out)) throw new Error(usage);
+  return { out, format };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const args = process.argv.slice(2);
-    if (args.length !== 0 && (args.length !== 2 || args[0] !== '--archive-out' || !args[1])) {
-      throw new Error('Usage: node plugins/package.mjs [--archive-out DIR]');
-    }
+    const { out, format } = packagingOptions(process.argv.slice(2));
     const root = fileURLToPath(new URL('../', import.meta.url));
+    if (out) await planArchives({ root, out, format });
     await packagePlugins(root);
     process.stdout.write('Prepared plugins/codex and plugins/claude-code with local runtimes.\n');
-    if (args[1]) {
-      const archives = await archivePlugins({ root, out: resolve(args[1]) });
+    if (out) {
+      const archives = await archivePlugins({ root, out, format });
       for (const archive of archives) process.stdout.write(`Created ${archive}\n`);
     }
   } catch (error) {

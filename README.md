@@ -22,7 +22,7 @@ Project v4 separates payload and provenance through independent data inputs and 
 Project v5 derives a closed whole-row binding from supported Rust equality, wrappers, and getters, then generates actual row owners and portable TypeScript DTO owners.
 Project v6 composes those rows with a finite aggregate controller and literal family projections to generate a closed partition data fold.
 Project v1 projects one string variable and generates declaration or import diagnostics.
-The [finite-owned guide](docs/finite-owned.md) describes project v2. The public [v0.2.0-alpha.1 release](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.2.0-alpha.1) includes the later compiler and native plugin milestones. The older v0.1.0 archives retain the diagnostic prototype.
+The [finite-owned guide](docs/finite-owned.md) describes project v2. The public [v0.2.0-alpha.2 release](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.2.0-alpha.2) includes the later compiler and native plugin milestones, structured stale-output diagnostics, and automatic Pele fitting. The older v0.1.0 archives retain the diagnostic prototype.
 
 ## What works
 
@@ -200,7 +200,7 @@ Read [the development method](docs/development-method.md) for modeling choices, 
 
 ## Use an agent plugin
 
-The public `v0.2.0-alpha.1` archives contain complete plugins for macOS arm64: [Codex](https://github.com/KimSeogyu/specification-guided-development/releases/download/v0.2.0-alpha.1/specification-guided-development-codex-0.2.0-alpha.1-darwin-arm64.tar.gz) and [Claude Code](https://github.com/KimSeogyu/specification-guided-development/releases/download/v0.2.0-alpha.1/specification-guided-development-claude-code-0.2.0-alpha.1-darwin-arm64.tar.gz).
+The public `v0.2.0-alpha.2` archives contain complete plugins for macOS arm64: [Codex](https://github.com/KimSeogyu/specification-guided-development/releases/download/v0.2.0-alpha.2/specification-guided-development-codex-0.2.0-alpha.2-darwin-arm64.tar.gz) and [Claude Code](https://github.com/KimSeogyu/specification-guided-development/releases/download/v0.2.0-alpha.2/specification-guided-development-claude-code-0.2.0-alpha.2-darwin-arm64.tar.gz).
 For an extracted archive, use its standalone marketplace preparer as described in the [native plugin guide](docs/plugins.md#prepare-the-packages).
 Other platforms and architectures require source preparation on the target host.
 
@@ -244,7 +244,7 @@ Cloning the Git marketplace alone does not create the runtime.
 For independent distribution, run `node plugins/package.mjs --archive-out .runtime/plugin-packages`.
 That command creates a complete archive for each native plugin, including its runtime.
 Each new archive includes `scripts/prepare-marketplace.mjs`, which creates a new host-specific marketplace and prints the native installation commands without installing anything.
-Read the [native plugin guide](docs/plugins.md) for extracted-release setup and the separate native cached-upgrade verifier.
+For an existing installation, follow [the local marketplace update steps](docs/plugins.md#update-an-existing-local-marketplace). The [native plugin guide](docs/plugins.md) also covers extracted-release setup and the separate native cached-upgrade verifier.
 Archive names end with the host platform and architecture, such as `-darwin-arm64.tar.gz`.
 The launcher checks `runtime/runtime-platform.json` and rejects a runtime for another host.
 An ordinary npm source package does not include these runtime dependencies.
