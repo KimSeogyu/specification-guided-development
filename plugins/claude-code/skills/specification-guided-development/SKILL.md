@@ -1,9 +1,9 @@
 ---
 name: specification-guided-development
-description: Model architecture and behavior in TLA+. Generate state owners or TypeScript and Rust source diagnostics from checked models. Use when adopting or changing Specification Guided Development.
+description: Model structure and behavior in TLA+. Diagnose failures through owning contracts and bindings. Generate state owners or TypeScript and Rust source diagnostics when adopting or changing Specification Guided Development.
 ---
 
-# Develop from a checked TLA+ model
+# Develop from checked structural contracts
 
 ## Check the running runtime once
 
@@ -23,6 +23,25 @@ A local directory marketplace cannot fetch a newer release archive by itself.
 This check does not authorize an installation or a host setting change.
 Handle a separately requested update under the user's existing authorization.
 Do not create a background update job as part of this check.
+
+## Establish the root structure
+
+Read the request, accepted requirements, and root structure before feature implementation.
+Establish missing top-level contracts before implementing the feature.
+Represent required ownership, responsibility, time, information, and resource lifecycles as state in TLA+.
+Follow those responsibilities from the root into lower-level models and application bindings.
+
+For a change, derive the affected model closure from that root.
+Include enclosing acceptance properties, participating actors, input origins, resources, and code bindings.
+Do not select a convenient leaf model while omitting its enclosing responsibilities.
+Record the available checked evidence for each relation between models.
+Treat missing structure and unsupported enforcement as coverage gaps.
+Do not dismiss an obligation because the current profile cannot check it.
+
+Retain every state distinction required by an accepted property.
+Record the assumptions and finite bounds that make the abstraction valid.
+Choose algorithms, data structures, and internal organization within that contract and its assumptions.
+Do not enumerate unrelated implementation details in TLA+.
 
 ## Select the modeling profile
 
@@ -76,6 +95,37 @@ Containment does not establish formal refinement.
 
 Do not replace a generated owner with handwritten state or a parallel mutable copy.
 A matching declaration beside an independent state assignment does not enforce the model.
+
+## Diagnose before changing consumer code
+
+Start with structural diagnosis before choosing a local repair.
+An implementation bug violates the intended contract under sufficient coverage and enforcement.
+A structural bug concerns missing or incorrect state, ownership, responsibility, time, information, lifecycle, composition, or enforcement.
+
+1. Record the affected requirement and concrete failure or counterexample.
+2. For new behavior, record the required outcome and forbidden paths.
+3. Locate the owning model and enclosing acceptance properties in the root structure.
+4. Check coverage of the required state, participants, paths, and lifecycle boundaries.
+5. Check whether the model permits the forbidden path.
+6. Inspect the actual binding, artifact freshness, and enforcement on the application path.
+
+Missing ownership, state, lifecycle, composition, or coverage requires a structural repair.
+If the model permits the forbidden path, repair the structure or specification.
+If the model forbids that path, investigate the actual binding and enforcement before changing consumer logic.
+A missing, stale, bypassed, or incomplete binding is an enforcement gap.
+Permit a local implementation repair only after establishing the intended contract, sufficient coverage, and actual enforcement.
+A caller's diagnosis label does not establish those facts.
+
+Unsupported analyzer syntax does not establish a consumer defect.
+Record the rejected construct, unsupported semantics, and resulting coverage gap.
+Extend the supported profile or report that gap within the authorized scope.
+Do not change consumer behavior merely to satisfy an analyzer.
+Do not omit participating files or accept unknown constructs.
+
+Repair the responsible structure before adding a local workaround.
+Do not add an independent mutable copy of protected state or a handwritten policy table beside generated authority.
+Do not weaken an invariant or change an expected oracle to make the implementation pass.
+Do not edit generated policy code.
 
 ## Model and review
 
@@ -132,6 +182,12 @@ Use `<ClassName>::new()` and `read()` through that dependency.
 The separate crate keeps the actual state private.
 Use safe Rust in the calling application.
 Do not add mutable state access, arbitrary-state constructors, or restore paths.
+
+Check the effective consuming Cargo graph after connecting the generated path dependency.
+Keep configured workspace member paths distinct from Cargo's resolved members.
+Metadata for the generated crate alone does not establish compatible consumer placement.
+Resolve placement failures through the binding or producer contract.
+Do not patch generated Cargo manifests to conceal them.
 
 For v3, submit data through TypeScript `send(input: string)` or Rust `send(input: &str)`.
 Generated guards choose the action.
@@ -200,6 +256,12 @@ Run native type checks, builds, and behavior tests after integration.
 For generated owners, test rejection where the contract permits disabled input and confirm that state and revision stay unchanged.
 Check that application code cannot directly replace the protected state.
 
+Preserve the original counterexample and check that the repair excludes it.
+Add a regression for the failure class across relevant participants, orderings, repeated operations, and lifecycle boundaries.
+Check an independent higher-level acceptance property from the root structure.
+Derive expected results from the accepted requirement rather than generated output or the implementation under test.
+A passing example or paired implementation agreement does not establish that property.
+
 For the v3 fact-merge example, submit one value twice and then a different value.
 Expect `Insert`, `Same`, and `Clash`, with the original stored value preserved after the clash.
 Also submit `none` as actual data and inspect every receipt's simultaneous assignment origins.
@@ -231,7 +293,8 @@ Do not replace these APIs with an earlier compiler API.
 
 ## Change a requirement
 
-Distinguish an implementation error, a model error, and a changed requirement before editing the contract.
+Apply the structural diagnosis before editing the contract.
+Keep a requirement change distinct from a repair under the accepted requirement.
 For a requirement change, state the affected invariant, payload equality contract, and expected behavior where relevant.
 Update TLA+ and regenerate within the authorized scope.
 V3 and v4 source changes must pass the finite witness, input oracle, and orbit validation again before executable generation.
@@ -240,10 +303,17 @@ Rust output uses the fixed rustfmt 2021 style profile and checked output bytes.
 The informational formatter version is not an installation pin.
 Do not weaken the model only to make existing code pass.
 Do not edit generated code to change application policy.
+Preserve the accepted oracle during a repair.
+Record an authorized requirement change and its new acceptance property separately.
 
 Use `build --check` to detect stale stable artifacts.
 V1 also supports `compile --check`.
 The compiler checks stable provenance fields but excludes TLC log bytes and volatile run details from byte comparisons.
+Use the declared producer for canonical generated bytes and freshness.
+Check those bytes with the actual consumer's formatter configuration.
+Resolve a formatting disagreement through artifact ownership and configuration.
+Do not manually format generated code, skip formatting, or suppress freshness to obtain a passing result.
+Custom consumer formatting configurations require separate compatibility evidence.
 
 ## Execute through the native plugin
 
@@ -267,6 +337,13 @@ Keep Codex and Claude Code installations independent.
 Do not change global agent configuration as a hidden setup or test step.
 
 ## Report the actual boundary
+
+Report the requirement, owning structure, diagnosis, repair, and supporting evidence.
+Distinguish model checks, generated enforcement, native binding, composition, scheduling, and persistence.
+Report unsupported and uncovered obligations separately.
+The root-structure and diagnosis steps above are workflow requirements.
+Current tools do not check complete application contract closure or mechanically authorize a local repair.
+A green leaf model does not establish its enclosing properties or application coverage.
 
 Generated owners protect one live object in a trusted JavaScript realm or a safe Rust caller.
 Trust the generated source, its dependencies, and the platform primitives.

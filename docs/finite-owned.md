@@ -71,7 +71,7 @@ The boundary assumes a trusted JavaScript realm and unchanged generated module. 
 
 ## Rust
 
-Keep the generated crate as a separate dependency. Its generated `README.md` gives the exact Cargo package name and a dependency alias. A consumer uses that alias:
+Keep the generated crate as a separate dependency. Rust generation requires rustfmt and uses the common [artifact contract](artifact-contract.md) before freshness comparison or publication. The generated crate includes the declared formatter configuration. Its generated `README.md` gives the exact Cargo package name and a dependency alias. A consumer uses that alias:
 
 ```rust
 #![forbid(unsafe_code)]

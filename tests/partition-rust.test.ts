@@ -9,7 +9,7 @@ import { generateRowRust } from '../src/backends/row-rust.js';
 import { generateSymbolicRust } from '../src/backends/symbolic-rust.js';
 import { FiniteGraphSchema } from '../src/finite-types.js';
 import type { PartitionPlan } from '../src/partition-types.js';
-import { formatRowRust } from '../src/rust-format.js';
+import { formatGeneratedRust } from '../src/rust-format.js';
 import { symbolicModel, type SymbolicExpression, type SymbolicGuard } from '../src/symbolic-types.js';
 
 const execute = promisify(execFile);
@@ -97,7 +97,7 @@ test('Rust closed fold preserves complete rows, stutter observations, signed key
   const root = await mkdtemp(join(runtime, 'suite-'));
   const rust = join(root, 'rust'); const consumer = join(root, 'consumer');
   try {
-    const generated = await formatRowRust(generatePartitionRust({ plan, className: 'PartitionAuthority', rustCrateMode: 'standalone' }));
+    const generated = await formatGeneratedRust(generatePartitionRust({ plan, className: 'PartitionAuthority', rustCrateMode: 'standalone' }));
     for (const file of generated.files) await put(join(rust, file.path), file.content);
     const manifest = await readFile(join(rust, 'Cargo.toml'), 'utf8');
     const packageName = /^name = "([a-z0-9-]+)"$/m.exec(manifest)?.[1]; assert.ok(packageName);
@@ -202,7 +202,7 @@ test('minimal composed Rust guard conditions preserve empty conjunction and disj
         { action: 'Never', guard: { kind: 'or', terms: [] }, updates: { flag: { kind: 'literal', value: { kind: 'boolean', value: false } }, seenA: state('seenA'), seenB: state('seenB') }, source: null },
       ], invariants: [], actionProperties: [],
     });
-    const generated = await formatRowRust(generateSymbolicRust({ model: truth, className: 'TruthAuthority', minimalGuardConditions: true }));
+    const generated = await formatGeneratedRust(generateSymbolicRust({ model: truth, className: 'TruthAuthority', minimalGuardConditions: true }));
     for (const file of generated.files) await put(join(root, file.path), file.content);
     const manifest = await readFile(join(root, 'Cargo.toml'), 'utf8'); const packageName = /^name = "([a-z0-9-]+)"$/m.exec(manifest)?.[1]; assert.ok(packageName);
     await put(join(root, 'tests/truth.rs'), `use ${packageName.replaceAll('-', '_')}::{TruthAuthority, SymbolicValue};\n#[test] fn native_empty_guard_truth() { let mut authority=TruthAuthority::new(); for _ in 0..3 { let receipt=authority.send("a","b").unwrap(); assert_eq!(receipt.action,"Always"); assert_eq!(receipt.after.values.get("flag"),Some(&SymbolicValue::Boolean { value:true })); } }\n`);
