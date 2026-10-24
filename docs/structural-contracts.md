@@ -113,3 +113,13 @@ It reports neither controlled source provenance nor behavioral refinement nor in
 Its focused tests use synthetic programs with the real existing erasure checker.
 They reproduce correlated removal of insertion behavior and show why the separate fixed-baseline relation is necessary.
 These tests do not establish controlled TLA+ execution, root closure, native binding, or the complete public workflow.
+
+The internal `compareContractProjects` runner now reads root declarations through controlled SANY metadata validation and captures current baseline and candidate v3/v4 models.
+It runs required property retention, candidate-to-baseline behavior comparison, and the declared candidate composition checks separately.
+It rechecks project, binding, metadata, model, configuration, and tool inputs before returning.
+Required missing or unsupported native obligations fail before the runner reports a composition result.
+
+Pinned SANY/TLC integration tests cover a payload/envelope composition, removal of a selected property, undeclared baseline selectors, and missing or unsupported writer authority.
+Captured-model tests additionally reject a self-loop replacement for insertion, forged evidence, and changed original inputs.
+The result remains a supplied-baseline comparison, with `preservationGate` and `independentlySelectedBaseline` both `not-established`.
+There is no public command, managed root-report publication, or protected CI baseline selector yet.

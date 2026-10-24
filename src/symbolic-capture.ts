@@ -2,6 +2,7 @@ import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { sha256 } from './dot.js';
+import { compareRequiredSymbolicProperties } from './contract-properties.js';
 import { lowerSymbolicModel } from './symbolic-lower.js';
 import { RowProjectSchema } from './row-binding-types.js';
 import type { SanyModule } from './sany-xml.js';
@@ -210,4 +211,22 @@ export async function verifyCapturedErasure(input: { abstract: CheckedSymbolicCa
   await recheck(abstract.inputs);
   await recheck(concrete.inputs);
   return frozenClone({ ...evidence, captures: { abstract: abstract.summary, concrete: concrete.summary } });
+}
+
+/** Preserve a supplied captured baseline. The host must independently select that baseline for a CI gate. */
+export async function compareCapturedAcceptance(input: { baseline: CheckedSymbolicCapture; candidate: CheckedSymbolicCapture }) {
+  const baseline = record(input.baseline);
+  const candidate = record(input.candidate);
+  await recheck(baseline.inputs);
+  await recheck(candidate.inputs);
+  const properties = compareRequiredSymbolicProperties({ baseline: baseline.data.model, candidate: candidate.data.model });
+  const identity = (names: readonly string[]) => Object.fromEntries(names.map(name => [name, name]));
+  const behavior = await verifyCapturedErasure({ abstract: input.baseline, concrete: input.candidate, binding: {
+    version: 1,
+    variables: identity(baseline.data.model.variables),
+    inputs: identity(symbolicInputs(baseline.data.model).map(input => input.parameter)),
+    actions: identity([...new Set(candidate.data.model.branches.map(branch => branch.action))]),
+  } });
+  return frozenClone({ kind: 'captured-baseline-comparison', scope: 'same-identity-equality-copy-models',
+    independentlySelectedBaseline: 'not-established', properties, behavior });
 }

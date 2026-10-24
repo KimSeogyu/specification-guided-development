@@ -4,7 +4,7 @@ import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
-  captureSymbolicProject, inspectSymbolicCapture, inspectSymbolicProject,
+  captureSymbolicProject, compareCapturedAcceptance, inspectSymbolicCapture, inspectSymbolicProject,
   readSymbolicCaptureForCompiler, recheckSymbolicCapture, verifyCapturedErasure,
 } from '../src/symbolic-capture.js';
 
@@ -25,6 +25,7 @@ test('pure capture readers reject untyped values, supplied IR, and model-only-sh
     assert.throws(() => Reflect.apply(readSymbolicCaptureForCompiler, undefined, [value]), unauthenticated);
     await assert.rejects(async () => Reflect.apply(recheckSymbolicCapture, undefined, [value]), unauthenticated);
     await assert.rejects(async () => Reflect.apply(verifyCapturedErasure, undefined, [{ abstract: value, concrete: value, binding }]), unauthenticated);
+    await assert.rejects(async () => Reflect.apply(compareCapturedAcceptance, undefined, [{ baseline: value, candidate: value }]), unauthenticated);
   }
 });
 
@@ -96,6 +97,10 @@ test('real v3/v4 captures retain controlled evidence and the current enabled-inp
   assert.ok(Object.isFrozen(evidence.captures.abstract.finite.evidence.moduleClosure));
   await recheckSymbolicCapture(pair.abstract);
   await recheckSymbolicCapture(pair.concrete);
+  const acceptance = await compareCapturedAcceptance({ baseline: pair.abstract, candidate: pair.abstract });
+  assert.equal(acceptance.kind, 'captured-baseline-comparison');
+  assert.equal(acceptance.independentlySelectedBaseline, 'not-established');
+  assert.equal(acceptance.behavior.scope, 'admitted-equality-copy-orbits');
 });
 
 test('real capture inspection and compiler views cannot mutate captured model or semantic provenance', { skip: !jar, timeout: 180_000 }, async () => {
@@ -124,6 +129,23 @@ test('real capture inspection and compiler views cannot mutate captured model or
   assert.equal(evidence.acceptedCases, evidence.checkedCases);
 });
 
+test('real captured baseline rejects a safe candidate that removes insertion behavior', { skip: !jar, timeout: 180_000 }, async () => {
+  assert.ok(jar);
+  const pair = await captures();
+  const root = await mkdtemp(join(tmpdir(), 'sgd-capture-weakened-'));
+  try {
+    await cp(pair.abstractDirectory, root, { recursive: true });
+    const path = join(root, 'ManifestWrite.tla');
+    const source = await readFile(path, 'utf8');
+    const insertion = '  /\\ phase\' = "present"\n  /\\ stored\' = v\n  /\\ rejected\' = "none"';
+    assert.equal(source.split(insertion).length, 2);
+    await writeFile(path, source.replace(insertion, '  /\\ UNCHANGED vars'));
+    const candidate = await captureSymbolicProject({ project: join(root, 'project.json'), jar });
+    await compareCapturedAcceptance({ baseline: candidate, candidate });
+    await assert.rejects(compareCapturedAcceptance({ baseline: pair.abstract, candidate }), /TLC304.*projected successor differs/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('real model-only output and reflected constructors cannot mint checked capture provenance', { skip: !jar, timeout: 180_000 }, async () => {
   assert.ok(jar);
   const pair = await captures();
@@ -149,6 +171,7 @@ test('real capture recheck detects original input edits and new supported-namesp
     try {
       await writeFile(path, Buffer.concat([original, Buffer.from('\n')]));
       await assert.rejects(recheckSymbolicCapture(pair.abstract), /changed|namespace|input|source/i);
+      await assert.rejects(compareCapturedAcceptance({ baseline: pair.abstract, candidate: pair.abstract }), /changed|namespace|input|source/i);
       await assert.rejects(verifyCapturedErasure({ abstract: pair.abstract, concrete: pair.concrete, binding }), /changed|namespace|input|source/i);
     } finally { await writeFile(path, original); }
     await recheckSymbolicCapture(pair.abstract);
