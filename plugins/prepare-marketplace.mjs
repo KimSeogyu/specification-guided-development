@@ -15,7 +15,33 @@ function inside(parent, child) {
   return path === '' || (!isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`));
 }
 function identity(stat) { return `${stat.dev}:${stat.ino}`; }
-function stamp(stat) { return `${identity(stat)}:${stat.mode}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`; }
+const READ_GUARD_FIELDS = Object.freeze(['dev', 'ino', 'mode', 'size', 'mtimeNs']);
+function readGuard(stat) {
+  return { dev: String(stat.dev), ino: String(stat.ino), mode: String(stat.mode), size: String(stat.size), mtimeNs: String(stat.mtimeNs) };
+}
+function sourcePath(key) {
+  const path = key || '.';
+  return path.length > 180 ? `${path.slice(0, 177)}...` : path;
+}
+function sourceChanged(key, fields, stage) {
+  fail(`The plugin source changed ${stage}: ${sourcePath(key)} (changed fields: ${fields.join(', ')}). Retry with an unchanged extracted release.`);
+}
+function checkReadGuard(stat, expected, kind, key, stage) {
+  const current = readGuard(stat);
+  const fields = READ_GUARD_FIELDS.filter(field => current[field] !== expected[field]);
+  if (stat.isSymbolicLink() || (kind === 'file' ? !stat.isFile() : !stat.isDirectory())) fields.unshift('kind');
+  if (fields.length) sourceChanged(key, fields, stage);
+}
+async function sourceStat(path, key, stage) {
+  try { return await lstat(path, { bigint: true }); }
+  catch (error) { sourceError(error, key, stage); }
+}
+function sourceError(error, key, stage) {
+  if (error.code === 'ENOENT' || error.code === 'ENOTDIR') sourceChanged(key, ['inventory'], stage);
+  if (error.code === 'ELOOP') sourceChanged(key, ['kind'], stage);
+  const code = typeof error.code === 'string' && /^[A-Z][A-Z0-9_]{0,23}$/.test(error.code) ? error.code : 'unknown';
+  fail(`Cannot access the plugin source ${stage}: ${sourcePath(key)} (filesystem error: ${code}).`);
+}
 function object(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 function version(value) {
   if (typeof value !== 'string' || !VERSION.test(value)) return false;
@@ -44,12 +70,12 @@ async function safeAncestors(path, missingLeaf = false) {
   }
 }
 
-async function bytes(path, expected) {
-  const before = await lstat(path, { bigint: true });
-  if (!before.isFile() || before.isSymbolicLink() || stamp(before) !== expected.stamp) fail('The plugin source changed. Retry with an unchanged extracted release.');
-  const handle = await open(path, 'r');
+async function bytes(path, expected, key) {
+  const before = await sourceStat(path, key, 'before opening a file');
+  checkReadGuard(before, expected.guard, 'file', key, 'before opening a file');
+  const handle = await open(path, 'r').catch(error => sourceError(error, key, 'while opening a file'));
   try {
-    if (stamp(await handle.stat({ bigint: true })) !== expected.stamp) fail('The plugin source changed while opening a file.');
+    checkReadGuard(await handle.stat({ bigint: true }), expected.guard, 'file', key, 'while opening a file');
     const chunks = [];
     let size = 0;
     while (true) {
@@ -60,7 +86,8 @@ async function bytes(path, expected) {
       if (size > LIMITS.fileBytes) fail(`A plugin file exceeds the ${LIMITS.fileBytes} byte limit.`);
       chunks.push(chunk.subarray(0, bytesRead));
     }
-    if (stamp(await handle.stat({ bigint: true })) !== expected.stamp || size !== Number(before.size)) fail('The plugin source changed while reading a file.');
+    checkReadGuard(await handle.stat({ bigint: true }), expected.guard, 'file', key, 'while reading a file');
+    if (size !== Number(before.size)) sourceChanged(key, ['readBytes'], 'while reading a file');
     return Buffer.concat(chunks, size);
   } finally { await handle.close(); }
 }
@@ -72,28 +99,29 @@ async function capture(root) {
   let total = 0;
   async function visit(path, key, depth) {
     if (depth > LIMITS.depth) fail(`Plugin directories exceed the ${LIMITS.depth} level limit.`);
-    const stat = await lstat(path, { bigint: true });
-    if (stat.isSymbolicLink()) fail(`Symlinks are unsupported in the plugin: ${key || '.'}`);
+    const stat = await sourceStat(path, key, 'while capturing the inventory');
+    if (stat.isSymbolicLink()) fail(`Symlinks are unsupported in the plugin: ${sourcePath(key)}`);
     if (stat.isDirectory()) {
       if (++directoryCount > LIMITS.directories) fail('The plugin has too many directories.');
-      const names = (await readdir(path)).sort();
-      entries.set(key, { kind: 'directory', stamp: stamp(stat), names });
+      const names = (await readdir(path).catch(error => sourceError(error, key, 'while capturing a directory'))).sort();
+      const guard = readGuard(stat);
+      entries.set(key, { kind: 'directory', guard, names });
       for (const name of names) {
         if (name === '.' || name === '..' || /[\x00-\x1f\x7f]/.test(name)) fail('A plugin path contains unsupported characters.');
         const child = join(path, name);
         if (!inside(root, child)) fail('A plugin source path escapes its root.');
         await visit(child, key ? `${key}/${name}` : name, depth + 1);
       }
-      if (stamp(await lstat(path, { bigint: true })) !== stamp(stat)) fail('The plugin directory inventory changed. Retry with an unchanged extracted release.');
+      checkReadGuard(await sourceStat(path, key, 'while capturing a directory'), guard, 'directory', key, 'while capturing a directory');
     } else if (stat.isFile()) {
       if (++fileCount > LIMITS.files) fail('The plugin has too many files.');
       if (stat.size > BigInt(LIMITS.fileBytes)) fail(`A plugin file exceeds the ${LIMITS.fileBytes} byte limit.`);
       total += Number(stat.size);
       if (total > LIMITS.totalBytes) fail(`The plugin exceeds the ${LIMITS.totalBytes} byte total limit.`);
-      const entry = { kind: 'file', stamp: stamp(stat), mode: Number(stat.mode & 0o777n) };
-      const content = await bytes(path, entry);
+      const entry = { kind: 'file', guard: readGuard(stat), mode: Number(stat.mode & 0o777n) };
+      const content = await bytes(path, entry, key);
       entries.set(key, { ...entry, digest: createHash('sha256').update(content).digest('hex') });
-    } else fail(`Only regular files and directories are supported in the plugin: ${key}`);
+    } else fail(`Only regular files and directories are supported in the plugin: ${sourcePath(key)}`);
   }
   await visit(root, '', 0);
   return entries;
@@ -106,9 +134,23 @@ function file(entries, path) {
 }
 async function contents(root, entries, path) {
   const entry = file(entries, path);
-  const content = await bytes(join(root, path), entry);
-  if (createHash('sha256').update(content).digest('hex') !== entry.digest) fail('The plugin source changed. Retry with an unchanged extracted release.');
+  const content = await bytes(join(root, path), entry, path);
+  if (createHash('sha256').update(content).digest('hex') !== entry.digest) sourceChanged(path, ['digest'], 'while rechecking file bytes');
   return content;
+}
+function recheckEntries(captured, current) {
+  const paths = new Set([...captured.keys(), ...current.keys()]);
+  for (const path of paths) {
+    if (!captured.has(path) || !current.has(path)) sourceChanged(path, ['inventory'], 'during copying');
+  }
+  for (const [path, entry] of captured) {
+    const latest = current.get(path);
+    if (entry.kind !== latest.kind) sourceChanged(path, ['kind'], 'during copying');
+    const fields = READ_GUARD_FIELDS.filter(field => entry.guard[field] !== latest.guard[field]);
+    if (entry.kind === 'file' && entry.digest !== latest.digest) fields.push('digest');
+    if (entry.kind === 'directory' && JSON.stringify(entry.names) !== JSON.stringify(latest.names)) fields.push('inventory');
+    if (fields.length) sourceChanged(path, fields, 'during copying');
+  }
 }
 async function json(root, entries, path) {
   try { return JSON.parse((await contents(root, entries, path)).toString('utf8')); }
@@ -164,8 +206,9 @@ function catalogue(host) {
 }
 
 /** Prepare a new local native marketplace. This does not install or update a host.
- * Captured bytes and inventories are rechecked for ordinary changes. The operation
- * is not atomic and does not defend against a hostile concurrent filesystem owner.
+ * Captured bytes, permission bits, read guards and inventories are rechecked for
+ * ordinary changes. This is not continuous observation or an atomic operation,
+ * and does not defend against a hostile concurrent filesystem owner.
  */
 export async function prepareMarketplace({ host, plugin, out }) {
   if (host !== 'codex' && host !== 'claude-code') fail('Use --host codex or --host claude-code.');
@@ -202,7 +245,7 @@ export async function prepareMarketplace({ host, plugin, out }) {
     await safeAncestors(source);
     await safeAncestors(dirname(destination));
     const current = await capture(source);
-    if (captured.size !== current.size || [...captured].some(([path, entry]) => JSON.stringify(entry) !== JSON.stringify(current.get(path)))) fail('The plugin source or inventory changed during copying. Retry with an unchanged extracted release.');
+    recheckEntries(captured, current);
     if (identity(await lstat(destination, { bigint: true })) !== ownedIdentity) fail('The output directory changed during preparation.');
     await rm(join(destination, marker));
     const pluginId = `${NAME}@${market.name}`;

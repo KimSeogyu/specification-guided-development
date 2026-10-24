@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, truncate, writeFile } from 'node:fs/promises';
+import type { BigIntStats } from 'node:fs';
+import fs, { chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, truncate, utimes, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { setImmediate } from 'node:timers/promises';
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import { prepareMarketplace } from '../plugins/prepare-marketplace.mjs';
 
 const helper = fileURLToPath(new URL('../plugins/prepare-marketplace.mjs', import.meta.url));
@@ -47,6 +48,206 @@ async function fixture(base: string, host: Host) {
 }
 
 async function scratch() { return mkdtemp(join(await realpath(tmpdir()), 'sgd-marketplace-test-')); }
+
+const guardFields = ['dev', 'ino', 'mode', 'size', 'mtimeNs'] satisfies (keyof BigIntStats)[];
+const fixedTime = new Date('2001-01-01T00:00:00.000Z');
+const probeBytes = Buffer.alloc(2 * 1024 * 1024 + 257, 0x41);
+type ReadGate = 'before-open' | 'during-read';
+
+async function sameModeChmod(path: string) {
+  const before = await lstat(path, { bigint: true });
+  await chmod(path, Number(before.mode & 0o777n));
+  const after = await lstat(path, { bigint: true });
+  for (const field of guardFields) assert.equal(after[field], before[field], `same-mode chmod must preserve ${field}`);
+  assert.notEqual(after.ctimeNs, before.ctimeNs, 'The real same-mode chmod must change ctime.');
+}
+
+async function changeBytesWithRestoredMtime(path: string) {
+  const before = await lstat(path, { bigint: true });
+  const actualWrite = fs.writeFile;
+  await actualWrite(path, Buffer.alloc(Number(before.size), 0x42));
+  await utimes(path, fixedTime, fixedTime);
+  const after = await lstat(path, { bigint: true });
+  for (const field of guardFields) assert.equal(after[field], before[field], `content mutation must restore ${field}`);
+}
+
+async function interceptReads(context: TestContext, path: string, gate: ReadGate, mutate: () => Promise<void>, run: () => Promise<void>) {
+  const actualOpen = fs.open;
+  let opens = 0;
+  let mutations = 0;
+  context.mock.method(fs, 'open', async (...arguments_: Parameters<typeof fs.open>) => {
+    if (arguments_[0] !== path) return actualOpen(...arguments_);
+    const occurrence = ++opens;
+    if (occurrence === 2 && gate === 'before-open') { await mutate(); mutations++; }
+    const handle = await actualOpen(...arguments_);
+    if (occurrence === 2 && gate === 'during-read') {
+      const actualRead = handle.read.bind(handle);
+      context.mock.method(handle, 'read', async (...readArguments: Parameters<typeof handle.read>) => {
+        const result = await actualRead(...readArguments);
+        if (result.bytesRead > 0 && mutations === 0) {
+          assert.ok(result.bytesRead < probeBytes.length, 'The mutation must follow an actual partial read.');
+          await mutate();
+          mutations++;
+        }
+        return result;
+      });
+    }
+    return handle;
+  });
+  syncBuiltinESMExports();
+  try { await run(); }
+  finally { context.mock.restoreAll(); syncBuiltinESMExports(); }
+  assert.equal(mutations, 1, 'The selected real filesystem mutation must run exactly once.');
+}
+
+async function afterCopyWrite(context: TestContext, path: string, mutate: () => Promise<void>, run: () => Promise<void>) {
+  const actualWrite = fs.writeFile;
+  let mutations = 0;
+  context.mock.method(fs, 'writeFile', async (...arguments_: Parameters<typeof fs.writeFile>) => {
+    const result = await actualWrite(...arguments_);
+    if (arguments_[0] === path) { await mutate(); mutations++; }
+    return result;
+  });
+  syncBuiltinESMExports();
+  try { await run(); }
+  finally { context.mock.restoreAll(); syncBuiltinESMExports(); }
+  assert.equal(mutations, 1, 'The mutation must follow exactly one completed output file write.');
+}
+
+for (const gate of ['before-open', 'during-read'] satisfies ReadGate[]) {
+  test(`accepts a real ctime-only chmod ${gate} without changing payload identity`, async context => {
+    if (process.platform === 'win32') { context.skip('The ctime-only chmod probe requires POSIX metadata behavior.'); return; }
+    const temporary = await scratch();
+    try {
+      const plugin = await fixture(temporary, 'codex');
+      const probe = join(plugin, 'copy-probe.bin');
+      await writeFile(probe, probeBytes);
+      const out = join(temporary, 'out');
+      await interceptReads(context, probe, gate, () => sameModeChmod(probe), async () => {
+        const result = await prepareMarketplace({ host: 'codex', plugin, out });
+        assert.equal(result.sourceConsistency, 'captured-files-and-inventory-rechecked');
+      });
+      assert.deepEqual(await readFile(join(out, 'plugins/codex/copy-probe.bin')), probeBytes);
+    } finally { await rm(temporary, { recursive: true, force: true }); }
+  });
+
+  test(`rejects same-size changed bytes with restored mtime ${gate}`, async context => {
+    const temporary = await scratch();
+    try {
+      const plugin = await fixture(temporary, 'codex');
+      const probe = join(plugin, 'copy-probe.bin');
+      await writeFile(probe, probeBytes);
+      await utimes(probe, fixedTime, fixedTime);
+      const out = join(temporary, 'out');
+      await interceptReads(context, probe, gate, () => changeBytesWithRestoredMtime(probe), async () => {
+        await assert.rejects(prepareMarketplace({ host: 'codex', plugin, out }), /copy-probe\.bin \(changed fields: digest\)/);
+      });
+      await assert.rejects(lstat(out), { code: 'ENOENT' });
+      assert.deepEqual(await readFile(probe), Buffer.alloc(probeBytes.length, 0x42));
+    } finally { await rm(temporary, { recursive: true, force: true }); }
+  });
+}
+
+test('accepts ctime-only file and directory changes before final recapture', async context => {
+  if (process.platform === 'win32') { context.skip('The ctime-only chmod probe requires POSIX metadata behavior.'); return; }
+  const temporary = await scratch();
+  try {
+    const plugin = await fixture(temporary, 'codex');
+    const probe = join(plugin, 'copy-probe.bin');
+    await writeFile(probe, probeBytes);
+    const out = join(temporary, 'out');
+    const copied = join(out, 'plugins/codex/copy-probe.bin');
+    await afterCopyWrite(context, copied, async () => {
+      assert.deepEqual(await readFile(copied), probeBytes);
+      await sameModeChmod(probe);
+      await sameModeChmod(plugin);
+    }, async () => {
+      await prepareMarketplace({ host: 'codex', plugin, out });
+    });
+    assert.deepEqual(await readFile(copied), probeBytes);
+  } finally { await rm(temporary, { recursive: true, force: true }); }
+});
+
+test('rejects permission changes between lstat and open', async context => {
+  if (process.platform === 'win32') { context.skip('The permission-bit mutation probe requires POSIX modes.'); return; }
+  const temporary = await scratch();
+  try {
+    const plugin = await fixture(temporary, 'codex');
+    const probe = join(plugin, 'copy-probe.bin');
+    await writeFile(probe, probeBytes, { mode: 0o644 });
+    await chmod(probe, 0o644);
+    const out = join(temporary, 'out');
+    await interceptReads(context, probe, 'before-open', () => chmod(probe, 0o600), async () => {
+      await assert.rejects(prepareMarketplace({ host: 'codex', plugin, out }), /copy-probe\.bin \(changed fields: mode\)/);
+    });
+    await assert.rejects(lstat(out), { code: 'ENOENT' });
+    assert.deepEqual(await readFile(probe), probeBytes);
+  } finally { await rm(temporary, { recursive: true, force: true }); }
+});
+
+test('source-change diagnostics bound relative paths and omit file contents', async context => {
+  const temporary = await scratch();
+  try {
+    const plugin = await fixture(temporary, 'codex');
+    const probe = join(plugin, 'long-directory-'.repeat(12), `${'long-file-'.repeat(12)}probe.bin`);
+    await mkdir(dirname(probe));
+    await writeFile(probe, probeBytes);
+    await utimes(probe, fixedTime, fixedTime);
+    const path = relative(plugin, probe).split(sep).join('/');
+    assert.ok(path.length > 180);
+    const out = join(temporary, 'out');
+    await interceptReads(context, probe, 'before-open', () => changeBytesWithRestoredMtime(probe), async () => {
+      await assert.rejects(prepareMarketplace({ host: 'codex', plugin, out }), error => {
+        assert.ok(error instanceof Error);
+        assert.ok(error.message.includes(`${path.slice(0, 177)}... (changed fields: digest)`));
+        assert.ok(error.message.length < 400);
+        assert.ok(!error.message.includes(plugin));
+        assert.ok(!error.message.includes('B'.repeat(32)));
+        return true;
+      });
+    });
+    await assert.rejects(lstat(out), { code: 'ENOENT' });
+  } finally { await rm(temporary, { recursive: true, force: true }); }
+});
+
+test('a file removed between lstat and open reports its relative inventory change', async context => {
+  const temporary = await scratch();
+  try {
+    const plugin = await fixture(temporary, 'codex');
+    const probe = join(plugin, 'copy-probe.bin');
+    await writeFile(probe, probeBytes);
+    const out = join(temporary, 'out');
+    await interceptReads(context, probe, 'before-open', () => rm(probe), async () => {
+      await assert.rejects(prepareMarketplace({ host: 'codex', plugin, out }), /while opening a file: copy-probe\.bin \(changed fields: inventory\)/);
+    });
+    await assert.rejects(lstat(out), { code: 'ENOENT' });
+  } finally { await rm(temporary, { recursive: true, force: true }); }
+});
+
+test('rejects an inode replacement with equal bytes, mode, size, and mtime', async context => {
+  const temporary = await scratch();
+  try {
+    const plugin = await fixture(temporary, 'codex');
+    const probe = join(plugin, 'copy-probe.bin');
+    const replacement = join(temporary, 'replacement');
+    await writeFile(probe, probeBytes);
+    await utimes(probe, fixedTime, fixedTime);
+    const before = await lstat(probe, { bigint: true });
+    await writeFile(replacement, probeBytes);
+    await chmod(replacement, Number(before.mode & 0o777n));
+    await utimes(replacement, fixedTime, fixedTime);
+    const out = join(temporary, 'out');
+    await interceptReads(context, probe, 'before-open', async () => {
+      await rename(replacement, probe);
+      const after = await lstat(probe, { bigint: true });
+      for (const field of ['dev', 'mode', 'size', 'mtimeNs'] satisfies (keyof typeof before)[]) assert.equal(after[field], before[field]);
+      assert.notEqual(after.ino, before.ino);
+    }, async () => {
+      await assert.rejects(prepareMarketplace({ host: 'codex', plugin, out }), /copy-probe\.bin \(changed fields: ino\)/);
+    });
+    await assert.rejects(lstat(out), { code: 'ENOENT' });
+  } finally { await rm(temporary, { recursive: true, force: true }); }
+});
 
 for (const host of ['codex', 'claude-code'] satisfies Host[]) {
   test(`prepares an independent ${host} marketplace without installing anything`, async () => {
@@ -175,39 +376,75 @@ test('rejects symlink sources and parents without altering the target', async co
   } finally { await rm(temporary, { recursive: true, force: true }); }
 });
 
-test('a source inventory change while copying refuses publication and removes only the new output', async () => {
+for (const mutation of ['addition', 'removal']) {
+  test(`a source inventory ${mutation} after a copied file refuses publication and removes only the new output`, async context => {
+    const temporary = await scratch();
+    try {
+      const plugin = await fixture(temporary, 'codex');
+      const keep = join(temporary, 'keep');
+      await writeFile(keep, 'unrelated data');
+      const out = join(temporary, 'out');
+      const copied = join(out, 'plugins/codex/LICENSE');
+      await afterCopyWrite(context, copied, async () => {
+        assert.equal(await readFile(copied, 'utf8'), 'license fixture\n');
+        if (mutation === 'addition') await writeFile(join(plugin, 'new-source-file'), 'changed inventory');
+        else await rm(join(plugin, 'LICENSE'));
+      }, async () => {
+        await assert.rejects(prepareMarketplace({ host: 'codex', plugin, out }), mutation === 'addition'
+          ? /new-source-file \(changed fields: inventory\)/
+          : /LICENSE \(changed fields: inventory\)/);
+      });
+      await assert.rejects(lstat(out), { code: 'ENOENT' });
+      assert.equal(await readFile(keep, 'utf8'), 'unrelated data');
+      if (mutation === 'addition') assert.equal(await readFile(join(plugin, 'new-source-file'), 'utf8'), 'changed inventory');
+      else await assert.rejects(lstat(join(plugin, 'LICENSE')), { code: 'ENOENT' });
+    } finally { await rm(temporary, { recursive: true, force: true }); }
+  });
+}
+
+test('a changed file after an earlier file was copied refuses mixed output with restored mtime', async context => {
   const temporary = await scratch();
   try {
     const plugin = await fixture(temporary, 'codex');
-    for (let index = 0; index < 32; index++) await writeFile(join(plugin, `copy-probe-${index}`), Buffer.alloc(128 * 1024, index));
+    const sourceA = join(plugin, 'copy-a.bin');
+    const sourceB = join(plugin, 'copy-b.bin');
+    await writeFile(sourceA, probeBytes);
+    await writeFile(sourceB, probeBytes);
+    await utimes(sourceB, fixedTime, fixedTime);
     const keep = join(temporary, 'keep');
     await writeFile(keep, 'unrelated data');
     const out = join(temporary, 'out');
-    let finished = false;
-    let mutated = false;
-    const mutation = (async () => {
-      while (!finished) {
-        try {
-          await lstat(out);
-          await writeFile(join(plugin, 'new-source-file'), 'changed inventory');
-          mutated = true;
-          return;
-        } catch (error) {
-          if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') throw error;
-        }
-        await setImmediate();
-      }
-    })();
-    try {
-      await assert.rejects(prepareMarketplace({ host: 'codex', plugin, out }), /source.*changed|inventory changed|directory inventory changed/);
-    } finally {
-      finished = true;
-      await mutation;
-    }
-    assert.ok(mutated, 'The output creation must have triggered the source mutation.');
+    const copiedA = join(out, 'plugins/codex/copy-a.bin');
+    await afterCopyWrite(context, copiedA, async () => {
+      assert.deepEqual(await readFile(copiedA), probeBytes);
+      await assert.rejects(lstat(join(out, 'plugins/codex/copy-b.bin')), { code: 'ENOENT' });
+      await changeBytesWithRestoredMtime(sourceB);
+    }, async () => {
+      await assert.rejects(prepareMarketplace({ host: 'codex', plugin, out }), /copy-b\.bin \(changed fields: digest\)/);
+    });
     await assert.rejects(lstat(out), { code: 'ENOENT' });
+    assert.deepEqual(await readFile(sourceA), probeBytes);
+    assert.deepEqual(await readFile(sourceB), Buffer.alloc(probeBytes.length, 0x42));
     assert.equal(await readFile(keep, 'utf8'), 'unrelated data');
-    assert.equal(await readFile(join(plugin, 'new-source-file'), 'utf8'), 'changed inventory');
+  } finally { await rm(temporary, { recursive: true, force: true }); }
+});
+
+test('final recapture still refuses changed bytes after their complete copy with restored mtime', async context => {
+  const temporary = await scratch();
+  try {
+    const plugin = await fixture(temporary, 'codex');
+    const probe = join(plugin, 'copy-probe.bin');
+    await writeFile(probe, probeBytes);
+    await utimes(probe, fixedTime, fixedTime);
+    const out = join(temporary, 'out');
+    const copied = join(out, 'plugins/codex/copy-probe.bin');
+    await afterCopyWrite(context, copied, async () => {
+      assert.deepEqual(await readFile(copied), probeBytes);
+      await changeBytesWithRestoredMtime(probe);
+    }, async () => {
+      await assert.rejects(prepareMarketplace({ host: 'codex', plugin, out }), /copy-probe\.bin \(changed fields: digest\)/);
+    });
+    await assert.rejects(lstat(out), { code: 'ENOENT' });
   } finally { await rm(temporary, { recursive: true, force: true }); }
 });
 
