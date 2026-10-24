@@ -24,14 +24,16 @@ import { generateRowRust } from './backends/row-rust.js';
 import { generateRowTypeScript } from './backends/row-typescript.js';
 import { z } from 'zod';
 import { writePreparedGenerated } from './managed-output.js';
-import { compilerFile, capturedFile, formatterReceipt, prepareArtifacts, type ArtifactFile } from './artifacts.js';
+import { compilerFile, capturedFile, formatterReceipt, prepareArtifacts, preparedFiles, type ArtifactFile } from './artifacts.js';
 import { PartitionProjectSchema, type PartitionProject, type PartitionPlan } from './partition-types.js';
 import { readPartitionContract } from './partition-contract.js';
 import { validatePartitionPlan, validatePartitionControlSource } from './partition-composition.js';
 import { generatePartitionRust } from './backends/partition-rust.js';
 import { generatePartitionTypeScript } from './backends/partition-typescript.js';
+import { summarizeBuild, summarizeGraph, type BuildAutomaton, type BuildReport, type CollectedEvidence, type GraphSummary, type VerificationCheck } from './build-report.js';
 export { writeGenerated } from './managed-output.js';
 export { StaleOutputError, StaleOutputDiagnosticSchema, type StaleOutputDiagnostic } from './output-check.js';
+export { BuildSummarySchema, type BuildAutomaton, type BuildReport, type BuildSummary } from './build-report.js';
 
 const backends = {
   typescript: generateTypeScript,
@@ -97,9 +99,9 @@ export async function compileProject(input: { project: string; dot: string; out:
   return compiled.automaton;
 }
 
-type BuildInput = { project: string; jar: string; out: string; check?: boolean; modelOnly?: boolean };
-type BuildAutomaton = Automaton | ExactFiniteAutomaton | SymbolicWitnessGraph;
-type ArtifactBase = { files: ArtifactFile[]; recheck: () => Promise<void> };
+export type BuildInput = { project: string; jar: string; out: string; check?: boolean; modelOnly?: boolean };
+type ArtifactBase = { files: ArtifactFile[]; recheck: () => Promise<void>; graph: GraphSummary;
+  checks: VerificationCheck[]; evidence: CollectedEvidence[] };
 type LegacyArtifacts = ArtifactBase & (
   | { kind: 'row'; automaton: SymbolicWitnessGraph; row: ReturnType<typeof validateWholeRowBinding> }
   | { kind: 'finite'; automaton: ExactFiniteAutomaton; run: Awaited<ReturnType<typeof runControlledTlc>> }
@@ -132,11 +134,17 @@ async function physicalOutput(path: string): Promise<string> {
 }
 
 /** Compile references into memory; only the public entry point publishes. */
-async function collectLegacyArtifacts(input: BuildInput & { generateBackends?: boolean; rowApplicationRoot?: string }): Promise<LegacyArtifacts> {
+async function collectLegacyArtifacts(input: BuildInput & { generateBackends?: boolean; rowApplicationRoot?: string; role?: 'model' | 'row' | 'control' }): Promise<LegacyArtifacts> {
   const projectPath = resolve(input.project);
   const projectBytes = await readFile(projectPath);
   const project = configuredProject(JSON.parse(projectBytes.toString('utf8')) as unknown);
   if (project.version === 6) throw new Error('TLC306: partition model references must be row-owned v5 and finite-owned v2 projects');
+  const role = input.role ?? 'model';
+  const checks: VerificationCheck[] = [];
+  const evidence: CollectedEvidence[] = [];
+  const evidenceFile = <File extends ArtifactFile>(file: File, evidenceRole: CollectedEvidence['role']): File => {
+    evidence.push({ file, role: evidenceRole }); return file;
+  };
   const checkProjectUnchanged = async (): Promise<void> => {
     if (!projectBytes.equals(await readFile(projectPath))) throw new Error('TLC203: project configuration changed during verification; rerun against stable inputs');
   };
@@ -144,10 +152,20 @@ async function collectLegacyArtifacts(input: BuildInput & { generateBackends?: b
     const spec = resolve(dirname(projectPath), project.spec);
     const config = resolve(dirname(projectPath), project.config);
     const run = await runSymbolicTlc({ spec, config, jar: input.jar });
+    checks.push({ kind: 'controlled-tlc', role, profile: run.evidence.profile, scope: 'configured-bounded-witness',
+      rootModule: run.evidence.rootModule, invariants: run.config.invariants, properties: run.config.properties, checkDeadlock: run.config.checkDeadlock });
     const model = lowerSymbolicModel({ name: project.name, semantic: parseSanyXml(run.xml), config: run.config,
       profile: project.version === 3 ? 'single' : 'product' });
+    checks.push({ kind: 'symbolic-source', role, profile: model.version === 1 ? 'single-input' : 'disjoint-input-product',
+      scope: 'accepted-SANY-equality-copy-grammar', inputs: [...symbolicInputs(model)] });
     const orbitProof = input.modelOnly ? null : inspectSymbolicOrbits(model);
+    if (orbitProof) checks.push({ kind: 'symbolic-orbit', role, profile: orbitProof.kind, scope: 'accepted-equality-copy-grammar',
+      states: orbitProof.states.length, edges: orbitProof.edges.length, disabledCases: orbitProof.disabled.length,
+      invariants: model.invariants.map(item => item.name), actionProperties: model.actionProperties.map(item => item.name), checkDeadlock: model.checkDeadlock });
     const differential = input.modelOnly ? null : await verifySymbolicWitness({ model, run, spec, config, jar: input.jar });
+    if (differential) checks.push({ kind: 'input-oracle', role, profile: differential.evidence.kind, scope: differential.evidence.scope,
+      states: differential.evidence.stateCount, checkedCases: differential.evidence.checkedCases,
+      acceptedCases: differential.evidence.acceptedCases, disabledCases: differential.evidence.disabledCases });
     const inputs = symbolicInputs(model);
     const domains: Record<string, string[]> = Object.fromEntries(inputs.map(({ domain }) => {
       const configured = run.config.constants[domain];
@@ -175,14 +193,17 @@ async function collectLegacyArtifacts(input: BuildInput & { generateBackends?: b
       compilerFile({ path: 'binding.json', content: JSON.stringify({ profile: project.profile, ...project.binding }, null, 2) + '\n' }),
       capturedFile({ path: 'semantic.xml', content: run.xml }),
       capturedFile({ path: 'model.dot', content: run.dot }),
-      capturedFile({ path: 'tlc.log', content: run.log, volatile: true }),
+      evidenceFile(capturedFile({ path: 'tlc.log', content: run.log, volatile: true }), 'log'),
     ];
     const rowApplication = project.version === 5 ? input.rowApplicationRoot ?? await realpath(resolve(dirname(projectPath), project.application)) : null;
     const rowPlan = project.version === 5 && !input.modelOnly && rowApplication
       ? await analyzeRowBinding({ application: rowApplication, binding: project.binding.row, out: input.out }) : null;
     const row = project.version === 5 && rowPlan
       ? validateWholeRowBinding({ model, binding: project.binding.row, plan: rowPlan }) : null;
-    if (row) files.push(compilerFile({ path: 'row-binding-plan.json', content: JSON.stringify(row.plan, null, 2) + '\n' }));
+    if (row) checks.push({ kind: 'whole-row-binding', role, profile: row.plan.profile,
+      scope: 'production-library-and-audited-local-type-closure', boundary: 'per-live-object',
+      facts: row.plan.facts.length, sourceFiles: row.plan.sources.length });
+    if (row) files.push(evidenceFile(compilerFile({ path: 'row-binding-plan.json', content: JSON.stringify(row.plan, null, 2) + '\n' }), 'source-plan'));
     if (!input.modelOnly && input.generateBackends !== false) for (const target of new Set(project.targets)) {
       const generated = row && project.version === 5
         ? target === 'typescript' ? generateRowTypeScript({ ...row, className: project.binding.className })
@@ -190,11 +211,11 @@ async function collectLegacyArtifacts(input: BuildInput & { generateBackends?: b
         : target === 'typescript' ? generateSymbolicTypeScript({ model, className: project.binding.className }) : generateSymbolicRust({ model, className: project.binding.className });
       files.push(...generated.map(file => compilerFile({ ...file, path: `${target}/${file.path}` })));
     }
-    if (orbitProof) files.push(compilerFile({ path: 'orbit-proof.json', content: JSON.stringify(orbitProof, null, 2) + '\n' }));
+    if (orbitProof) files.push(evidenceFile(compilerFile({ path: 'orbit-proof.json', content: JSON.stringify(orbitProof, null, 2) + '\n' }), 'orbit'));
     if (differential) files.push(
-      compilerFile({ path: 'input-verification.json', content: JSON.stringify(differential.evidence, null, 2) + '\n' }),
-      capturedFile({ path: 'input-oracle.dot', content: differential.oracleDot }),
-      capturedFile({ path: 'input-oracle.log', content: differential.oracleLog, volatile: true }),
+      evidenceFile(compilerFile({ path: 'input-verification.json', content: JSON.stringify(differential.evidence, null, 2) + '\n' }), 'input-oracle'),
+      evidenceFile(capturedFile({ path: 'input-oracle.dot', content: differential.oracleDot }), 'input-oracle'),
+      evidenceFile(capturedFile({ path: 'input-oracle.log', content: differential.oracleLog, volatile: true }), 'log'),
     );
     const verification: GeneratedFile = { path: 'verification.json', content: JSON.stringify({
       ...run.evidence, projectSha256: sha256(projectBytes), semanticSha256: model.source.semanticSha256,
@@ -207,7 +228,7 @@ async function collectLegacyArtifacts(input: BuildInput & { generateBackends?: b
       orbitVerification: orbitProof ? { kind: orbitProof.kind, stateCount: orbitProof.states.length, edgeCount: orbitProof.edges.length, checkDeadlock: model.checkDeadlock, invariants: model.invariants.map(item => item.name), actionProperties: model.actionProperties.map(item => item.name) } : null,
     }, null, 2) + '\n', volatile: true, stableJsonKeys: ['kind', 'profile', 'extractor', 'xmlSha256', 'rootModule', 'moduleClosure', 'standardModules', 'configSha256', 'jarSha256', 'dotSha256', 'mode', 'projectSha256', 'semanticSha256',
       ...(model.version === 2 ? ['symbolicIrVersion', 'inputProfile'] : []), ...(project.version === 5 ? ['rowBinding'] : []), 'generation', 'runtimeDomain', 'orbitVerification'] };
-    files.push(row && input.generateBackends !== false ? formatterReceipt(verification, 'row-binding') : compilerFile(verification));
+    files.push(evidenceFile(row && input.generateBackends !== false ? formatterReceipt(verification, 'row-binding') : compilerFile(verification), 'verification'));
     const recheck = async (): Promise<void> => {
       await checkProjectUnchanged();
       await recheckControlledInputs({ spec, config, jar: input.jar, evidence: run.evidence });
@@ -216,14 +237,20 @@ async function collectLegacyArtifacts(input: BuildInput & { generateBackends?: b
         await verifyRowSourcesUnchanged(rowApplication, row.plan);
       }
     };
-    return row ? { kind: 'row', automaton: witness, files, recheck, row } : { kind: 'model', automaton: witness, files, recheck };
+    const report = { files, recheck, checks, evidence, graph: summarizeGraph(witness, 'model') };
+    return row ? { kind: 'row', automaton: witness, ...report, row } : { kind: 'model', automaton: witness, ...report };
   }
   if (project.version === 2) {
     const spec = resolve(dirname(projectPath), project.spec); const config = resolve(dirname(projectPath), project.config);
     const run = await runControlledTlc({ spec, config, jar: input.jar }, 'finite-owned-v1');
+    checks.push({ kind: 'controlled-tlc', role, profile: 'finite-owned-v1', scope: 'configured-finite-model',
+      rootModule: run.evidence.rootModule, invariants: run.config.invariants, properties: run.config.properties, checkDeadlock: run.config.checkDeadlock });
     const model = { ...run, evidence: { kind: 'tlc-finite-completed', profile: 'finite-owned-v1', ...run.evidence } };
     const automaton = importFiniteDot({ dot: model.dot, name: project.name });
-    if (!input.modelOnly) validateExecutableGraph(automaton);
+    if (!input.modelOnly) {
+      validateExecutableGraph(automaton);
+      checks.push({ kind: 'executable-graph', role, profile: 'finite-owned-v1', scope: 'per-live-object' });
+    }
     const files: ArtifactFile[] = [
       { path: 'automaton.json', content: JSON.stringify(automaton, null, 2) + '\n' },
       { path: 'binding.json', content: JSON.stringify({ profile: project.profile, ...project.binding }, null, 2) + '\n' },
@@ -236,29 +263,30 @@ async function collectLegacyArtifacts(input: BuildInput & { generateBackends?: b
     }
     files.push(
       capturedFile({ path: 'model.dot', content: model.dot }),
-      capturedFile({ path: 'tlc.log', content: model.log, volatile: true }),
-      compilerFile({ path: 'verification.json', content: JSON.stringify({ ...model.evidence, projectSha256: sha256(projectBytes) }, null, 2) + '\n', volatile: true,
-        stableJsonKeys: ['kind', 'profile', 'rootModule', 'moduleClosure', 'standardModules', 'configSha256', 'jarSha256', 'dotSha256', 'projectSha256', 'mode'] }),
+      evidenceFile(capturedFile({ path: 'tlc.log', content: model.log, volatile: true }), 'log'),
+      evidenceFile(compilerFile({ path: 'verification.json', content: JSON.stringify({ ...model.evidence, projectSha256: sha256(projectBytes) }, null, 2) + '\n', volatile: true,
+        stableJsonKeys: ['kind', 'profile', 'rootModule', 'moduleClosure', 'standardModules', 'configSha256', 'jarSha256', 'dotSha256', 'projectSha256', 'mode'] }), 'verification'),
     );
     const recheck = async (): Promise<void> => {
       await checkProjectUnchanged();
       await recheckControlledInputs({ spec, config, jar: input.jar, evidence: run.evidence });
     };
-    return { kind: 'finite', automaton, files, recheck, run };
+    return { kind: 'finite', automaton, files, recheck, run, checks, evidence, graph: summarizeGraph(automaton, role === 'control' ? 'partition-control' : 'model') };
   }
   const model = await runTlc({ spec: resolve(dirname(projectPath), project.spec), config: resolve(dirname(projectPath), project.config), jar: input.jar });
+  checks.push({ kind: 'legacy-tlc', role: 'model', scope: 'observed-possible-transitions' });
   const compiled = compile({ dot: model.dot, project });
   const files = (input.modelOnly ? compiled.files.filter(file => file.path === 'automaton.json' || file.path === 'binding.json') : compiled.files).map(compilerFile);
   files.push(
     capturedFile({ path: 'model.dot', content: model.dot }),
-    capturedFile({ path: 'tlc.log', content: model.log, volatile: true }),
-    compilerFile({ path: 'verification.json', content: JSON.stringify(model.evidence, null, 2) + '\n', volatile: true,
-      stableJsonKeys: ['kind', 'specSha256', 'configSha256', 'dotSha256'] }),
+    evidenceFile(capturedFile({ path: 'tlc.log', content: model.log, volatile: true }), 'log'),
+    evidenceFile(compilerFile({ path: 'verification.json', content: JSON.stringify(model.evidence, null, 2) + '\n', volatile: true,
+      stableJsonKeys: ['kind', 'specSha256', 'configSha256', 'dotSha256'] }), 'verification'),
   );
-  return { kind: 'model', automaton: compiled.automaton, files, recheck: checkProjectUnchanged };
+  return { kind: 'model', automaton: compiled.automaton, files, recheck: checkProjectUnchanged, checks, evidence, graph: summarizeGraph(compiled.automaton, 'model') };
 }
 
-export async function buildProject(input: BuildInput): Promise<BuildAutomaton> {
+export async function buildProjectReport(input: BuildInput): Promise<BuildReport> {
   const path = resolve(input.project);
   const bytes = await readFile(path);
   const project = configuredProject(JSON.parse(bytes.toString('utf8')) as unknown);
@@ -271,7 +299,12 @@ export async function buildProject(input: BuildInput): Promise<BuildAutomaton> {
   await artifact.recheck();
   if (out !== await physicalOutput(input.out)) throw new Error('TLC103: output root changed during verification; rerun against stable paths');
   await writePreparedGenerated({ out, prepared, ...(input.check === undefined ? {} : { check: input.check }) });
-  return artifact.automaton;
+  return { automaton: artifact.automaton, summary: summarizeBuild({ operation: input.modelOnly ? 'model' : 'build',
+    out, check: input.check === true, graph: artifact.graph, files: preparedFiles(prepared), checks: artifact.checks, evidence: artifact.evidence }) };
+}
+
+export async function buildProject(input: BuildInput): Promise<BuildAutomaton> {
+  return (await buildProjectReport(input)).automaton;
 }
 
 async function collectPartitionArtifacts(input: Omit<BuildInput, 'project'> & { projectPath: string; projectBytes: Buffer; project: PartitionProject }): Promise<ArtifactBase & { automaton: ExactFiniteAutomaton }> {
@@ -289,24 +322,38 @@ async function collectPartitionArtifacts(input: Omit<BuildInput, 'project'> & { 
   if (rowProject.version !== 5 || controlProject.version !== 2) throw new Error('TLC306: partition references require a row-owned v5 project and finite-owned v2 control');
   const application = await realpath(resolve(directory, input.project.application));
   if (application !== await realpath(resolve(dirname(rowPath), rowProject.application))) throw new Error('TLC306: partition and row projects must bind the same application');
-  const row = await collectLegacyArtifacts({ project: rowPath, jar: input.jar, out: input.out, generateBackends: false, rowApplicationRoot: application });
-  const control = await collectLegacyArtifacts({ project: controlPath, jar: input.jar, out: input.out, generateBackends: false });
+  const row = await collectLegacyArtifacts({ project: rowPath, jar: input.jar, out: input.out, generateBackends: false, rowApplicationRoot: application, role: 'row' });
+  const control = await collectLegacyArtifacts({ project: controlPath, jar: input.jar, out: input.out, generateBackends: false, role: 'control' });
   if (row.kind !== 'row' || control.kind !== 'finite') throw new Error('TLC306: partition model references did not produce the required checked artifacts');
+  const checks: VerificationCheck[] = [...row.checks, ...control.checks];
   validatePartitionControlSource(control.run);
+  checks.push({ kind: 'partition-control-source', role: 'control', scope: 'admitted-finite-control-laws' });
   const metadata = await readPartitionContract({ spec: resolve(directory, input.project.models.families.spec), operator: input.project.models.families.operator, jar: input.jar });
+  checks.push({ kind: 'partition-metadata', role: 'families', scope: 'literal-TLA-family-metadata',
+    families: metadata.contract.families.length, tlcScope: 'synthetic-metadata-wrapper' });
   const plan: PartitionPlan = validatePartitionPlan({ version: 1, kind: 'closed-partition-fold', runtimeProfile: 'unbound-partition-v1',
     row: row.row, control: control.automaton, contract: metadata.contract });
+  checks.push({ kind: 'partition-composition', role: 'composition', profile: plan.runtimeProfile,
+    scope: 'complete-row-roles-and-finite-control-laws', boundary: 'unbound-data-report', families: plan.contract.families.length, storageAuthority: false });
+  const prefixFile = <File extends GeneratedFile>(prefix: string, file: File): File => ({ ...file, path: `${prefix}/${file.path}` });
+  const evidence: CollectedEvidence[] = [
+    ...row.evidence.map(item => ({ ...item, file: prefixFile('models/row', item.file) })),
+    ...control.evidence.map(item => ({ ...item, file: prefixFile('models/control', item.file) })),
+  ];
+  const evidenceFile = <File extends ArtifactFile>(file: File, role: CollectedEvidence['role']): File => {
+    evidence.push({ file, role }); return file;
+  };
   const files: ArtifactFile[] = [
-    compilerFile({ path: 'partition-plan.json', content: JSON.stringify(plan, null, 2) + '\n' }),
+    evidenceFile(compilerFile({ path: 'partition-plan.json', content: JSON.stringify(plan, null, 2) + '\n' }), 'source-plan'),
     compilerFile({ path: 'automaton.json', content: JSON.stringify(control.automaton, null, 2) + '\n' }),
     compilerFile({ path: 'symbolic-model.json', content: JSON.stringify(plan.row.model, null, 2) + '\n' }),
-    compilerFile({ path: 'row-binding-plan.json', content: JSON.stringify(plan.row.plan, null, 2) + '\n' }),
+    evidenceFile(compilerFile({ path: 'row-binding-plan.json', content: JSON.stringify(plan.row.plan, null, 2) + '\n' }), 'source-plan'),
     compilerFile({ path: 'binding.json', content: JSON.stringify({ profile: 'partition-fold', ...input.project.binding }, null, 2) + '\n' }),
-    ...row.files.map(file => ({ ...file, path: `models/row/${file.path}` })),
-    ...control.files.map(file => ({ ...file, path: `models/control/${file.path}` })),
+    ...row.files.map(file => prefixFile('models/row', file)),
+    ...control.files.map(file => prefixFile('models/control', file)),
     capturedFile({ path: 'models/control/semantic.xml', content: control.run.xml }),
-    capturedFile({ path: 'models/families/semantic.xml', content: metadata.xml }),
-    capturedFile({ path: 'models/families/tlc.log', content: metadata.log, volatile: true }),
+    evidenceFile(capturedFile({ path: 'models/families/semantic.xml', content: metadata.xml }), 'source-plan'),
+    evidenceFile(capturedFile({ path: 'models/families/tlc.log', content: metadata.log, volatile: true }), 'log'),
   ];
   for (const target of new Set(input.project.targets)) {
     const backendInput = { plan, className: input.project.binding.className, rustCrateMode: input.project.binding.rustCrateMode };
@@ -324,13 +371,13 @@ async function collectPartitionArtifacts(input: Omit<BuildInput, 'project'> & { 
     formatterVersion: null,
     storageAuthority: false,
   };
-  files.push(formatterReceipt({ path: 'verification.json', content: JSON.stringify(receipt, null, 2) + '\n', volatile: true,
-    stableJsonKeys: Object.keys(receipt).filter(key => key !== 'formatterVersion') }, 'root'));
+  files.push(evidenceFile(formatterReceipt({ path: 'verification.json', content: JSON.stringify(receipt, null, 2) + '\n', volatile: true,
+    stableJsonKeys: Object.keys(receipt).filter(key => key !== 'formatterVersion') }, 'root'), 'verification'));
   const recheck = async (): Promise<void> => {
     if (application !== await realpath(resolve(directory, input.project.application)) ||
       application !== await realpath(resolve(dirname(rowPath), rowProject.application))) throw new Error('TLC306: partition application root changed during verification');
     if (!rowBytes.equals(await readReference(rowPath)) || !controlBytes.equals(await readReference(controlPath))) throw new Error('TLC306: partition model references changed during verification');
     await row.recheck(); await control.recheck(); await metadata.recheck();
   };
-  return { automaton: control.automaton, files, recheck };
+  return { automaton: control.automaton, files, recheck, checks, evidence, graph: summarizeGraph(control.automaton, 'partition-control') };
 }

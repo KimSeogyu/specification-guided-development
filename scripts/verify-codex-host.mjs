@@ -137,6 +137,7 @@ These and the two later declared commands are your ONLY permitted shell commands
 Your only working tree is ${scratch}. Do not read other repositories, sessions, user files, global configuration, auth or secrets. Do not install anything, run login/reset, alter HOME/CODEX_HOME/auth variables, register plugins/marketplaces, change globals, use Docker, commit, or change remotes. Existing normal toolchain/authentication use and offline dependency-cache reads are allowed. No model override or CLI SGD fallback. If an operation fails, report it and stop dependent work. Poll the same live command handle instead of restarting it.
 The copied app contains only original LedgerFact sources, models, and complete-row behavior tests. ${generated} is absent. Never fabricate or copy generated policy. Use actual session-configured MCP tools:
 1. sgd_build with project ${app}/models/fold.json, jar ${scratch}/tla2tools.jar, out ${generated}.
+Keep detail omitted for both build calls. The default summaries report graph scope and evidence paths. The check response must identify retained output logs rather than claim a fresh invocation log was retained.
 2. Invoke sgd_inspect once on ${ir} and once on ${symbolic}. The generated-file helper below supplies the fresh row binding for comparison with native Eq.
 3. Invoke sgd_visualize with both ${ir} and ${symbolic}, out ${scratch}/pele. Then execute this exact trusted generated-file read command and explain its real refusal/provenance paths. Do not claim browser inspection:
 ${shellCommand(commands[4].argv)}
@@ -249,6 +250,84 @@ function returned(item) {
   return value;
 }
 
+/** Check this fixture's default response contract without treating it as application authority. */
+export function validateBuildSummary(value, generated, checked) {
+  requireThat(value?.schema === 'sgd-build-summary-v1' && value.operation === 'build' && value.output?.directory === generated,
+    'HOST_SUMMARY', 'Build must return the default summary for its actual output directory.');
+  const graph = value.graph;
+  requireThat(graph?.kind === 'exact-finite' && graph.role === 'partition-control' && graph.name === 'LedgerControl' &&
+    Array.isArray(graph.variables) && graph.variables.every(variable => typeof variable === 'string') &&
+    [graph.states, graph.edges, graph.initialStates].every(count => Number.isSafeInteger(count) && count > 0) &&
+    !('nodes' in graph) && !('transitions' in graph) && !('automaton' in value),
+  'HOST_SUMMARY', 'Build summary must describe the finite partition controller without returning the full IR.');
+  const verification = value.verification;
+  requireThat(verification?.invocation === 'completed' && verification.output === (checked ? 'checked' : 'generated') &&
+    verification.freshInvocationLogRetained === !checked && Array.isArray(verification.checks),
+  'HOST_SUMMARY', 'Build summary must distinguish current completion from retained check logs.');
+  const scopes = [
+    { kind: 'controlled-tlc', role: 'row', profile: 'symbolic-owned-v1', scope: 'configured-bounded-witness' },
+    { kind: 'symbolic-source', role: 'row', scope: 'accepted-SANY-equality-copy-grammar' },
+    { kind: 'symbolic-orbit', role: 'row', scope: 'accepted-equality-copy-grammar' },
+    { kind: 'input-oracle', role: 'row', scope: 'configured-reachable-state-input-product' },
+    { kind: 'whole-row-binding', role: 'row', scope: 'production-library-and-audited-local-type-closure', boundary: 'per-live-object' },
+    { kind: 'controlled-tlc', role: 'control', profile: 'finite-owned-v1', scope: 'configured-finite-model' },
+    { kind: 'executable-graph', role: 'control', scope: 'per-live-object' },
+    { kind: 'partition-control-source', role: 'control', scope: 'admitted-finite-control-laws' },
+    { kind: 'partition-metadata', role: 'families', scope: 'literal-TLA-family-metadata', tlcScope: 'synthetic-metadata-wrapper' },
+    { kind: 'partition-composition', role: 'composition', profile: 'unbound-partition-v1', scope: 'complete-row-roles-and-finite-control-laws', boundary: 'unbound-data-report', storageAuthority: false },
+  ];
+  requireThat(verification.checks.length === scopes.length && scopes.every(expected => verification.checks.filter(check => check && Object.entries(expected).every(([key, expectedValue]) => check[key] === expectedValue)).length === 1),
+    'HOST_SUMMARY', 'Build summary must retain separate bounded row, finite control, source, oracle, and unbound composition scopes.');
+  requireThat(['applicationIntegration', 'persistence', 'externalEffects'].every(limit => value.limits?.[limit] === 'not-established'),
+    'HOST_SUMMARY', 'Build summary must retain its application, persistence, and external-effect limits.');
+  const artifacts = value.output.artifacts;
+  const relativeArtifact = file => typeof file === 'string' && file !== '' && file !== '.' && file !== '..' &&
+    !file.includes('\\') && !path.posix.isAbsolute(file) && !file.startsWith('../') && path.posix.normalize(file) === file;
+  requireThat(Array.isArray(artifacts) && artifacts.length > 0 && artifacts.every(relativeArtifact) && new Set(artifacts).size === artifacts.length && !artifacts.includes('tlc.log'),
+    'HOST_SUMMARY', 'Build summary must list distinct relative artifacts and no invented top-level partition log.');
+  requireThat(Array.isArray(value.evidence) && value.evidence.every(item => item && typeof item.path === 'string' &&
+    artifacts.some(file => path.join(generated, file) === item.path) &&
+    ['verification', 'log', 'orbit', 'input-oracle', 'source-plan'].includes(item.role) &&
+    item.freshness === (checked ? 'retained-output' : 'current-invocation')) &&
+    new Set(value.evidence.map(item => item.path)).size === value.evidence.length,
+  'HOST_SUMMARY', 'Build evidence must name an actual listed output with the correct invocation freshness.');
+  for (const [file, role] of [
+    ['verification.json', 'verification'], ['partition-plan.json', 'source-plan'], ['row-binding-plan.json', 'source-plan'],
+    ['models/row/row-binding-plan.json', 'source-plan'], ['models/row/orbit-proof.json', 'orbit'],
+    ['models/row/input-verification.json', 'input-oracle'], ['models/row/input-oracle.dot', 'input-oracle'],
+    ['models/row/input-oracle.log', 'log'], ['models/row/tlc.log', 'log'], ['models/row/verification.json', 'verification'],
+    ['models/control/tlc.log', 'log'], ['models/control/verification.json', 'verification'],
+    ['models/families/semantic.xml', 'source-plan'], ['models/families/tlc.log', 'log'],
+  ]) requireThat(value.evidence.some(item => item.path === path.join(generated, file) && item.role === role),
+    'HOST_SUMMARY', `Missing scoped partition evidence: ${file}`);
+  return value;
+}
+
+/** Compare reports with the emitted IR, managed inventory, and real files. */
+export async function validateBuildSummaryArtifacts(value, generated, checked, automaton, inventory) {
+  const summary = validateBuildSummary(value, generated, checked);
+  requireThat(automaton.kind === summary.graph.kind && automaton.name === summary.graph.name &&
+    JSON.stringify(automaton.variables.map(variable => variable.name)) === JSON.stringify(summary.graph.variables) &&
+    automaton.nodes.length === summary.graph.states && automaton.edges.length === summary.graph.edges && automaton.initial.length === summary.graph.initialStates,
+  'HOST_SUMMARY', 'Build summary graph differs from the emitted controller IR.');
+  requireThat(inventory.version === 1 && Array.isArray(inventory.files) &&
+    JSON.stringify([...inventory.files].sort()) === JSON.stringify([...summary.output.artifacts].sort()),
+  'HOST_SUMMARY', 'Build summary artifact list differs from the published managed inventory.');
+  const physicalRoot = await realpath(generated);
+  for (const file of summary.output.artifacts) {
+    let location = generated;
+    const segments = file.split('/');
+    for (const [index, segment] of segments.entries()) {
+      location = path.join(location, segment);
+      const entry = await lstat(location).catch(() => null);
+      requireThat(entry && !entry.isSymbolicLink() && (index === segments.length - 1 ? entry.isFile() : entry.isDirectory()),
+        'HOST_SUMMARY', `Build summary artifact is absent, not a regular file, or traverses a symlink: ${file}`);
+    }
+    requireThat(inside(physicalRoot, await realpath(location)), 'HOST_SUMMARY', `Build summary artifact resolves outside the generated output: ${file}`);
+  }
+  return summary;
+}
+
 function observedFailures(events, declaredCommands) {
   const completed = events.filter(event => event.type === 'item.completed');
   for (const event of completed) if (event.item?.type === 'mcp_tool_call') returned(event.item);
@@ -299,7 +378,7 @@ export function validateProtocol(events, scratch, declaredCommands) {
   const matching = (tool, predicate) => calls.filter(({ event }) => event.item.tool === tool && predicate(event.item.arguments));
   const project = path.join(scratch, 'app/models/fold.json');
   const jar = path.join(scratch, 'tla2tools.jar');
-  const validBuild = args => args.project === project && args.jar === jar && args.out === generated;
+  const validBuild = args => args.project === project && args.jar === jar && args.out === generated && !('detail' in args);
   const build = matching('sgd_build', args => validBuild(args) && args.check !== true);
   const check = matching('sgd_build', args => validBuild(args) && args.check === true);
   const control = matching('sgd_inspect', args => args.ir === path.join(generated, 'automaton.json'));
@@ -309,6 +388,8 @@ export function validateProtocol(events, scratch, declaredCommands) {
   requireThat(['skill', 'modeling', 'partition', 'application'].every(id => matchedCommands.get(id).some(entry => entry.index < startedAt(build[0]))), 'HOST_TOOL_ORDER', 'Read the complete fixed context before generation.');
   requireThat(build[0].index < startedAt(control[0]) && build[0].index < startedAt(row[0]) && Math.max(control[0].index, row[0].index) < startedAt(visual[0]), 'HOST_TOOL_ORDER', 'Inspect and render the completed fresh generation.');
   requireThat(matchedCommands.get('generated').some(entry => visual[0].index < startedAt(entry) && entry.index < startedAt(check[0])) && check[0].index < startedAt(matchedCommands.get('native')[0]), 'HOST_TOOL_ORDER', 'Read fresh Pele files, complete check:true, then start native checks.');
+  validateBuildSummary(returned(build[0].event.item), generated, false);
+  validateBuildSummary(returned(check[0].event.item), generated, true);
   return { calls, build, check, control, row, visual, matchedCommands };
 }
 
@@ -321,8 +402,9 @@ async function inspectEvidence(events, scratch, expected, declaredCommands) {
   const symbolic = await json(path.join(generated, 'symbolic-model.json'));
   assert.deepEqual(returned(control[0].event.item), automaton);
   assert.deepEqual(returned(row[0].event.item), symbolic);
-  assert.deepEqual(returned(build[0].event.item), automaton);
-  assert.deepEqual(returned(check[0].event.item), automaton);
+  const inventory = await json(path.join(generated, '.sgd-generated.json'));
+  await validateBuildSummaryArtifacts(returned(build[0].event.item), generated, false, automaton, inventory);
+  await validateBuildSummaryArtifacts(returned(check[0].event.item), generated, true, automaton, inventory);
   requireThat(automaton.kind === 'exact-finite' && automaton.name === 'LedgerControl' && symbolic.kind === 'symbolic-owned' && symbolic.name === 'LedgerRow', 'HOST_IR', 'Unexpected generated model identities.');
   const verification = await json(path.join(generated, 'verification.json'));
   const rowReceipt = await json(path.join(generated, 'models/row/verification.json'));
