@@ -550,7 +550,7 @@ try {
     try {
       await client.connect(transport);
       const tools = (await client.listTools()).tools.map(tool => tool.name).sort();
-      assert.deepEqual(tools, ['sgd_build', 'sgd_compile', 'sgd_inspect', 'sgd_model', 'sgd_refine', 'sgd_visualize']);
+      assert.deepEqual(tools, ['sgd_build', 'sgd_compile', 'sgd_inspect', 'sgd_model', 'sgd_refine', 'sgd_update_status', 'sgd_visualize']);
       const out = join(temporary, name, 'generated');
       const built = await client.callTool({ name: 'sgd_build', arguments: {
         project: resolve('examples/order/project.json'), jar, out,

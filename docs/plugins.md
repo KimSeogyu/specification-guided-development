@@ -49,6 +49,21 @@ For Codex, point a local marketplace entry's `source.path` to the extracted dire
 The source repository's marketplace already points to the corresponding prepared plugin directory.
 An ordinary `npm pack` archive excludes the nested runtime dependencies and is not a prepared plugin distribution.
 
+The unreleased `0.2.0-alpha.3` source also supports ZIP archives. The public alpha2 release retains its two TAR archives and `release-manifest.json`.
+To create ZIPs from that source, run:
+
+```sh
+node plugins/package.mjs --archive-out .runtime/plugin-zip-packages --archive-format zip
+```
+
+This option requires `zip`. Use `unzip` for extraction. The ZIP fixtures also require it.
+It produces a complete `.zip` archive for each host, with plugin files directly at the archive root, including hidden manifests and executable permissions.
+Extract a Codex ZIP before using the existing local marketplace procedure.
+TAR remains the CLI and `archivePlugins` API default.
+In this source version, existing archive filenames are refused before CLI runtime preparation.
+Each archive is published atomically without replacement. The host pair is not one atomic publication. Use a new output directory after a partial failure.
+Claude remote feed publication with immutable ZIPs, directory-source migration, and background auto-update verification remain future work.
+
 Each new archive includes a standalone marketplace preparation tool. After extracting the matching release, run the tool for your selected host:
 
 ```sh
@@ -118,6 +133,90 @@ claude --plugin-dir /absolute/path/to/specification-guided-development/plugins/c
 The Claude Code package uses `.claude-plugin/plugin.json` and `.mcp.json`.
 Its MCP arguments use `${CLAUDE_PLUGIN_ROOT}`.
 The package does not change Codex configuration.
+
+## Update an existing local marketplace
+
+Use this procedure when an installed plugin comes from a directory marketplace.
+A source merge or a new release download does not update that installed runtime.
+Keep each host's registered marketplace name and qualified plugin ID unchanged.
+Record the installed version and current user and project activation settings before changing them.
+
+1. Download and extract the matching complete archive from the [public release](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.2.0-alpha.2).
+   Check the archive against that release's `release-manifest.json`.
+   Run its standalone preparer into a new directory as described above. Its printed install commands are for a new installation.
+2. Copy the complete prepared plugin, including its runtime, dependencies, and executable permissions, into a new version directory inside the existing marketplace:
+
+	```text
+	EXISTING_MARKETPLACE/releases/0.2.0-alpha.2/plugin/
+	```
+
+   Keep the previous payload unchanged. Refuse an occupied destination with different content.
+3. Save the existing catalogue. Prepare a replacement in a sibling temporary file.
+   In that temporary file, change only the selected entry's source and declared version:
+
+	| Host | Catalogue inside the existing marketplace | Change |
+	| --- | --- | --- |
+	| Codex | `.agents/plugins/marketplace.json` | Set the selected `source.path` to `./releases/0.2.0-alpha.2/plugin`. |
+	| Claude Code | `.claude-plugin/marketplace.json` | Set the selected `source` to `./releases/0.2.0-alpha.2/plugin` and its `version` to `0.2.0-alpha.2`. |
+
+   Re-read the live catalogue before publication. If its bytes differ from your saved copy, stop and review the concurrent change.
+   Publish the temporary file with an atomic rename in the same directory.
+4. Run the selected host's native update from the application root. Replace `MARKETPLACE_NAME` with that host's existing registered name.
+
+For Codex, `plugin add` enables the plugin at user scope on the tested CLI 0.163.0.
+If your policy requires a disabled user default, run it only within a procedure that restores that policy after every attempted add, including a failed add.
+The repair uses the native `config/value/write` API with a freshly read user-layer version and only the selected `plugins."specification-guided-development@MARKETPLACE_NAME".enabled` key.
+The bundled preparer does not perform this scope repair.
+Preserve the project's enablement and unrelated settings. Check the disabled user default and unrelated-project activation again afterward.
+The observed procedure has a brief user-enabled window. Atomic installation with the user setting disabled has not been established.
+
+```sh
+codex plugin add specification-guided-development@MARKETPLACE_NAME --json
+```
+
+For Claude Code:
+
+```sh
+claude plugin marketplace update MARKETPLACE_NAME --json
+claude plugin update specification-guided-development@MARKETPLACE_NAME --scope local --json
+```
+
+Start fresh native sessions after the update.
+Check the installed skill, complete physical payload, and executed launcher version against the selected release.
+For Claude's local loading, check `readFromFolder` and `folderVersion`.
+Its cache `installPath` alone does not identify the executed source.
+Confirm a successful native `sgd_inspect` call and an application error for a known absent input.
+Check target-project activation and disabled activation outside that project separately.
+Keep the old payload and catalogue for recovery. Native downgrade and automatic replacement of running servers remain unverified.
+
+### Configure native auto-update
+
+For a remote marketplace that can fetch complete packages, enable Claude Code's native auto-update through `/plugin`, **Marketplaces**, the selected marketplace, and **Enable auto-update**.
+See [Claude Code's auto-update instructions](https://code.claude.com/docs/en/discover-plugins#turn-auto-update-on-or-off-for-a-marketplace).
+The directory marketplace prepared above has no remote archive source. Its auto-update setting cannot download new SGD GitHub release archives.
+Prepare the new payload and update its catalogue before requesting the native update.
+Codex automatic updates for this delivery path remain unverified.
+
+### Check public release metadata from source
+
+The `0.2.0-alpha.3` source adds a read-only update check. This feature is unreleased and is absent from the public alpha2 archives.
+After building that source, run:
+
+```sh
+node dist/cli.js update-status --host codex --channel alpha
+```
+
+Use `--host claude-code` for Claude Code. The equivalent MCP tool is `sgd_update_status` with `{ "host": "codex", "channel": "alpha" }`.
+The `stable` channel selects stable releases. The `alpha` channel also includes alpha releases and stable promotions.
+The check compares the running SGD version with public GitHub release and manifest metadata.
+It returns `update-available`, `current`, `ahead`, or `unknown`, and reports whether metadata lists an archive for the running platform and architecture.
+Network failure, timeout, rate limiting, invalid metadata, or a bounded response limit produces `unknown`. Continue modeling when the status is unknown.
+
+This result describes the running runtime. Installed plugin inventory, existing Desktop sessions, archive contents, and the application's SDK pin need separate observations.
+The check downloads metadata only and changes no installation or host settings.
+The source skills request it once per conversation when the tool is available and mention a newer release once.
+The check and reminder do not install an update or schedule a background job.
+A remote catalogue with complete fetchable packages, native Claude auto-update delivery, and migration from the current directory catalogues remain future work.
 
 ## Check a copied package
 

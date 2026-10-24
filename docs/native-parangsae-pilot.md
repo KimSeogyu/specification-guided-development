@@ -1,15 +1,15 @@
 # Native plugins in the Parangsae pilot
 
-On 2026-10-24, Parangsae installed the public [v0.2.0-alpha.1 release](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.2.0-alpha.1) through Codex CLI 0.163.0 and Claude Code 2.1.304 on macOS arm64. The packages remain installed for project use. This record covers installation, project activation, native MCP calls, and a staged workflow through the installed Claude skill.
+On 2026-10-24, Parangsae initially installed the public [v0.2.0-alpha.1 release](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.2.0-alpha.1) through Codex CLI 0.163.0 and Claude Code 2.1.304 on macOS arm64. This record separates that installation and staged Claude workflow from the later alpha2 upgrade and fresh native verification.
 
-## Observed installation and tool operation
+## Observed alpha1 installation and tool operation
 
 | Host | Loaded package | Activation | Native tool result |
 | --- | --- | --- | --- |
 | Codex | The installed cache matched the complete released package and executed runtime version `0.2.0-alpha.1`. | A fresh Parangsae process discovered the installed skill. The project enabled the plugin, while the user default and an unrelated project kept it disabled. | The declared MCP server reported `0.2.0-alpha.1`. `sgd_inspect` returned the complete expected project IR and an application error for a known absent input. |
 | Claude Code | The local marketplace loaded its complete package in place. The installed record, folder, and executed runtime identified `0.2.0-alpha.1`. | The native installer enabled the plugin with `--scope local` in Parangsae. An unrelated project kept it disabled. | A fresh model session made two `sgd_inspect` calls through the installed server. Actual tool results matched the complete project IR and the expected missing-file error. The trial exited successfully. |
 
-Both hosts used the installed plugin's MCP declaration. No manual MCP configuration replaced it. Claude's in-place loading is separate from a copied Git cache. The [earlier delivery trials](native-plugin-verification.md) cover distinct-version upgrades in disposable installations. This operational installation does not establish a later upgrade in the permanent pilot.
+Both hosts used the installed plugin's MCP declaration. No manual MCP configuration replaced it. Claude's in-place loading is separate from a copied Git cache. The [earlier delivery trials](native-plugin-verification.md) cover distinct-version upgrades in disposable installations. The later permanent upgrade is recorded separately below.
 
 Existing application source, the project SDK pin, CI, and branch protection were unchanged by this deployment. Unrelated user settings and the existing concurrency configuration were preserved. The plugin release and the application's pinned SDK remain separate identities.
 
@@ -21,7 +21,7 @@ A private probe omitted its helper for reading an absent file. After adding the 
 
 The native Codex installer briefly enabled the user setting before a version-checked write disabled that setting. Final observations confirmed the disabled user default and the enabled project setting. This procedure does not establish an atomic installation that never enables the user setting.
 
-The Parangsae owning chat checked its existing Desktop session after installation and reported no SGD MCP tools. The SDK chat received that report without inspecting the other chat's registry. No inspect call, new task, or restart was part of the check. That session had no SGD MCP tool access at the time, while fresh native CLI operation passed. A later Desktop refresh remains unverified.
+The Parangsae owning chat initially reported no SGD MCP tools in its existing Desktop session after installation. Before the alpha2 upgrade, that owner later reported six SGD tools, a loaded alpha1 skill, and a successful `sgd_inspect` call in the existing chat. These are owner-reported Desktop observations, received without inspecting that chat's registry. They establish reported pre-upgrade tool access. The existing Desktop chat's alpha2 serving version remains unobserved.
 
 ## Staged Claude workflow through the installed plugin
 
@@ -39,22 +39,45 @@ TypeScript compilation first reported `TS2307` for an import of nonexistent gene
 
 The coordinating agent repaired the trial helpers to retain stdout-only checker diagnostics and record refused-tool metadata before stopping a session. During changed-model authoring, the supervisor stopped an unexpected tool attempt after controlled regeneration. The original recorder omitted the tool's name. Its identity and cause remain unknown, and that attempt remains failed. The later read-only recheck is separate evidence. The workflow required these interventions. Single-pass reliability remains unestablished.
 
+## Upgrade to alpha2 and fresh native verification
+
+Later on the same date, both permanent installations updated to the public [v0.2.0-alpha.2 release](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.2.0-alpha.2) through their existing directory catalogues and plugin identities. Complete alpha2 sources were placed in new version directories. The alpha1 sources and trial evidence were retained.
+
+The first attempt completed the Codex native add and Claude marketplace refresh and local plugin update. Its result remains incomplete because both verification steps failed. Codex's cache changed only the `runtime` directory mode from `0700` to `0755`. All file bytes and other modes matched the release. The Claude health check did not recognize the native success marker and required an entrypoint path that the health output did not expose. These verification findings required explicit corrections.
+
+A second attempt reused the installed alpha2 packages and unchanged catalogues. It performed no native add or update and passed fresh verification through both hosts. The first incomplete result remains preserved.
+
+| Host | Fresh package and serving evidence | Native tool result |
+| --- | --- | --- |
+| Codex | The complete cache passed a reviewed acceptance profile allowing only the `runtime` directory mode change. The installed skill and executed launcher identified alpha2. The declared MCP server reported `serverInfo.version = 0.2.0-alpha.2`. | `sgd_inspect` returned the complete expected project IR and an application missing-file error for a known absent input. |
+| Claude Code | The complete in-place payload matched the release. `readFromFolder`, folder version, and executed launcher identified alpha2. A fresh native session identified the exact new plugin path and its declared MCP command. The MCP initialization version was not directly observed. | The fresh native session made actual `sgd_inspect` calls that matched the complete project IR and the expected missing-file application error. |
+
+Final observations confirmed target-project activation for both hosts, a disabled Codex user default, and disabled activation in an unrelated project. Application source, SDK pin, CI, protection, unrelated settings, the concurrency limit of 12, and the original project IR were preserved. Both attempts closed their owned native process groups. Codex's brief user-enabled window remains a limitation.
+
+A separate feature check used both actual installed payloads through direct CLI and stdio MCP execution. A fresh imported-DOT v1 fixture produced matching structured `TLC104` diagnostics, retained the CLI failure and MCP error, and left generated payloads unchanged. This fixture ran no TLC. The generated Pele script preserved complete model and transition content and exercised initial fit, model switching, per-view manual zoom, and resize behavior in a VM DOM harness. Agent-directed feature use and browser rendering were outside that check.
+
+The alpha1 methodology trial retains its original version, interventions, failed attempt, and separate final recheck. The alpha2 upgrade and feature probes do not establish a complete alpha2 development workflow or actual application feature maintenance.
+
 ## Remaining acceptance
 
 The complete installed-Codex modeling and development workflow remains untested. The staged Claude trial uses a separate example inside the pilot workspace. It does not establish an actual Parangsae feature change or continued maintenance.
 
-The consumer supplied the following maintenance feedback. These are acceptance requirements, not features delivered by this release.
+The consumer supplied the following maintenance feedback. Alpha2 addresses the diagnostic part of C1. The remaining acceptance requirements stay separate.
 
 | Item | Remaining acceptance |
 | --- | --- |
-| C1: Explain stale provenance | Identify the changed application source and affected contracts. Distinguish changed generated code from unchanged code with stale receipts. Permit an explicit receipt-only refresh only after current source and model verification proves semantic generation unchanged. Fact, equality, key, and model changes must retain their checks. |
+| C1: Explain stale provenance | Alpha2 reports affected artifacts, changed recorded sources, and generated-source byte status. An explicit receipt-only refresh remains unimplemented and requires current source and model verification to prove semantic generation unchanged. Fact, equality, key, and model changes must retain their checks. |
 | C2: Separate run evidence | Avoid tracked TLC log changes caused only by process IDs, times, and temporary paths. Export fresh invocation receipts and actual logs separately. Readonly verification must identify its new evidence without presenting retained historical logs as fresh. |
 | C3: Identify the serving runtime | Distinguish declared SDK, resolved SDK, discovered plugin, installed plugin, current-session activity, fresh-session activity, runtime identity, and actual tool results. Report unknown states when evidence is missing. This pilot's local status records do not provide a public doctor command. |
 | C4: Show the checked boundary | Identify the four source-bound Fact families and their closed fold. Separate declared architecture policy from checked behavior. Show physical IO, writer ownership, composite application state, journal round trips, and unanalyzed targets or features outside that Fact contract. |
 | C5: Preserve fixed integration behavior | The consumer already fixed the exported TypeScript package entry point and stdout-only child diagnostics. Retain packaged regression coverage for those cases. They are not open SDK defects. |
+| C6: Summarize successful tool calls | Return output paths and verification summaries by default from model/build. Provide the complete IR through explicit detail or inspect. Preserve access to the underlying evidence. |
+| C7: Classify TLC failures | Preserve failure behavior and logs. Report a structured failure kind, invariant name, and trace path when actual TLC evidence supports them. Distinguish invariant violation, timeout, parsing failure, and unknown failure. |
 
 The consumer also reported a local SDK installation that differed from its lockfile while retaining the same package version. Version equality alone did not identify the resolved source. This observation supports C3 and is not attributed to an SDK defect.
 
-Work on C1 diagnostics and automatic Pele fitting remains separate and unreleased. The installed alpha package was unchanged throughout the staged workflow.
+C1 diagnostics and automatic Pele fitting were released in alpha2 after the staged alpha1 workflow. The installed package was unchanged throughout that earlier trial.
+
+The [source alpha3 update check](plugins.md#check-public-release-metadata-from-source) and once-per-conversation skill reminder are implemented but unreleased. They inspect public metadata for the running runtime. The current directory catalogues cannot fetch new release archives by themselves. A fetchable remote catalogue, complete ZIP distribution for Claude auto-update, and catalogue migration remain future delivery work. Codex native auto-update remains unestablished.
 
 The consumer's composite-state and journal findings belong to the application team and fall outside the Fact-fold contract. This deployment grants no new all-target coverage, storage authority, persistence guarantee, or effect atomicity. Continued feature, requirement-change, and defect-fix trials remain necessary. The [production goal](production-goal.md) is incomplete.

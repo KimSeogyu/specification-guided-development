@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -32,7 +32,7 @@ test('MCP negotiates tools and reports a failed read as a tool error', async () 
     const cli = await promisify(execFile)(process.execPath, ['--import', 'tsx', fileURLToPath(new URL('../src/cli.ts', import.meta.url)), '--version']);
     assert.equal(cli.stdout.trim(), metadata.version);
     const list=await client.listTools();
-    assert.deepEqual(list.tools.map(tool=>tool.name).sort(),['sgd_build','sgd_compile','sgd_inspect','sgd_model','sgd_refine','sgd_visualize']);
+    assert.deepEqual(list.tools.map(tool=>tool.name).sort(),['sgd_build','sgd_compile','sgd_inspect','sgd_model','sgd_refine','sgd_update_status','sgd_visualize']);
     for (const name of ['sgd_build', 'sgd_compile']) {
       const tool = list.tools.find(tool => tool.name === name);
       assert.ok(tool);
@@ -49,6 +49,28 @@ test('MCP negotiates tools and reports a failed read as a tool error', async () 
     const erasure=await client.callTool({name:'sgd_refine',arguments:{abstract:'/does-not-exist/high.json',concrete:'/does-not-exist/low.json',binding:'/does-not-exist/binding.json'}});
     assert.equal(erasure.isError,true);
   } finally {await client.close();await server.close();}
+});
+
+test('MCP release awareness is read-only, strict, and does not turn offline metadata into a tool error', async () => {
+  const transport = mock.method(globalThis, 'fetch', async () => { throw new TypeError('offline fixture'); });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = createServer(); const client = new Client({ name: 'sgd-update-test', version: '1.0.0' });
+  await server.connect(serverTransport);
+  try {
+    await client.connect(clientTransport);
+    const tool = (await client.listTools()).tools.find(tool => tool.name === 'sgd_update_status');
+    assert.ok(tool);
+    assert.deepEqual(tool.annotations, { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true });
+    const result = await client.callTool({ name: 'sgd_update_status', arguments: { host: 'codex', channel: 'alpha' } });
+    assert.ok(!result.isError);
+    assert.match(JSON.stringify(result.content), /unknown/);
+    assert.match(JSON.stringify(result.content), /network/);
+    for (const args of [{ host: 'codex' }, { host: 'codex', channel: 'beta' }, { host: 'codex', channel: 'alpha', url: 'https://example.com' }]) {
+      const invalid = await client.callTool({ name: 'sgd_update_status', arguments: args });
+      assert.equal(invalid.isError, true);
+    }
+    assert.equal(transport.mock.callCount(), 1);
+  } finally { await client.close(); await server.close(); transport.mock.restore(); }
 });
 
 test('MCP check mode refuses edited generated output without repairing it', async () => {

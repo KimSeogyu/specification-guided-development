@@ -5,6 +5,7 @@ import { serve } from './mcp.js';
 import { verifySymbolicErasureFiles } from './symbolic-refinement.js';
 import { version } from './version.js';
 import { StaleOutputError } from './output-check.js';
+import { checkUpdateStatus, UpdateStatusInputSchema } from './update-status.js';
 
 const help = `sgd ${version}
 
@@ -14,6 +15,7 @@ const help = `sgd ${version}
   inspect   --ir FILE
   visualize --ir FILE [--ir FILE ...] --out DIR
   refine    --abstract FILE --concrete FILE --binding FILE --out DIR [--check]
+  update-status --host codex|claude-code --channel stable|alpha
   mcp
 
 build runs TLC before generation. Project v2 generates finite state authorities.
@@ -47,6 +49,7 @@ async function main(args: string[]): Promise<void> {
     build: ['--project', '--jar', '--out'], model: ['--project', '--jar', '--out'],
     compile: ['--project', '--dot', '--out'], inspect: ['--ir'], visualize: ['--ir', '--out'],
     refine: ['--abstract', '--concrete', '--binding', '--out'],
+    'update-status': ['--host', '--channel'],
   };
   const keys = allowed[command];
   if (!keys) throw new Error(`Unknown command ${command}`);
@@ -60,6 +63,8 @@ async function main(args: string[]): Promise<void> {
   }
   let result: unknown;
   switch (command) {
+    case 'update-status':
+      result = await checkUpdateStatus(UpdateStatusInputSchema.parse({ host: one('--host'), channel: one('--channel') })); break;
     case 'model': case 'build':
       result = await buildProject({ project: one('--project'), jar: one('--jar'), out: one('--out'), check, modelOnly: command === 'model' }); break;
     case 'compile':

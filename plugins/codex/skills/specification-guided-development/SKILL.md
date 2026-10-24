@@ -5,6 +5,27 @@ description: Model architecture and behavior in TLA+. Generate state owners or T
 
 # Develop from a checked TLA+ model
 
+## Check the running runtime once
+
+At the first use of this skill in a conversation, call `sgd_update_status` if that tool is available.
+Use `{ "host": "codex", "channel": "alpha" }`.
+The alpha channel includes alpha releases and stable promotions.
+Continue the user's work regardless of the result.
+If the tool is absent, continue without claiming that the runtime is current.
+Do not repeat the check for each model command or retry an unknown result automatically.
+
+For `update-available`, mention the newer version and release page once.
+State whether metadata lists a matching archive for the running platform.
+Archive metadata does not verify archive contents or an installed plugin.
+The result describes the running SGD runtime, not installed plugin inventory or the desktop app version.
+Recommend the host's documented update mechanism when its configured source can fetch new releases.
+A local directory marketplace cannot fetch a newer release archive by itself.
+This check does not authorize an installation or a host setting change.
+Handle a separately requested update under the user's existing authorization.
+Do not create a background update job as part of this check.
+
+## Select the modeling profile
+
 Read the relevant profile in [the modeling guide](references/modeling.md) before you create or change a model.
 Select the profile that matches the required guarantee.
 For a closed partition data fold, read [the v6 composition guide](references/partition-fold.md).

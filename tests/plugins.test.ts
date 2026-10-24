@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -44,6 +44,9 @@ async function createPackagingFixture(fixture: string) {
     'process.stdout.write(JSON.stringify({ probe, args: process.argv.slice(2) }));',
     'process.exitCode = process.argv.includes("fail") ? 7 : 0;',
   ].join('\n'));
+  await chmod(join(fixture, 'dist'), 0o750);
+  await chmod(join(fixture, 'dist/cli.js'), 0o755);
+  await chmod(join(fixture, 'node_modules/runtime-probe/index.js'), 0o640);
   for (const name of pluginNames) {
     const script = join(fixture, 'plugins', name, 'scripts/run.mjs');
     await mkdir(dirname(script), { recursive: true });
@@ -54,6 +57,7 @@ async function createPackagingFixture(fixture: string) {
     await writeFile(join(fixture, path), JSON.stringify({ name: packageName, version: packageVersion }));
   }
   await cp(join(root, 'plugins/prepare-marketplace.mjs'), join(fixture, 'plugins/prepare-marketplace.mjs'));
+  await cp(join(root, 'plugins/package.mjs'), join(fixture, 'plugins/package.mjs'));
 }
 
 test('native marketplaces expose only their own plugin package', async () => {
@@ -97,27 +101,58 @@ test('an isolated plugin gives setup instructions when its runtime is absent', a
   }
 });
 
-test('packaged plugins run after source removal and preserve arguments and failure exits', async () => {
+for (const format of ['tar.gz', 'zip']) test(`packaged ${format} plugins run after source removal and preserve modes, arguments and failure exits`, async () => {
   const temporary = await mkdtemp(join(tmpdir(), 'sgd-plugin-package-'));
   const fixture = join(temporary, 'source');
   try {
     await createPackagingFixture(fixture);
     await packagePlugins(fixture);
+    for (const name of pluginNames) {
+      const plugin = join(fixture, 'plugins', name);
+      assert.equal((await stat(join(plugin, 'runtime'))).mode & 0o777, 0o755);
+      await mkdir(join(plugin, 'runtime/bin'), { recursive: true });
+      await writeFile(join(plugin, 'runtime/bin/native-probe'), Uint8Array.of(0x7f, 0x45, 0x4c, 0x46, 0x00));
+      await chmod(join(plugin, 'runtime/bin/native-probe'), 0o755);
+      await symlink('runtime/node_modules/runtime-probe/index.js', join(plugin, 'dependency-link'));
+      for (const path of ['.runtime-excluded/probe', 'scripts/.runtime-excluded/probe', '.DS_Store', 'runtime/dist/.DS_Store']) {
+        await mkdir(dirname(join(plugin, path)), { recursive: true });
+        await writeFile(join(plugin, path), 'excluded');
+      }
+    }
     const cache = join(temporary, 'plugin cache with spaces');
-    const archives = await archivePlugins({ root: fixture, out: join(temporary, 'archives') });
+    const archives = await archivePlugins({ root: fixture, out: join(temporary, 'archives'), ...(format === 'zip' ? { format } : {}) });
     for (const [index, name] of pluginNames.entries()) {
       const isolated = join(cache, name);
       const archive = archives[index];
       assert.ok(archive);
       assert.ok(archive.includes(`-${packageVersion}-`));
-      assert.ok(archive.endsWith(`-${process.platform}-${process.arch}.tar.gz`));
+      assert.ok(archive.endsWith(`-${process.platform}-${process.arch}.${format}`));
       await mkdir(isolated, { recursive: true });
-      const extracted = spawnSync('tar', ['-xzf', archive, '-C', isolated], { encoding: 'utf8' });
+      const extracted = format === 'zip'
+        ? spawnSync('unzip', ['-q', archive, '-d', isolated], { encoding: 'utf8' })
+        : spawnSync('tar', ['-xzpf', archive, '-C', isolated], { encoding: 'utf8' });
       assert.equal(extracted.status, 0, extracted.stderr);
+      for (const [path, mode] of [
+        ['runtime', 0o755],
+        ['runtime/dist', 0o750],
+        ['runtime/dist/cli.js', 0o755],
+        ['runtime/bin/native-probe', 0o755],
+        ['runtime/node_modules/runtime-probe/index.js', 0o640],
+      ] satisfies [string, number][]) {
+        assert.equal((await stat(join(isolated, path))).mode & 0o777, mode, `${name}/${path}`);
+      }
     }
     await rm(fixture, { recursive: true, force: true });
     for (const name of pluginNames) {
       const isolated = join(cache, name);
+      const manifest = name === 'codex' ? '.codex-plugin/plugin.json' : '.claude-plugin/plugin.json';
+      assert.deepEqual(JSON.parse(await readFile(join(isolated, manifest), 'utf8')), { name: packageName, version: packageVersion });
+      assert.deepEqual(await readFile(join(isolated, 'runtime/bin/native-probe')), Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x00]));
+      assert.equal(await readlink(join(isolated, 'dependency-link')), 'runtime/node_modules/runtime-probe/index.js');
+      assert.equal(await readFile(join(isolated, 'dependency-link'), 'utf8'), 'export const probe = "dependency loaded";\n');
+      for (const path of ['.runtime-excluded', 'scripts/.runtime-excluded', '.DS_Store', 'runtime/dist/.DS_Store']) {
+        await assert.rejects(stat(join(isolated, path)), { code: 'ENOENT' });
+      }
       await assert.rejects(readFile(join(isolated, 'runtime/node_modules/dev-probe/index.js')));
       assert.deepEqual(JSON.parse(await readFile(join(isolated, 'runtime/runtime-platform.json'), 'utf8')), {
         version: 1, platform: process.platform, arch: process.arch,
@@ -242,7 +277,7 @@ test('malformed matching release versions cannot replace existing runtimes or pr
   } finally { await rm(temporary, { recursive: true, force: true }); }
 });
 
-test('archiving refuses an older runtime before producing either release archive', async () => {
+for (const format of ['tar.gz', 'zip']) test(`archiving ${format} refuses an older runtime before producing either release archive`, async () => {
   const temporary = await mkdtemp(join(tmpdir(), 'sgd-plugin-stale-runtime-'));
   try {
     await createPackagingFixture(temporary);
@@ -251,9 +286,131 @@ test('archiving refuses an older runtime before producing either release archive
     const runtime = JSON.parse(await readFile(runtimePath, 'utf8'));
     await writeFile(runtimePath, JSON.stringify({ ...runtime, version: '0.1.0' }));
     const out = join(temporary, 'archives');
-    await assert.rejects(archivePlugins({ root: temporary, out }), /runtime name and version must match/);
-    await assert.rejects(readFile(join(out, `specification-guided-development-codex-${packageVersion}-${process.platform}-${process.arch}.tar.gz`)), { code: 'ENOENT' });
+    await assert.rejects(archivePlugins({ root: temporary, out, format }), /runtime name and version must match/);
+    await assert.rejects(readFile(join(out, `specification-guided-development-codex-${packageVersion}-${process.platform}-${process.arch}.${format}`)), { code: 'ENOENT' });
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
+});
+
+test('archive API rejects unsupported formats before creating output', async () => {
+  const temporary = await mkdtemp(join(tmpdir(), 'sgd-plugin-format-'));
+  try {
+    for (const format of ['7z', '', null]) {
+      const out = join(temporary, 'archives');
+      await assert.rejects(archivePlugins({ root: join(temporary, 'missing-source'), out, format }), /archive format must be tar.gz or zip/);
+      await assert.rejects(stat(out), { code: 'ENOENT' });
+    }
+  } finally { await rm(temporary, { recursive: true, force: true }); }
+});
+
+for (const format of ['tar.gz', 'zip']) test(`archiving ${format} refuses existing output before producing either archive`, async () => {
+  const temporary = await mkdtemp(join(tmpdir(), 'sgd-plugin-existing-'));
+  try {
+    await createPackagingFixture(temporary);
+    await packagePlugins(temporary);
+    const out = join(temporary, 'archives');
+    await mkdir(out);
+    const existing = join(out, `specification-guided-development-claude-code-${packageVersion}-${process.platform}-${process.arch}.${format}`);
+    await writeFile(existing, 'published archive');
+    await assert.rejects(archivePlugins({ root: temporary, out, format }), /archive already exists/);
+    assert.equal(await readFile(existing, 'utf8'), 'published archive');
+    assert.deepEqual(await readdir(out), [basename(existing)]);
+    await rm(existing);
+    await symlink('missing-archive', existing);
+    await assert.rejects(archivePlugins({ root: temporary, out, format }), /archive already exists/);
+    assert.equal(await readlink(existing), 'missing-archive');
+    assert.deepEqual(await readdir(out), [basename(existing)]);
+  } finally { await rm(temporary, { recursive: true, force: true }); }
+});
+
+for (const format of ['tar.gz', 'zip']) test(`archiving ${format} cannot replace a file created after preflight and cleans temporary output`, async () => {
+  const temporary = await mkdtemp(join(tmpdir(), 'sgd-plugin-race-'));
+  try {
+    await createPackagingFixture(temporary);
+    const out = join(temporary, 'archives');
+    const tools = join(temporary, 'tool-bin');
+    await mkdir(out);
+    await mkdir(tools);
+    const command = format === 'zip' ? 'zip' : 'tar';
+    const located = spawnSync('/bin/sh', ['-c', `command -v ${command}`], { encoding: 'utf8' });
+    assert.equal(located.status, 0, located.stderr);
+    const existing = join(out, `specification-guided-development-codex-${packageVersion}-${process.platform}-${process.arch}.${format}`);
+    await writeFile(join(tools, 'package.json'), '{"type":"module"}\n');
+    await writeFile(join(tools, command), [
+      '#!/usr/bin/env node',
+      'import { spawnSync } from "node:child_process";',
+      'import { writeFileSync } from "node:fs";',
+      `const result = spawnSync(${JSON.stringify(located.stdout.trim())}, process.argv.slice(2), { stdio: "inherit" });`,
+      `if (result.status === 0) writeFileSync(${JSON.stringify(existing)}, "competing archive", { flag: "wx" });`,
+      'process.exit(result.status ?? 1);',
+    ].join('\n'));
+    await chmod(join(tools, command), 0o755);
+    const result = spawnSync(process.execPath, [await realpath(join(temporary, 'plugins/package.mjs')), '--archive-out', out, '--archive-format', format], {
+      encoding: 'utf8', env: { ...process.env, PATH: `${tools}:${process.env.PATH ?? ''}` },
+    });
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /EEXIST/);
+    assert.equal(await readFile(existing, 'utf8'), 'competing archive');
+    assert.deepEqual(await readdir(out), [basename(existing)]);
+  } finally { await rm(temporary, { recursive: true, force: true }); }
+});
+
+test('packaging CLI validates archive options and existing output before changing runtimes', async () => {
+  const temporary = await mkdtemp(join(tmpdir(), 'sgd-plugin-options-'));
+  try {
+    await createPackagingFixture(temporary);
+    for (const name of pluginNames) {
+      await mkdir(join(temporary, 'plugins', name, 'runtime/dist'), { recursive: true });
+      await writeFile(join(temporary, 'plugins', name, 'runtime/dist/cli.js'), `existing ${name} runtime\n`);
+    }
+    const out = join(temporary, 'archives');
+    for (const args of [
+      ['--archive-format', 'zip'], ['--archive-out'], ['--archive-out', out, '--archive-format'],
+      ['--archive-out', out, '--archive-format', '7z'], ['--archive-out', out, '--unknown', 'zip'],
+      ['--archive-out', out, '--archive-out', out],
+      ['--archive-out', out, '--archive-format', 'zip', '--archive-format', 'zip'],
+      ['--archive-out', '--archive-format', 'zip'],
+    ]) {
+      const result = spawnSync(process.execPath, [await realpath(join(temporary, 'plugins/package.mjs')), ...args], { encoding: 'utf8' });
+      assert.equal(result.status, 1, args.join(' '));
+      assert.match(result.stderr, /Usage:/);
+      assert.equal(result.stdout, '');
+      await assert.rejects(stat(out), { code: 'ENOENT' });
+      for (const name of pluginNames) {
+        assert.equal(await readFile(join(temporary, 'plugins', name, 'runtime/dist/cli.js'), 'utf8'), `existing ${name} runtime\n`);
+      }
+    }
+    await mkdir(out);
+    const existing = join(out, `specification-guided-development-claude-code-${packageVersion}-${process.platform}-${process.arch}.zip`);
+    await writeFile(existing, 'published archive');
+    const result = spawnSync(process.execPath, [await realpath(join(temporary, 'plugins/package.mjs')), '--archive-format', 'zip', '--archive-out', out], { encoding: 'utf8' });
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /archive already exists/);
+    assert.equal(result.stdout, '');
+    assert.equal(await readFile(existing, 'utf8'), 'published archive');
+    assert.deepEqual(await readdir(out), [basename(existing)]);
+    for (const name of pluginNames) {
+      assert.equal(await readFile(join(temporary, 'plugins', name, 'runtime/dist/cli.js'), 'utf8'), `existing ${name} runtime\n`);
+    }
+    await rm(existing);
+    const valid = spawnSync(process.execPath, [await realpath(join(temporary, 'plugins/package.mjs')), '--archive-format', 'zip', '--archive-out', out], { encoding: 'utf8' });
+    assert.equal(valid.status, 0, valid.stderr);
+    assert.match(valid.stdout, /Prepared plugins\/codex and plugins\/claude-code/);
+    assert.deepEqual((await readdir(out)).sort(), pluginNames.map(name => `specification-guided-development-${name}-${packageVersion}-${process.platform}-${process.arch}.zip`).sort());
+  } finally { await rm(temporary, { recursive: true, force: true }); }
+});
+
+test('archive output cannot be inside either plugin source, including a symlinked directory', async () => {
+  const temporary = await mkdtemp(join(tmpdir(), 'sgd-plugin-output-'));
+  try {
+    await createPackagingFixture(temporary);
+    const alias = join(temporary, 'plugin-alias');
+    await symlink(join(temporary, 'plugins/claude-code'), alias);
+    for (const out of [join(temporary, 'plugins/codex'), join(temporary, 'plugins/claude-code/archives'), join(alias, 'archives')]) {
+      await assert.rejects(archivePlugins({ root: temporary, out, format: 'zip' }), /outside both plugin source directories/);
+    }
+    await assert.rejects(stat(join(temporary, 'plugins/codex/runtime')), { code: 'ENOENT' });
+    await assert.rejects(stat(join(temporary, 'plugins/claude-code/archives')), { code: 'ENOENT' });
+  } finally { await rm(temporary, { recursive: true, force: true }); }
 });
