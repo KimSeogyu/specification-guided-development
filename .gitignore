@@ -4,3 +4,5 @@ dist/
 target/
 *.tgz
 .DS_Store
+/plugins/codex/scripts/prepare-marketplace.mjs
+/plugins/claude-code/scripts/prepare-marketplace.mjs

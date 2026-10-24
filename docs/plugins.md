@@ -37,7 +37,8 @@ node plugins/package.mjs --archive-out .runtime/plugin-packages
 ```
 
 This command requires `tar`.
-It creates `specification-guided-development-codex-0.1.0-PLATFORM-ARCH.tar.gz` and `specification-guided-development-claude-code-0.1.0-PLATFORM-ARCH.tar.gz`.
+It creates `specification-guided-development-codex-VERSION-PLATFORM-ARCH.tar.gz` and `specification-guided-development-claude-code-VERSION-PLATFORM-ARCH.tar.gz`.
+`VERSION` is the root package version. The packager refuses mismatched native manifest, lockfile, or prepared runtime versions.
 `PLATFORM` and `ARCH` are the packaging Node process's platform and architecture, such as `darwin-arm64`.
 Each archive contains one complete plugin, including production dependencies.
 Each runtime includes `runtime-platform.json` with that platform and architecture.
@@ -47,6 +48,20 @@ For Claude Code, an extracted directory also works with `--plugin-dir`.
 For Codex, point a local marketplace entry's `source.path` to the extracted directory.
 The source repository's marketplace already points to the corresponding prepared plugin directory.
 An ordinary `npm pack` archive excludes the nested runtime dependencies and is not a prepared plugin distribution.
+
+Each new archive includes a standalone marketplace preparation tool. After extracting the matching release, run the tool for your selected host:
+
+```sh
+node /absolute/extracted-plugin/scripts/prepare-marketplace.mjs \
+	--host codex \
+	--plugin /absolute/extracted-plugin \
+	--out /absolute/new-marketplace
+```
+
+Use `--host claude-code` for the Claude Code package. The output parent must exist. The new output must be outside the extracted plugin.
+The tool checks the complete package, native configuration, version, and platform, then copies it into a self-contained host-specific marketplace.
+It refuses an existing output and prints the native installation commands. It does not install a plugin, change agent settings, or download a runtime.
+The prepared marketplace works after the extracted source directory is removed. Keep the marketplace while using Claude's local in-place loading.
 
 Keep Node.js 22 or later available on the agent's `PATH`.
 Keep Java available for TLC.
@@ -63,11 +78,12 @@ Register the prepared checkout with Codex:
 
 ```sh
 codex plugin marketplace add /absolute/path/to/specification-guided-development
+codex plugin add specification-guided-development@specification-guided-development-codex
 ```
 
-Open the desktop plugin directory.
-Select the `specification-guided-development-codex` marketplace.
-Install `Specification Guided Development` and start a fresh chat.
+You can supply a prepared marketplace directory instead of the prepared source checkout.
+Start a fresh chat after installation.
+The desktop plugin directory also exposes the `specification-guided-development-codex` marketplace and `Specification Guided Development` package.
 Restart the desktop app if the source does not appear.
 
 Invoke the `specification-guided-development` skill or ask the agent to use Specification Guided Development.
@@ -83,10 +99,12 @@ Neither launch configuration assumes that the original checkout remains beside t
 Register the prepared checkout with Claude Code:
 
 ```sh
-claude plugin marketplace add /absolute/path/to/specification-guided-development
-claude plugin install specification-guided-development@specification-guided-development-claude
+claude plugin marketplace add /absolute/path/to/specification-guided-development --scope local
+claude plugin install specification-guided-development@specification-guided-development-claude --scope local
 ```
 
+Run these commands from the application project root. A prepared marketplace directory also works.
+Local marketplace plugins load from that directory in place; this is distinct from a Git-backed copied plugin cache.
 Start a fresh session.
 Invoke `/specification-guided-development:specification-guided-development`.
 Confirm that the `sgd` MCP server exposes its tools.
@@ -118,6 +136,36 @@ The v5 case analyzes public Rust Fact source fixtures with the bundled native he
 It checks complete fields, native-derived schema equality, first receipt/source metadata, latest rejected metadata, input forgery rejection, the TLC input oracle, and Pele views.
 The copied runtime contains no `tools/rust-bindings` source crate, so that successful build exercises the bundled helper.
 These copied-cache fixtures do not establish actual installed-agent execution or completed Parangsae adoption.
+
+## Check native installation and cached upgrade
+
+The native lifecycle verifier uses genuine, distinct complete releases. Run each host separately:
+
+```sh
+node scripts/verify-native-plugin-lifecycle.mjs \
+	--host codex \
+	--from /absolute/extracted-old-codex-plugin \
+	--to /absolute/extracted-new-codex-plugin \
+	--out /absolute/new-evidence-directory
+```
+
+Use `--host claude-code` with the corresponding Claude packages. The evidence parent must exist.
+The verifier requires the selected native CLI, Git, Node.js, and Unix process-group, `lsof`, `du`, and `df` support. Windows execution is explicitly unsupported by this verifier.
+It creates an owned loopback Git marketplace and separate native configuration roots, installs the old release, and checks fresh native discovery.
+The publisher uses Git's read-only smart HTTP backend and checks both full and shallow clones before native installation.
+It then publishes the new artifact to the same Git ref, requests the native update, and checks the actual cached skill, runtime files, and executed CLI version.
+It does not substitute remove/reinstall for an update.
+The original publisher working tree is hidden during discovery. Native payloads must match the selected artifact and remain independent physical files.
+The verifier stops its processes and server before removing its scratch tree. It retains scoped evidence outside that tree.
+
+For Codex, the verifier also starts a fresh native process and an ephemeral read-only thread with approval policy `never`.
+It checks the upgraded plugin's native MCP connection and executed server version, then calls `sgd_inspect` with valid and missing owned inputs.
+A successful Codex result requires those calls to pass. Claude's native MCP operation remains a separate acceptance gate.
+The verifier does not request model inference, authentication, or a real agent skill workflow.
+Native startup network access is not measured. Separate configuration roots do not establish complete isolation from ordinary user-home reads.
+The thread's policy does not establish filesystem isolation of MCP subprocesses.
+Persistent Parangsae deployment and actual modeling workflows have separate acceptance gates.
+Read the [native delivery verification record](native-plugin-verification.md) for observed host versions, outcomes, and remaining gates.
 
 ## Bind actual application rows
 

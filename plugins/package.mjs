@@ -4,6 +4,47 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
+const pluginNames = ['codex', 'claude-code'];
+const manifestPaths = [
+  'plugins/codex/plugin.json',
+  'plugins/codex/.codex-plugin/plugin.json',
+  'plugins/claude-code/.claude-plugin/plugin.json',
+];
+const VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
+function supportedVersion(value) {
+  if (typeof value !== 'string' || !VERSION.test(value)) return false;
+  const prerelease = (value.split('+')[0] ?? '').split('-').slice(1).join('-');
+  return !prerelease || prerelease.split('.').every(identifier => !/^\d+$/.test(identifier) || identifier === '0' || !identifier.startsWith('0'));
+}
+
+async function releaseMetadata(root) {
+  const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+  if (typeof pkg?.name !== 'string' || !pkg.name || !supportedVersion(pkg.version)) {
+    throw new Error('The root package must have a name and a supported semantic version for plugin packaging.');
+  }
+  const lock = JSON.parse(await readFile(join(root, 'package-lock.json'), 'utf8'));
+  if (!lock?.packages || typeof lock.packages !== 'object' || Array.isArray(lock.packages)) {
+    throw new Error('Use an npm lockfile with a packages map.');
+  }
+  for (const [path, metadata] of [['package-lock.json', lock], ['package-lock.json packages[""]', lock.packages['']]]) {
+    if (metadata === undefined) continue;
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+      throw new Error(`Invalid release metadata in ${path}.`);
+    }
+    for (const key of ['name', 'version']) if (metadata[key] !== undefined && metadata[key] !== pkg[key]) {
+      throw new Error(`${path} ${key} must match root package.json ${key}.`);
+    }
+  }
+  for (const path of manifestPaths) {
+    const manifest = JSON.parse(await readFile(join(root, path), 'utf8'));
+    if (manifest?.name !== pkg.name || manifest?.version !== pkg.version) {
+      throw new Error(`${path} name and version must match root package.json.`);
+    }
+  }
+  return { pkg, lock };
+}
+
 async function rustBindingAssets(root) {
   try { await access(join(root, 'dist/row-binding.js')); }
   catch (error) { if (error.code === 'ENOENT') return null; throw error; }
@@ -36,9 +77,9 @@ async function rustBindingAssets(root) {
 }
 
 export async function packagePlugins(root) {
-  const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
-  const lock = JSON.parse(await readFile(join(root, 'package-lock.json'), 'utf8'));
-  if (!lock.packages) throw new Error('Use an npm lockfile with a packages map.');
+  const { pkg, lock } = await releaseMetadata(root);
+  const marketplacePreparer = await readFile(join(root, 'plugins/prepare-marketplace.mjs'));
+  for (const name of pluginNames) await access(join(root, 'plugins', name, 'scripts/run.mjs'));
   await access(join(root, 'dist', 'cli.js'));
   const dependencies = Object.entries(lock.packages).filter(([path, entry]) => path && !entry.dev && !entry.link);
   for (const [path] of dependencies) {
@@ -47,9 +88,8 @@ export async function packagePlugins(root) {
     }
   }
   const rust = await rustBindingAssets(root);
-  for (const name of ['codex', 'claude-code']) {
+  for (const name of pluginNames) {
     const plugin = join(root, 'plugins', name);
-    await access(join(plugin, 'scripts', 'run.mjs'));
     const staging = await mkdtemp(join(plugin, '.runtime-'));
     try {
       await cp(join(root, 'dist'), join(staging, 'dist'), { recursive: true });
@@ -93,6 +133,7 @@ export async function packagePlugins(root) {
       await cp(join(root, 'LICENSE'), join(staging, 'LICENSE'));
       await rm(join(plugin, 'runtime'), { recursive: true, force: true });
       await rename(staging, join(plugin, 'runtime'));
+      await writeFile(join(plugin, 'scripts/prepare-marketplace.mjs'), marketplacePreparer);
     } finally {
       await rm(staging, { recursive: true, force: true });
     }
@@ -100,17 +141,24 @@ export async function packagePlugins(root) {
 }
 
 export async function archivePlugins({ root, out }) {
-  const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
-  if (!/^[A-Za-z0-9.+-]+$/.test(pkg.version)) throw new Error('Invalid package version for archive names.');
-  await mkdir(out, { recursive: true });
-  const archives = [];
-  for (const name of ['codex', 'claude-code']) {
+  const { pkg } = await releaseMetadata(root);
+  for (const name of pluginNames) {
     const plugin = join(root, 'plugins', name);
     await access(join(plugin, 'runtime', 'dist', 'cli.js'));
+    await access(join(plugin, 'scripts/prepare-marketplace.mjs'));
+    const runtime = JSON.parse(await readFile(join(plugin, 'runtime/package.json'), 'utf8'));
+    if (runtime?.name !== `${pkg.name}-plugin-runtime` || runtime?.version !== pkg.version) {
+      throw new Error(`${name} plugin runtime name and version must match the root package. Rebuild before archiving.`);
+    }
     const platform = JSON.parse(await readFile(join(plugin, 'runtime', 'runtime-platform.json'), 'utf8'));
     if (platform.version !== 1 || platform.platform !== process.platform || platform.arch !== process.arch) {
       throw new Error('Plugin runtime does not match this host. Rebuild before archiving.');
     }
+  }
+  await mkdir(out, { recursive: true });
+  const archives = [];
+  for (const name of pluginNames) {
+    const plugin = join(root, 'plugins', name);
     const archive = resolve(out, `specification-guided-development-${name}-${pkg.version}-${process.platform}-${process.arch}.tar.gz`);
     const result = spawnSync('tar', [
       '-czf', archive, '--exclude=.runtime-*', '--exclude=.DS_Store', '-C', plugin, '.',

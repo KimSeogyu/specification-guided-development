@@ -6,6 +6,19 @@ import { createServer } from '../src/mcp.js';
 import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
+import { ReleaseVersionSchema } from '../src/version.js';
+
+test('runtime release versions follow the standalone distribution semantic version profile', () => {
+  for (const value of ['0.0.0', '1.2.3', '0.2.0-alpha.1', '1.2.3-0', '1.2.3-alpha-01', '1.2.3+build.01', '1.2.3-alpha.1+build.01']) {
+    assert.equal(ReleaseVersionSchema.parse(value), value);
+  }
+  for (const value of ['dev', '01.2.3', '1.02.3', '1.2.03', '0.2.0-01', '0.2.0-alpha.01', '1.2.3-', '1.2.3+', '1.2.3-alpha..1', '1.2.3\n', '1.2.3\r\n', '1.2.3\u2028', '1.2.3\u2029', '1.2.3+build.01\n']) {
+    assert.equal(ReleaseVersionSchema.safeParse(value).success, false, value);
+  }
+});
 
 test('MCP negotiates tools and reports a failed read as a tool error', async () => {
   const [clientTransport,serverTransport]=InMemoryTransport.createLinkedPair();
@@ -13,6 +26,11 @@ test('MCP negotiates tools and reports a failed read as a tool error', async () 
   await server.connect(serverTransport);
   try {
     await client.connect(clientTransport);
+    const metadata: unknown = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+    assert.ok(typeof metadata === 'object' && metadata !== null && 'version' in metadata);
+    assert.equal(client.getServerVersion()?.version, metadata.version);
+    const cli = await promisify(execFile)(process.execPath, ['--import', 'tsx', fileURLToPath(new URL('../src/cli.ts', import.meta.url)), '--version']);
+    assert.equal(cli.stdout.trim(), metadata.version);
     const list=await client.listTools();
     assert.deepEqual(list.tools.map(tool=>tool.name).sort(),['sgd_build','sgd_compile','sgd_inspect','sgd_model','sgd_refine','sgd_visualize']);
     for (const name of ['sgd_build', 'sgd_compile']) {

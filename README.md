@@ -217,17 +217,18 @@ For Codex, register this prepared checkout:
 
 ```sh
 codex plugin marketplace add /absolute/path/to/specification-guided-development
+codex plugin add specification-guided-development@specification-guided-development-codex
 ```
 
-Open the desktop plugin directory, select `specification-guided-development-codex`, and install `Specification Guided Development`.
+The desktop plugin directory also exposes `specification-guided-development-codex` and `Specification Guided Development`.
 Restart the app if the new local marketplace does not appear.
 Invoke the `specification-guided-development` skill or ask the agent to use Specification Guided Development for modeling and development.
 
 For Claude Code, register the same prepared checkout with its native installer:
 
 ```sh
-claude plugin marketplace add /absolute/path/to/specification-guided-development
-claude plugin install specification-guided-development@specification-guided-development-claude
+claude plugin marketplace add /absolute/path/to/specification-guided-development --scope local
+claude plugin install specification-guided-development@specification-guided-development-claude --scope local
 ```
 
 Start a new session and invoke `/specification-guided-development:specification-guided-development`.
@@ -238,6 +239,8 @@ A source checkout requires the preparation steps above before its MCP server can
 Cloning the Git marketplace alone does not create the runtime.
 For independent distribution, run `node plugins/package.mjs --archive-out .runtime/plugin-packages`.
 That command creates a complete archive for each native plugin, including its runtime.
+Each new archive includes `scripts/prepare-marketplace.mjs`, which creates a new host-specific marketplace and prints the native installation commands without installing anything.
+Read the [native plugin guide](docs/plugins.md) for extracted-release setup and the separate native cached-upgrade verifier.
 Archive names end with the host platform and architecture, such as `-darwin-arm64.tar.gz`.
 The launcher checks `runtime/runtime-platform.json` and rejects a runtime for another host.
 An ordinary npm source package does not include these runtime dependencies.
