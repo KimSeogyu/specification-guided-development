@@ -1,5 +1,5 @@
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import { sha256 } from './dot.js';
 import { compareRequiredSymbolicProperties } from './contract-properties.js';
@@ -14,10 +14,12 @@ import { importSymbolicDot, verifySymbolicWitness } from './symbolic-witness.js'
 
 const Project = z.discriminatedUnion('version', [SymbolicProjectSchema, ProductSymbolicProjectSchema, RowProjectSchema]);
 type ProjectInput = { project: string; jar: string };
+type SourceLocation = { path: string; physicalPath: string; device: bigint; inode: bigint };
 type SourceInputs = {
   project: string; projectPhysical: string; projectBytes: Buffer;
   spec: string; config: string; configBytes: Buffer; jar: string; jarBytes: Buffer; jarPhysical: string;
-  directory: string; modules: Map<string, Buffer>; javaNames: string[];
+  specReference: string; configReference: string;
+  directory: string; modules: Map<string, Buffer>; javaNames: string[]; locations: SourceLocation[];
 };
 type SymbolicRun = Awaited<ReturnType<typeof runSymbolicTlc>>;
 type SymbolicModel = ReturnType<typeof lowerSymbolicModel>;
@@ -80,6 +82,15 @@ async function regular(path: string): Promise<Buffer> {
   if (!(await lstat(path)).isFile()) return fail(`controlled symbolic input must be a regular, non-symlink file: ${path}`);
   return readFile(path);
 }
+async function original(path: string, followProjectLink = false) {
+  const physicalPath = await realpath(path);
+  const stat = await lstat(followProjectLink ? physicalPath : path, { bigint: true });
+  if (!stat.isFile()) return fail(`controlled symbolic input must be a regular file: ${path}`);
+  const bytes = await readFile(path);
+  const current = await lstat(followProjectLink ? physicalPath : path, { bigint: true });
+  if (await realpath(path) !== physicalPath || current.dev !== stat.dev || current.ino !== stat.ino || !current.isFile()) return fail('symbolic input identity changed while capturing original bytes');
+  return { bytes, location: { path, physicalPath, device: stat.dev, inode: stat.ino } };
+}
 async function javaNamespace(directory: string, jarPhysical: string): Promise<string[]> {
   const names = (await readdir(directory)).filter(name => /\.(?:java|class|jar)$/i.test(name)).sort();
   for (const name of names) {
@@ -90,7 +101,8 @@ async function javaNamespace(directory: string, jarPhysical: string): Promise<st
 }
 async function collectInputs(input: ProjectInput) {
   const project = resolve(input.project);
-  const projectBytes = await readFile(project);
+  const projectInput = await original(project, true);
+  const projectBytes = projectInput.bytes;
   const parsed = Project.safeParse(JSON.parse(projectBytes.toString('utf8')));
   if (!parsed.success) throw new Error('TLC206: controlled symbolic capture requires a v3, v4, or v5 source project');
   const configuration = parsed.data;
@@ -99,14 +111,26 @@ async function collectInputs(input: ProjectInput) {
   const jar = resolve(input.jar);
   const directory = await realpath(dirname(spec));
   const modules = new Map<string, Buffer>();
-  for (const name of (await readdir(directory)).filter(name => name.endsWith('.tla')).sort()) modules.set(name, await regular(join(directory, name)));
-  const source: SourceInputs = { project, projectPhysical: await realpath(project), projectBytes, spec, config, configBytes: await regular(config),
-    jar, jarBytes: await regular(jar), jarPhysical: await realpath(jar), directory, modules, javaNames: [] };
+  const locations = [projectInput.location];
+  for (const name of (await readdir(directory)).filter(name => name.endsWith('.tla')).sort()) {
+    const module = await original(join(directory, name));
+    modules.set(name, module.bytes); locations.push(module.location);
+  }
+  const configInput = await original(config);
+  const jarInput = await original(jar);
+  locations.push(configInput.location, jarInput.location);
+  const source: SourceInputs = { project, projectPhysical: projectInput.location.physicalPath, projectBytes, spec, config, configBytes: configInput.bytes,
+    jar, jarBytes: jarInput.bytes, jarPhysical: jarInput.location.physicalPath, specReference: configuration.spec, configReference: configuration.config,
+    directory, modules, javaNames: [], locations };
   source.javaNames = await javaNamespace(directory, source.jarPhysical);
   return { configuration, source };
 }
 
 async function recheck(inputs: SourceInputs): Promise<void> {
+  for (const location of inputs.locations) {
+    const stat = await lstat(location.physicalPath, { bigint: true });
+    if (await realpath(location.path) !== location.physicalPath || !stat.isFile() || stat.dev !== location.device || stat.ino !== location.inode) return fail('original symbolic input identity changed during verification');
+  }
   if (await realpath(inputs.project) !== inputs.projectPhysical || !inputs.projectBytes.equals(await readFile(inputs.project))) return fail('project configuration changed during verification; rerun against stable inputs');
   if (await realpath(dirname(inputs.spec)) !== inputs.directory) return fail('symbolic model directory changed during verification');
   const names = (await readdir(inputs.directory)).filter(name => name.endsWith('.tla')).sort();
@@ -198,6 +222,20 @@ export async function inspectSymbolicProject(input: ProjectInput): Promise<Model
 
 /** Detached compiler data is not a provenance token and cannot enter the captured erasure checker. */
 export function readSymbolicCaptureForCompiler(capture: CheckedSymbolicCapture): CheckedSymbolicData { return compilerView(record(capture).data); }
+/** Archive the bytes captured before verification. This view never rereads the filesystem or includes JAR bytes. */
+export function readSymbolicCaptureSources(capture: CheckedSymbolicCapture) {
+  const { inputs } = record(capture);
+  const identity = (path: string): { kind: 'project-relative' | 'configured-absolute'; path: string } => ({ kind: isAbsolute(path) ? 'configured-absolute' : 'project-relative', path });
+  return frozenClone({
+    files: [
+      { path: inputs.project, identity: identity(basename(inputs.project)), kind: 'project', bytesBase64: inputs.projectBytes.toString('base64') },
+      { path: inputs.config, identity: identity(inputs.configReference), kind: 'configuration', bytesBase64: inputs.configBytes.toString('base64') },
+      ...[...inputs.modules].map(([name, bytes]) => ({ path: join(inputs.directory, name), identity: identity(join(dirname(inputs.specReference), name).split(sep).join('/')), kind: 'module', bytesBase64: bytes.toString('base64') })),
+    ],
+    inputs: inputs.locations,
+    directories: [{ path: dirname(inputs.spec), physicalPath: inputs.directory }],
+  });
+}
 export function inspectSymbolicCapture(capture: CheckedSymbolicCapture): SymbolicCaptureSummary { return frozenClone(record(capture).summary); }
 export async function recheckSymbolicCapture(capture: CheckedSymbolicCapture): Promise<void> { await recheck(record(capture).inputs); }
 

@@ -8,18 +8,35 @@ import { version } from './version.js';
 import { StaleOutputError } from './output-check.js';
 import { TlcFailureError } from './tlc-failure.js';
 import { checkUpdateStatus, UpdateStatusInputSchema } from './update-status.js';
+import { isAbsolute } from 'node:path';
+import { buildContractComparison } from './contract-check.js';
+import { contractDiagnostic } from './contract-diagnostics.js';
 
 export function createServer(): McpServer {
   const server = new McpServer({ name: 'sgd', version });
   const text = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }] });
   const guarded = async (work: () => Promise<unknown>) => {
     try { return text(await work()); }
-    catch (error) { return { ...text({ error: error instanceof Error ? error.message : String(error),
-      ...(error instanceof StaleOutputError || error instanceof TlcFailureError ? { diagnostic: error.diagnostic } : {}) }), isError: true }; }
+    catch (error) {
+      const diagnostic = error instanceof StaleOutputError || error instanceof TlcFailureError ? error.diagnostic : contractDiagnostic(error);
+      return { ...text({ error: error instanceof Error ? error.message : String(error),
+        ...(diagnostic === undefined ? {} : { diagnostic }) }), isError: true };
+    }
   };
   const paths = { project: z.string().describe('Absolute path to a project JSON file.'), jar: z.string().describe('Absolute path to tla2tools.jar.'), out: z.string().describe('Absolute output directory.') };
   const check = z.boolean().default(false).describe('Check stable generated artifacts and inventory without updating managed files. Incomplete output transactions are reported without repair.');
   const detail = z.enum(['summary', 'full']).default('summary').describe('Return the build summary by default, or the complete automaton IR with full. Inspect also returns the complete IR.');
+  const absolutePath = z.string().refine(isAbsolute, 'Supply an absolute path.');
+  server.registerTool('sgd_check_contracts', {
+    description: 'Compare controlled v3/v4 contract models against supplied baseline sources and publish managed evidence. Check required properties, baseline behavior, and declared composition. Required unsupported native obligations fail. Return a scoped summary; this does not establish independently selected acceptance, a preservation CI gate, or native application authority. Check mode retains previously published logs.',
+    inputSchema: z.object({
+      project: absolutePath.describe('Absolute path to the candidate contract-system project JSON.'),
+      baseline: absolutePath.describe('Absolute path to the supplied baseline contract-system project JSON.'),
+      jar: absolutePath.describe('Absolute path to the pinned tla2tools.jar.'),
+      out: absolutePath.describe('Absolute path to a separate managed evidence directory.'), check,
+    }).strict(),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  }, args => guarded(() => buildContractComparison(args)));
   server.registerTool('sgd_update_status', {
     description: 'Compare the running SGD runtime with public release metadata. Select stable releases, or alpha.N releases and stable promotions. Report matching archive metadata without downloading archives. Unknown results do not block modeling. This does not inspect installed plugins or the desktop app.',
     inputSchema: UpdateStatusInputSchema,

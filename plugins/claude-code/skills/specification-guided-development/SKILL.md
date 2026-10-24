@@ -43,6 +43,12 @@ Record the assumptions and finite bounds that make the abstraction valid.
 Choose algorithms, data structures, and internal organization within that contract and its assumptions.
 Do not enumerate unrelated implementation details in TLA+.
 
+When a `contract-system` root exists, read [the contract comparison guide](references/contracts.md).
+Use `sgd_check_contracts` for the supported v3/v4 model comparison.
+Keep required contracts outside that profile visible as unsupported obligations.
+Do not remove a required contract or property to obtain a passing result.
+A supplied-baseline comparison does not establish independent acceptance or native application authority.
+
 ## Select the modeling profile
 
 Read the relevant profile in [the modeling guide](references/modeling.md) before you create or change a model.
