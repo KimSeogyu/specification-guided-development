@@ -1,4 +1,5 @@
 use sgd_rust_bindings::{analyze, analyze_with_generated};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -27,11 +28,46 @@ fn binding() -> PathBuf {
 fn mutate(root: &Path, file: &str, from: &str, to: &str) {
     let path = root.join(file);
     let original = fs::read_to_string(&path).unwrap();
+    assert!(!from.is_empty(), "fixture mutation must name a target");
+    let from_lf = from.replace("\r\n", "\n");
+    let from_crlf = from_lf.replace('\n', "\r\n");
+    let matched = [(from_lf.as_str(), "\n"), (from_crlf.as_str(), "\r\n")]
+        .into_iter()
+        .filter_map(|(needle, newline)| {
+            original
+                .find(needle)
+                .map(|offset| (offset, needle, newline))
+        })
+        .min_by_key(|(offset, _, _)| *offset);
+    let (_, needle, newline) = matched.unwrap_or((0, from_lf.as_str(), "\n"));
     assert!(
-        original.contains(from),
+        original.contains(needle),
         "mutation target must exist: {file}: {from}"
     );
-    fs::write(path, original.replacen(from, to, 1)).unwrap();
+    let offset = original
+        .find(needle)
+        .expect("the target was asserted above");
+    let newline = if needle.contains('\n') {
+        newline
+    } else {
+        line_ending_near(&original, offset + needle.len())
+    };
+    let replacement = to.replace("\r\n", "\n").replace('\n', newline);
+    let mut mutated = original;
+    mutated.replace_range(offset..offset + needle.len(), &replacement);
+    fs::write(path, mutated).unwrap();
+}
+fn line_ending_near(text: &str, offset: usize) -> &'static str {
+    let next = text[offset..].find('\n').map(|index| offset + index);
+    let previous = text[..offset].rfind('\n');
+    if next
+        .or(previous)
+        .is_some_and(|index| index > 0 && text.as_bytes()[index - 1] == b'\r')
+    {
+        "\r\n"
+    } else {
+        "\n"
+    }
 }
 fn rejects(root: &Path, expected: &str) {
     let error = analyze(root, &binding()).expect_err("source mutation must fail closed");
@@ -40,6 +76,122 @@ fn rejects(root: &Path, expected: &str) {
         error.message.contains(expected),
         "unexpected diagnostic: {error}"
     );
+}
+
+fn rewrite_fixture_line_endings(directory: &Path, newline: &str) {
+    for entry in fs::read_dir(directory).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_type().unwrap().is_dir() {
+            rewrite_fixture_line_endings(&entry.path(), newline);
+        } else {
+            let text = fs::read_to_string(entry.path()).unwrap();
+            fs::write(
+                entry.path(),
+                text.replace("\r\n", "\n").replace('\n', newline),
+            )
+            .unwrap();
+        }
+    }
+}
+
+#[test]
+fn crlf_fixture_analysis_preserves_bytes_and_refuses_actual_semantic_mutations() {
+    let temp = fixture();
+    rewrite_fixture_line_endings(temp.path(), "\r\n");
+    let plan = analyze(temp.path(), &binding()).unwrap();
+    assert_eq!(
+        plan.facts
+            .iter()
+            .map(|fact| fact.fields.len())
+            .collect::<Vec<_>>(),
+        [18, 9, 13, 10]
+    );
+    for source in &plan.sources {
+        let bytes = fs::read(temp.path().join(&source.path)).unwrap();
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        assert!(
+            text.contains("\r\n"),
+            "fixture source must contain CRLF: {}",
+            source.path
+        );
+        assert!(!text.replace("\r\n", "").contains(['\r', '\n']));
+        let digest: String = Sha256::digest(&bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        assert_eq!(
+            source.sha256, digest,
+            "source identity must hash actual CRLF bytes: {}",
+            source.path
+        );
+    }
+    for (file, from, to, diagnostic) in [
+        (
+            "crates/collector/src/vision/rows.rs",
+            "#[derive(Clone, Debug)]\npub struct KlineFact",
+            "#[derive(Debug)]\npub struct KlineFact",
+            "requires standard derived Clone",
+        ),
+        (
+            "crates/collector/src/vision/rows.rs",
+            "            && self.count == other.count\n",
+            "",
+            "count is omitted",
+        ),
+        (
+            "crates/core/src/timestamps.rs",
+            "pub const fn micros(self) -> UtcMicros {\n                self.0",
+            "pub const fn micros(self) -> UtcMicros {\n                UtcMicros::from_micros(0)",
+            "exact private representation",
+        ),
+        (
+            "crates/collector/src/vision/rows.rs",
+            "pub interval_us: i64,",
+            "pub interval_us: i64,\n    pub extra_payload: i64,",
+            "extra_payload is omitted",
+        ),
+        (
+            "crates/collector/src/vision/rows.rs",
+            "\n                        | (SCHEMA_KLINE_HEADER, SCHEMA_KLINE_HEADERLESS)",
+            "",
+            "not symmetric",
+        ),
+    ] {
+        let temp = fixture();
+        rewrite_fixture_line_endings(temp.path(), "\r\n");
+        mutate(temp.path(), file, from, to);
+        let mutated = fs::read_to_string(temp.path().join(file)).unwrap();
+        assert!(mutated.contains("\r\n"));
+        assert!(
+            !mutated.replace("\r\n", "").contains(['\r', '\n']),
+            "mutation must preserve CRLF: {file}"
+        );
+        rejects(temp.path(), diagnostic);
+    }
+}
+
+#[test]
+fn crlf_multiline_mutation_preserves_an_unrelated_lf_only_hook() {
+    let temp = fixture();
+    rewrite_fixture_line_endings(temp.path(), "\r\n");
+    let file = "crates/collector/src/vision/rows.rs";
+    let path = temp.path().join(file);
+    let hook = "\n// LF-only generated fixture hook\n";
+    let original = format!("{}{hook}", fs::read_to_string(&path).unwrap());
+    fs::write(&path, original).unwrap();
+    mutate(
+        temp.path(),
+        file,
+        "#[derive(Clone, Debug)]\npub struct KlineFact",
+        "#[derive(Debug)]\npub struct KlineFact",
+    );
+    let mutated = fs::read_to_string(path).unwrap();
+    assert!(mutated.contains("#[derive(Debug)]\r\npub struct KlineFact"));
+    assert!(
+        mutated.ends_with(hook),
+        "unrelated LF-only bytes must remain unchanged"
+    );
+    rejects(temp.path(), "requires standard derived Clone");
 }
 
 #[test]

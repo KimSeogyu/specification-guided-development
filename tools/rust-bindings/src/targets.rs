@@ -1473,4 +1473,40 @@ mod tests {
             "{error}"
         );
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn dependency_junctions_remain_refused_before_metadata() {
+        let fixture = dependency_fixture();
+        let link = fixture.path().join("helper");
+        let target = fixture.path().join("real-helper");
+        fs::rename(&link, &target).unwrap();
+        let output = Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "$ErrorActionPreference = 'Stop'; New-Item -ItemType Junction -Path $env:SGD_JUNCTION_LINK -Target $env:SGD_JUNCTION_TARGET | Out-Null",
+            ])
+            .env("SGD_JUNCTION_LINK", &link)
+            .env("SGD_JUNCTION_TARGET", &target)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "junction fixture must be created: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let result = CargoScope::capture(fixture.path());
+        fs::remove_dir(&link).unwrap();
+        let error = match result {
+            Ok(_) => panic!("a junction must not be normalized into an admitted source directory"),
+            Err(error) => error,
+        };
+        assert!(
+            error.message.contains("symlinks are unsupported"),
+            "{error}"
+        );
+        assert!(target.join("Cargo.toml").is_file());
+    }
 }
