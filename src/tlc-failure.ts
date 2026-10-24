@@ -14,11 +14,26 @@ export const TlcFailureSchema = z.union([
 export type TlcFailure = z.infer<typeof TlcFailureSchema>;
 export type TlcPhase = z.infer<typeof PhaseSchema>;
 
+function nextAction(failure: TlcFailure): string {
+  switch (failure.kind) {
+    case 'invariant_violation': return 'Review the reported invariant and error output, correct the model or configuration, then rerun verification.';
+    case 'parse_error': return 'Correct the reported syntax or semantic errors, then rerun verification.';
+    case 'timeout': return 'Review model size and runner limits before retrying verification.';
+    case 'unknown': return 'Review the original error and runner environment before retrying. The failure cause was not classified.';
+    default: { const unexpected: never = failure; return unexpected; }
+  }
+}
+
 export const TlcFailureDiagnosticSchema = z.object({
   schema: z.literal('sgd-tlc-failure-v1'),
   failure: TlcFailureSchema,
   counterexample: z.object({ status: z.literal('not-retained') }).strict(),
-}).strict();
+  nextAction: z.string(),
+}).strict().superRefine((diagnostic, context) => {
+  if (diagnostic.nextAction !== nextAction(diagnostic.failure)) {
+    context.addIssue({ code: 'custom', path: ['nextAction'], message: 'The next action must match the classified failure.' });
+  }
+});
 export type TlcFailureDiagnostic = z.infer<typeof TlcFailureDiagnosticSchema>;
 
 /** The controlled runner removes its private snapshots on every outcome. */
@@ -28,7 +43,7 @@ export class TlcFailureError extends Error {
   constructor(message: string, failure: TlcFailure, options?: ErrorOptions) {
     super(message, options);
     this.name = 'TlcFailureError';
-    this.diagnostic = { schema: 'sgd-tlc-failure-v1', failure, counterexample: { status: 'not-retained' } };
+    this.diagnostic = { schema: 'sgd-tlc-failure-v1', failure, counterexample: { status: 'not-retained' }, nextAction: nextAction(failure) };
   }
 }
 

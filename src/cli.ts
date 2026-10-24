@@ -5,6 +5,7 @@ import { serve } from './mcp.js';
 import { verifySymbolicErasureFiles } from './symbolic-refinement.js';
 import { version } from './version.js';
 import { StaleOutputError } from './output-check.js';
+import { TlcFailureError } from './tlc-failure.js';
 import { checkUpdateStatus, UpdateStatusInputSchema } from './update-status.js';
 
 const help = `sgd ${version}
@@ -89,6 +90,6 @@ async function main(args: string[]): Promise<void> {
 
 main(process.argv.slice(2)).catch((error: unknown) => {
   process.stderr.write(JSON.stringify({ error: error instanceof Error ? error.message : String(error),
-    ...(error instanceof StaleOutputError ? { diagnostic: error.diagnostic } : {}) }) + '\n');
+    ...(error instanceof StaleOutputError || error instanceof TlcFailureError ? { diagnostic: error.diagnostic } : {}) }) + '\n');
   process.exitCode = 2;
 });

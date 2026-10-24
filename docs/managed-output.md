@@ -33,6 +33,25 @@ Generated source byte equality does not establish semantic equivalence. A change
 
 JavaScript API consumers can catch `StaleOutputError` exported from `dist/compiler.js` and inspect its `diagnostic`. `StaleOutputDiagnosticSchema` validates the serialized report. Lock, journal, symlink, input-verification, and invalid inventory failures can stop before output comparison and retain their existing diagnostics.
 
+## Inspect a controlled TLC failure
+
+In the source checkout, failures represented by `TlcFailureError` in the controlled runner or executable-graph validation add a `diagnostic` with schema `sgd-tlc-failure-v1`. Other configuration, input, and environment errors retain their existing responses. CLI commands retain their JSON `error` string on stderr and exit with code `2`. MCP calls retain their JSON text `error` and `isError: true`. The diagnostic adds the following fields:
+
+| Field | Meaning |
+| --- | --- |
+| `failure.kind` | `invariant_violation`, `timeout`, `parse_error`, or `unknown`, selected from the evidence below. |
+| `failure.phase` | The failed SANY, XML, TLC, source-admission, or executable-graph stage. |
+| `failure.invariant` | The configured invariant name, present only for a classified invariant violation. |
+| `failure.evidence` | The pinned message code, recognized SANY summary, or owned deadline. Unknown failures have no classified evidence. |
+| `counterexample.status` | `not-retained`. The runner removes its private snapshot after success or failure. |
+| `nextAction` | A short review or correction step based on the classified kind. |
+
+An invariant violation requires a complete pinned TLC error frame with code `2107` or `2110` and a name from the current configuration. A timeout requires the runner's own deadline to expire. Recognized SANY syntax or semantic errors, or pinned TLC parsing messages, support `parse_error`. Within these typed boundaries, external termination, spawn failure, output limits, malformed messages, unsupported source constructs, and ambiguous executable graphs remain `unknown`.
+
+The existing error string retains its bounded output tail. A complete failure log and a counterexample file are not retained, and the diagnostic exposes no `tracePath`. JavaScript callers can import `TlcFailureError` and `TlcFailureDiagnosticSchema` from `dist/tlc-failure.js`. When a subprocess error exists, it remains available as `cause`. The legacy v1 runner accepts arbitrary JARs and keeps its existing error response without this controlled classification.
+
+Classification does not authorize generation. Successful generation still requires normal process completion, an empty queue, no error or warning, stable inputs, a valid graph, and managed publication. Check-only runs retain their existing comparison behavior without publishing generated files. Fresh failure-log export and retained counterexamples remain separate work.
+
 ## Manual cases and limits
 
 - A live owner refuses concurrent generation. Use a separate output directory.

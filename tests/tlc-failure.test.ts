@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 import { runProcessWithDeadline } from '../src/finite-tlc.js';
-import { classifyControlledTlcFailure, hasCleanTlcCompletion, TlcFailureDiagnosticSchema, TlcFailureError } from '../src/tlc-failure.js';
+import { classifyControlledTlcFailure, hasCleanTlcCompletion, TlcFailureDiagnosticSchema, TlcFailureError, type TlcFailure } from '../src/tlc-failure.js';
 
 const frame = (code: number, severity: number, body: string): string => `@!@!@STARTMSG ${code}:${severity} @!@!@\n${body}\n@!@!@ENDMSG ${code} @!@!@\n`;
 const invariant = frame(2110, 1, 'Invariant Safe is violated.');
@@ -20,10 +20,25 @@ test('typed errors preserve text and original cause and expose no expired counte
   assert.equal(error.cause, cause);
   assert.deepEqual(TlcFailureDiagnosticSchema.parse(error.diagnostic), {
     schema: 'sgd-tlc-failure-v1', failure: { kind: 'unknown', phase: 'tlc' }, counterexample: { status: 'not-retained' },
+    nextAction: 'Review the original error and runner environment before retrying. The failure cause was not classified.',
   });
   assert.equal(JSON.stringify(error.diagnostic).includes('tracePath'), false);
   assert.equal(TlcFailureDiagnosticSchema.safeParse({ ...error.diagnostic, tracePath: '/removed/states' }).success, false);
   assert.equal(TlcFailureDiagnosticSchema.safeParse({ ...error.diagnostic, failure: { kind: 'invariant_violation', phase: 'sany', invariant: 'Safe' } }).success, false);
+});
+
+test('next actions follow typed evidence and do not relabel unknown failures', () => {
+  for (const [failure, action] of [
+    [{ kind: 'invariant_violation', phase: 'tlc', invariant: 'Safe', evidence: { kind: 'pinned-tlc-message', code: 2110 } }, 'Review the reported invariant and error output, correct the model or configuration, then rerun verification.'],
+    [{ kind: 'parse_error', phase: 'sany', evidence: { kind: 'sany-error-summary', stage: 'syntax' } }, 'Correct the reported syntax or semantic errors, then rerun verification.'],
+    [{ kind: 'timeout', phase: 'tlc', evidence: { kind: 'owned-deadline' } }, 'Review model size and runner limits before retrying verification.'],
+    [{ kind: 'unknown', phase: 'executable-graph' }, 'Review the original error and runner environment before retrying. The failure cause was not classified.'],
+  ] satisfies [TlcFailure, string][]) {
+    const error = new TlcFailureError('TLC204: original error', failure);
+    assert.equal(TlcFailureDiagnosticSchema.parse(error.diagnostic).nextAction, action);
+    assert.deepEqual(error.diagnostic.failure, failure);
+    assert.equal(TlcFailureDiagnosticSchema.safeParse({ ...error.diagnostic, nextAction: 'Treat the model as verified.' }).success, false);
+  }
 });
 
 test('only complete pinned error frames with a configured invariant identify violations', () => {
