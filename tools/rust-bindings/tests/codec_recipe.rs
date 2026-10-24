@@ -645,6 +645,26 @@ fn qualified_standard_variants_remain_resolved_with_colliding_value_parameters()
 }
 
 #[test]
+fn captured_free_function_reexport_aliases_do_not_become_trait_permissions() {
+    let fixture = fixture();
+    let path = fixture.root.join("crates/core/src/lib.rs");
+    let source = fs::read_to_string(&path).unwrap();
+    assert_eq!(source.matches("pub use time::expected_close;").count(), 1);
+    fs::write(
+        &path,
+        source.replace(
+            "pub use time::expected_close;",
+            "pub use time::expected_close as close_at;",
+        ),
+    )
+    .unwrap();
+    let checked = analyze_codec_recipe(&fixture.root, &fixture.binding).unwrap();
+    assert!(!checked.report().storage_authority());
+    checked.recheck().unwrap();
+    fixture.assert_no_effect();
+}
+
+#[test]
 fn changed_binding_bytes_refuse_the_original_capture_without_restoring_authority() {
     let fixture = fixture();
     let checked = fixture.analyze();

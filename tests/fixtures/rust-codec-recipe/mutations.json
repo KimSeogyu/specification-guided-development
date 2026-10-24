@@ -516,6 +516,102 @@
           "to": "-> std::result::Result::Result<FundingFact, SymbolError>"
         }
       ]
+    },
+    {
+      "id": "local-trait-overrides-primitive-method",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "A local trait can alter primitive receiver dispatch even when the selected constructor body is unchanged.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/core/src/symbol.rs",
+          "from": "use std::fmt;",
+          "to": "use std::fmt;\ntrait PrimitiveAsciiOverride { fn is_ascii_uppercase(self) -> bool; }\nimpl PrimitiveAsciiOverride for u8 {\n    fn is_ascii_uppercase(self) -> bool {\n        let _ = std::fs::write(\".sgd-codec-mutation-must-not-exist\", b\"trait effect\");\n        true\n    }\n}\n"
+        }
+      ]
+    },
+    {
+      "id": "value-reexport-cannot-hide-same-named-trait",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "Classifying a captured free function must not ignore a same-spelled trait in the type namespace.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/core/src/time.rs",
+          "from": "use std::fmt;",
+          "to": "use std::fmt;\npub trait expected_close { fn is_ascii_uppercase(self) -> bool; }\nimpl expected_close for u8 { fn is_ascii_uppercase(self) -> bool { true } }\n"
+        }
+      ]
+    },
+    {
+      "id": "value-reexport-cannot-hide-unresolved-type-import",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "A local free function must not hide an unresolved foreign type import with the same name.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/core/src/time.rs",
+          "from": "use std::fmt;",
+          "to": "use std::fmt;\npub use std::iter::Iterator as expected_close;\n"
+        }
+      ]
+    },
+    {
+      "id": "const-reexport-cannot-hide-local-trait-import",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "A resolved constant must not hide a coexisting imported trait with a selected method.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/core/src/time.rs",
+          "from": "use std::fmt;",
+          "to": "use std::fmt;\npub trait ValueScopeOverride { fn is_ascii_uppercase(self) -> bool; }\npub use ValueScopeOverride as value_scope;\npub const value_scope: i64 = 1;\n"
+        },
+        {
+          "operation": "replace-once",
+          "path": "crates/core/src/lib.rs",
+          "from": "pub use time::expected_close;",
+          "to": "pub use time::expected_close;\npub use time::value_scope;"
+        }
+      ]
+    },
+    {
+      "id": "const-reexport-cannot-hide-unresolved-type-import",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "A resolved constant must not hide an unresolved foreign trait import with the same name.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/core/src/time.rs",
+          "from": "use std::fmt;",
+          "to": "use std::fmt;\npub use std::fmt::Debug as value_scope;\npub const value_scope: i64 = 1;\n"
+        },
+        {
+          "operation": "replace-once",
+          "path": "crates/core/src/lib.rs",
+          "from": "pub use time::expected_close;",
+          "to": "pub use time::expected_close;\npub use time::value_scope;"
+        }
+      ]
+    },
+    {
+      "id": "conditional-constant-cannot-classify-reexported-trait",
+      "phase": "before-analysis",
+      "expected": "analysis-refusal",
+      "requirement": "A conditional constant in a re-export chain must not provide evidence about a coexisting foreign type import.",
+      "edits": [
+        {
+          "operation": "replace-once",
+          "path": "crates/core/src/time.rs",
+          "from": "use std::fmt;",
+          "to": "use std::fmt;\nmod value_bridge {\n    pub use std::fmt::Debug as expected_close;\n    #[cfg(feature = \"never\")]\n    pub const expected_close: i64 = 1;\n}\npub use value_bridge::expected_close;\n"
+        }
+      ]
     }
   ]
 }

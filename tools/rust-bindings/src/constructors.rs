@@ -1,7 +1,7 @@
 use crate::codec;
 use crate::error::{Error, Result};
 use crate::model::Codec;
-use crate::source::{item_name, Database, Definition, Implementation};
+use crate::source::{conditional, item_name, Database, Definition, Implementation};
 use serde::Serialize;
 use std::collections::BTreeSet;
 use syn::spanned::Spanned;
@@ -878,6 +878,7 @@ fn unshadowed(db: &Database, module: &str, name: &str) -> Result<()> {
     while let Some(module) = ancestor {
         let scope = &db.modules[module];
         if scope.definitions.contains_key(name)
+            || scope.children.contains(name)
             || scope.imports.contains_key(name)
             || db
                 .production_items
@@ -924,6 +925,12 @@ fn check_trait_scope(db: &Database, module: &str) -> Result<()> {
             }
         }
         for (name, import) in &scope.imports {
+            if let Some(value) =
+                resolve_known_value(db, module, std::slice::from_ref(name), &mut BTreeSet::new())?
+            {
+                db.check_scope(&value)?;
+                continue;
+            }
             if let Ok(definition) = db.resolve(module, std::slice::from_ref(name)) {
                 if let Item::Trait(item) = &definition.item {
                     if item.items.iter().any(selected_method) {
@@ -948,6 +955,129 @@ fn check_trait_scope(db: &Database, module: &str) -> Result<()> {
         ancestor = module.rsplit_once("::").map(|(parent, _)| parent);
     }
     Ok(())
+}
+
+fn resolve_known_value(
+    db: &Database,
+    module: &str,
+    path: &[String],
+    seen: &mut BTreeSet<String>,
+) -> Result<Option<Definition>> {
+    if path.is_empty() {
+        return Ok(None);
+    }
+    if !seen.insert(format!("{module}:{}", path.join("::"))) || seen.len() > 64 {
+        return Err(Error::new(
+            "cyclic or excessively deep constructor value import resolution",
+        ));
+    }
+    let scope = db
+        .modules
+        .get(module)
+        .ok_or_else(|| Error::new("constructor value import names an unknown module"))?;
+    let mut context = module.to_owned();
+    let mut rest = path;
+    if path[0] == "crate" {
+        context = scope.crate_id.clone();
+        rest = &path[1..];
+    } else if path[0] == "self" {
+        rest = &path[1..];
+    } else if path[0] == "super" {
+        while rest.first().is_some_and(|part| part == "super") {
+            context = context
+                .rsplit_once("::")
+                .ok_or_else(|| Error::new("constructor value import leaves its crate"))?
+                .0
+                .into();
+            rest = &rest[1..];
+        }
+    } else if let Some(target) = db.crates[&scope.crate_id].dependencies.get(&path[0]) {
+        let Some(target) = target else {
+            return Ok(None);
+        };
+        context = target.clone();
+        rest = &path[1..];
+    } else if let Some(import) = scope.imports.get(&path[0]) {
+        let mut expanded = import.path.clone();
+        expanded.extend_from_slice(&path[1..]);
+        return resolve_known_value(db, module, &expanded, seen);
+    }
+    if rest.is_empty() {
+        return Ok(None);
+    }
+    for (index, part) in rest[..rest.len() - 1].iter().enumerate() {
+        let Some(scope) = db.modules.get(&context) else {
+            return Ok(None);
+        };
+        if scope.children.contains(part) {
+            context = format!("{context}::{part}");
+        } else if let Some(import) = scope.imports.get(part) {
+            let mut expanded = import.path.clone();
+            expanded.extend_from_slice(&rest[index + 1..]);
+            return resolve_known_value(db, &context, &expanded, seen);
+        } else {
+            return Ok(None);
+        }
+    }
+    let Some(scope) = db.modules.get(&context) else {
+        return Ok(None);
+    };
+    let name = rest.last().unwrap();
+    // A type and a free function can legally have the same name. Classifying
+    // the value namespace must never hide an imported trait in the type one.
+    let type_resolution = match scope.imports.get(name) {
+        Some(import) => db.resolve(&context, &import.path),
+        None => db.resolve(&context, std::slice::from_ref(name)),
+    };
+    if let Ok(definition) = &type_resolution {
+        db.check_scope(definition)?;
+        if let Item::Trait(item) = &definition.item {
+            if item.items.iter().any(|item| matches!(item, syn::TraitItem::Fn(method) if matches!(method.sig.ident.to_string().as_str(),
+                "is_empty" | "len" | "bytes" | "all" | "is_ascii_uppercase" | "is_ascii_digit" | "to_owned")))
+            {
+                return Err(Error::at(&definition.file, item.span(), "constructor value import also resolves to a trait that can replace a selected standard operation"));
+            }
+        }
+    }
+    let values = db
+        .production_items
+        .iter()
+        .filter(|(owner, _, item)| {
+            owner == &context
+                && match item {
+                    Item::Fn(item) => item.sig.ident == name.as_str(),
+                    Item::Static(item) => item.ident == name.as_str(),
+                    Item::Const(item) => item.ident == name.as_str(),
+                    _ => false,
+                }
+        })
+        .collect::<Vec<_>>();
+    if values.len() > 1 {
+        return Err(Error::new(format!(
+            "{context}::{name}: constructor value import is ambiguous"
+        )));
+    }
+    if let Some((_, file, item)) = values.first() {
+        if type_resolution.is_err() && scope.imports.contains_key(name) {
+            return Err(Error::at(file, item.span(), format!("constructor value {name} also names an unresolved type import; its trait scope is outside the recipe profile")));
+        }
+        let attrs = match item {
+            Item::Fn(item) => &item.attrs,
+            Item::Static(item) => &item.attrs,
+            Item::Const(item) => &item.attrs,
+            _ => unreachable!(),
+        };
+        return Ok(Some(Definition {
+            module: context,
+            file: (*file).clone(),
+            item: (*item).clone(),
+            conditional: scope.conditional || conditional(attrs),
+        }));
+    }
+    if let Some(import) = scope.imports.get(name) {
+        return resolve_known_value(db, &context, &import.path, seen);
+    }
+    Ok(None)
 }
 
 fn method_item(

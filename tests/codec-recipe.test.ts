@@ -59,6 +59,52 @@ test('the real native Funding recipe remains evidence with complete raw fields a
   }
 });
 
+test('the native API accepts Cargo package identities for workspace members whose directory matches their name', async () => {
+  const data = await fixture();
+  try {
+    const manifest = join(data.application, 'Cargo.toml');
+    const members = 'members = ["crates/core", "crates/collector"]';
+    const text = await readFile(manifest, 'utf8');
+    assert.equal(text.split(members).length, 2);
+    await writeFile(manifest, text.replace(members, 'members = ["crates/core", "crates/collector", "xtask"]'));
+    await mkdir(join(data.application, 'xtask/src'), { recursive: true });
+    await writeFile(join(data.application, 'xtask/Cargo.toml'), '[package]\nname = "xtask"\nversion = "0.0.0"\nedition = "2021"\n[dependencies]\nparangsae-core = { path = "../crates/core" }\n');
+    await writeFile(join(data.application, 'xtask/src/main.rs'), 'fn main() {}\n');
+    const lock = join(data.application, 'Cargo.lock');
+    await writeFile(lock, `${await readFile(lock, 'utf8')}\n[[package]]\nname = "xtask"\nversion = "0.0.0"\ndependencies = [\n "parangsae-core",\n]\n`);
+
+    const result = await analyzeCodecRecipe(data);
+    const package_ = result.discovery.packages.find(entry => entry.name === 'xtask');
+    assert.ok(package_);
+    assert.equal(package_.origin, 'local');
+    assert.equal(package_.source, null);
+    assert.equal(package_.checksum, null);
+    assert.ok(result.discovery.localTargets.some(target => target.packageId === package_.packageId && target.kind === 'bin' && target.source === 'xtask/src/main.rs'));
+    assert.ok(result.discovery.dependencies.some(dependency => dependency.packageId === package_.packageId && dependency.alias === 'parangsae_core'));
+    assert.equal(result.storageAuthority, false);
+    await recheckCodecRecipe({ report: result });
+    await writeFile(join(data.application, 'xtask/src/main.rs'), 'fn main() { let _changed = true; }\n');
+    await assert.rejects(recheckCodecRecipe({ report: result }), /TLC309:.*changed after analysis/);
+  } finally { await rm(data.root, { recursive: true, force: true }); }
+});
+
+test('package identities are opaque report references and parsed reports cannot restore live source evidence', async () => {
+  const original = report();
+  const inventory = structuredClone(original);
+  const names = new Map(inventory.discovery.packages.map((package_, index) => [package_.packageId, `opaque Cargo reference ${index + 1}`]));
+  const rename = (identity: string): string => { const name = names.get(identity); assert.ok(name); return name; };
+  inventory.library.packageId = rename(inventory.library.packageId);
+  for (const package_ of inventory.discovery.packages) package_.packageId = rename(package_.packageId);
+  for (const target of inventory.discovery.localTargets) target.packageId = rename(target.packageId);
+  for (const dependency of inventory.discovery.dependencies) {
+    dependency.packageId = rename(dependency.packageId);
+    dependency.dependencyPackageId = rename(dependency.dependencyPackageId);
+  }
+  const parsed = CodecRecipeReportSchema.parse(inventory);
+  assert.equal(parsed.storageAuthority, false);
+  await assert.rejects(recheckCodecRecipe({ report: parsed }), /TLC309:.*exact report.*serialized reports/);
+});
+
 test('the report schema refuses malformed column relations, constructors, identities, discovery, and portable paths', () => {
   const original = report();
   const first = original.columns[0]; const second = original.columns[1];
@@ -81,11 +127,16 @@ test('the report schema refuses malformed column relations, constructors, identi
     ['uncaptured entrypoint', { ...original, entrypoints: { ...original.entrypoints, encode: { ...original.entrypoints.encode, file: 'uncaptured.rs' } } }],
     ['wrong canonical crate', { ...original, wire: { ...original.wire, crateId: 'different_crate' } }],
     ['unselected library', { ...original, library: { ...original.library, target: 'other_target' } }],
+    ['duplicate package identity', { ...original, discovery: { ...original.discovery, packages: [...original.discovery.packages, original.discovery.packages[0]] } }],
+    ['unknown local target package', { ...original, discovery: { ...original.discovery, localTargets: original.discovery.localTargets.map(target => ({ ...target, packageId: 'absent package' })) } }],
     ['absent and present source', { ...original, absentInputs: [...original.absentInputs, original.library.source] }],
     ['unknown dependency package', { ...original, discovery: { ...original.discovery, dependencies: original.discovery.dependencies.map(dependency => ({ ...dependency, dependencyPackageId: 'path+file:///absent#absent@0.0.0' })) } }],
     ['local feature admission', { ...original, discovery: { ...original.discovery, packages: original.discovery.packages.map(package_ => ({ ...package_, enabledFeatures: ['unproved'] })) } }],
     ['invalid package origin', { ...original, discovery: { ...original.discovery, packages: original.discovery.packages.map(package_ => ({ ...package_, source: 'git+https://example.com/untrusted' })) } }],
   ];
+  for (const identity of ['', 'package\nidentity', 'package\0identity', 'package\x7fidentity']) {
+    cases.push([`invalid identity token ${JSON.stringify(identity)}`, { ...original, discovery: { ...original.discovery, packages: original.discovery.packages.map(package_ => ({ ...package_, packageId: identity })) } }]);
+  }
   if (second.decode.kind === 'tuple-wrap') {
     const constructor = second.decode.constructor;
     let tooDeep: unknown = { kind: 'identity', scalar: 'i64' };

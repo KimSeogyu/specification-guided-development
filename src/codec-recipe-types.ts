@@ -18,17 +18,7 @@ const RelativePath = z.string().min(1).refine(value => {
     !/[. ]$/.test(part) && !/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part));
 }, 'Expected a portable ordinary relative path');
 
-const PackageId = NonemptyText.refine(value => {
-  const marker = value.lastIndexOf('#');
-  if (marker < 0 || !/^[A-Za-z0-9][A-Za-z0-9_-]*@[^\s#]+$/.test(value.slice(marker + 1))) return false;
-  const origin = value.slice(0, marker);
-  if (origin === 'registry+https://github.com/rust-lang/crates.io-index') return true;
-  if (!origin.startsWith('path+file:')) return false;
-  try {
-    const url = new URL(origin.slice('path+'.length));
-    return url.protocol === 'file:' && url.href === origin.slice('path+'.length) && !url.search && !url.hash;
-  } catch { return false; }
-}, 'Expected a canonical local or default-registry Cargo package identity');
+const PackageId = NonemptyText;
 
 const SourceIdentity = z.object({ path: RelativePath, sha256: HexDigest }).strict();
 const ResolvedItem = z.object({
@@ -145,7 +135,6 @@ export const CodecRecipeReportSchema = Report.superRefine((report, context) => {
   const packages = new Map(report.discovery.packages.map(package_ => [package_.packageId, package_]));
   unique(report.discovery.packages.map(package_ => package_.packageId), 'Discovered package identities');
   for (const package_ of report.discovery.packages) {
-    if (!package_.packageId.endsWith(`#${package_.name}@${package_.version}`) || (package_.origin === 'local' ? !package_.packageId.startsWith('path+file:') : !package_.packageId.startsWith(`${package_.source}#`))) issue('Cargo package identity must match its origin, name, and version');
     unique(package_.enabledFeatures, 'Enabled package features');
     unique(package_.targetKinds, 'Package target kinds');
     if (package_.origin === 'local' && (package_.enabledFeatures.length !== 0 || Object.keys(package_.declaredFeatures).length !== 0)) issue('Local codec packages cannot claim feature admission');

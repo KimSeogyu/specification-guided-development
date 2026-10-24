@@ -28,6 +28,8 @@ The literal descriptor is an array of `(physical_column, native_field)` pairs. E
 
 Constructor analysis checks actual resolved types, signatures, complete bodies, and lifecycle constraints. Supported recipes are exact scalar identity, one-field tuple wrapping, and the current ASCII Symbol validation algorithm. The Symbol recipe checks the empty and 32-byte limits, uppercase-or-digit predicate, exact error variants, and standard owned string copy. It does not trust a function named `new`. Expanded timestamp constructors undergo the same body and type checks. Unknown method dispatch, trait or value shadowing, custom lifecycle behavior, and unsupported constructors fail.
 
+Captured ordinary function, static, and constant re-exports do not grant method permissions. The checker also inspects a type import with the same name. A known value cannot hide a selected local trait or an unresolved foreign trait import. Conditional definitions cannot provide that classification evidence.
+
 Native equality and storage representation remain distinct. Funding persists all nine fields, including the original `received_ts` omitted by native Eq. Signed rates, original interval and schema integers, and exact timestamp values survive. The recipe does not impose CSV ingestion rules on stored values.
 
 The descriptor states the current source format. A coordinated change to the descriptor and both leaves can describe a different format. The source recipe alone does not prove compatibility with existing Parquet files. The [native fixture](../tests/fixtures/rust-codec-recipe/parangsae/crates/collector/src/funding_codec_tests.rs) compares physical fields independently so paired encoder and decoder mistakes cannot hide in a round trip. Actual Parquet compatibility remains part of the resource integration.
@@ -40,9 +42,20 @@ Before `cargo metadata --offline --locked`, preflight refuses unsupported local 
 
 The discovery report has `scope: "discovered-targets-only"`. Its feature view is Cargo's unfiltered metadata inventory union. It is not an exact compiler host and target unit graph. The checked Fact library is tied to its actual Cargo package, target name, crate name, and source path. Other target bodies and filesystem sinks have not passed effect analysis merely because Cargo listed them.
 
+Package IDs remain opaque reference tokens, as required by [Cargo metadata compatibility](https://doc.rust-lang.org/cargo/commands/cargo-metadata.html#compatibility). The schema checks their uniqueness and references. It does not infer a package name, version, or source from the ID spelling. Native discovery checks those separate metadata fields against captured manifests and lock identities.
+
 Final recheck repeats preflight and metadata discovery and verifies every captured byte and absence probe. This detects ordinary changes across analysis phases. It does not create an atomic filesystem snapshot or attest the trusted environment.
 
-The new captured route does not reuse the old generated-output exclusions. The current Parangsae generated modules still need a controlled expected-source overlay before this profile can feed resource generation. A generated directory name or caller-supplied trusted path cannot provide that evidence.
+The new captured route does not reuse the old generated-output exclusions. Read-only analysis passed on a copy of current Parangsae sources plus the Funding leaves, including existing generated modules. Bootstrap and regeneration still need a controlled expected-source mechanism before this profile can feed new resource output. A generated directory name or caller-supplied trusted path cannot provide that evidence.
+
+The source-copy probe has a repeatable command:
+
+```sh
+npm run build
+npm run verify:codec-recipe -- --application /path/to/parangsae
+```
+
+The probe copies every tracked current working-tree file into a private temporary directory. It adds only the fixture codec, wire, and their module declarations to that copy. Existing tracked generated modules remain present. It checks the nine physical mappings, rejects a same-scalar field substitution, and rechecks the restored recipe. It compares the original tracked inventory, index, and file bytes across phases. It does not invoke Git status, build the application, or write to the original application. The copy is not an atomic snapshot or an assertion about the committed tree. Its successful result remains source evidence with `storageAuthority: false`.
 
 ## Report and limits
 

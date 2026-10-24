@@ -7,3 +7,5 @@ pub use fixed::{Amount, Qty, Ratio};
 pub use symbol::Symbol;
 pub use time::UtcMicros;
 pub use timestamps::{AvailableTs, EventTs, ReceivedTs};
+
+pub use time::expected_close;
