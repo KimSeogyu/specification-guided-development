@@ -35,22 +35,25 @@ JavaScript API consumers can catch `StaleOutputError` exported from `dist/compil
 
 ## Inspect a controlled TLC failure
 
-In the source checkout, failures represented by `TlcFailureError` in the controlled runner or executable-graph validation add a `diagnostic` with schema `sgd-tlc-failure-v1`. Other configuration, input, and environment errors retain their existing responses. CLI commands retain their JSON `error` string on stderr and exit with code `2`. MCP calls retain their JSON text `error` and `isError: true`. The diagnostic adds the following fields:
+In the source checkout, failures represented by `TlcFailureError` in the controlled runner or executable-graph validation add a `diagnostic` with schema `sgd-tlc-failure-v1`. Other configuration, input, and environment errors retain their existing responses. CLI commands keep the JSON `error: string` field on stderr and exit with code `2`. MCP calls keep the JSON text `error` field and `isError: true`. The diagnostic adds the following fields:
 
 | Field | Meaning |
 | --- | --- |
-| `failure.kind` | `invariant_violation`, `timeout`, `parse_error`, or `unknown`, selected from the evidence below. |
+| `failure.kind` | `invariant_violation`, `action_property_violation`, `timeout`, `parse_error`, or `unknown`, selected from the evidence below. |
 | `failure.phase` | The failed SANY, XML, TLC, source-admission, or executable-graph stage. |
 | `failure.invariant` | The configured invariant name, present only for a classified invariant violation. |
+| `failure.property` | The configured `PROPERTIES` name, present only for a classified action-property violation. |
 | `failure.evidence` | The pinned message code, recognized SANY summary, or owned deadline. Unknown failures have no classified evidence. |
 | `counterexample.status` | `not-retained`. The runner removes its private snapshot after success or failure. |
 | `nextAction` | A short review or correction step based on the classified kind. |
 
-An invariant violation requires a complete pinned TLC error frame with code `2107` or `2110` and a name from the current configuration. A timeout requires the runner's own deadline to expire. Recognized SANY syntax or semantic errors, or pinned TLC parsing messages, support `parse_error`. Within these typed boundaries, external termination, spawn failure, output limits, malformed messages, unsupported source constructs, and ambiguous executable graphs remain `unknown`.
+An invariant violation requires a complete pinned TLC error frame with code `2107` or `2110` and a name from the current `INVARIANTS`. An action-property violation requires code `2112` and an exact name from the current `PROPERTIES`. Evaluation failures such as `2111` or `2113`, general temporal or liveness failures, and property aliases reported under an internal state-predicate name remain `unknown`. A timeout requires the runner's own deadline to expire. Recognized SANY syntax or semantic errors, or pinned TLC parsing messages, support `parse_error`. Within these typed boundaries, external termination, spawn failure, output limits, malformed messages, unsupported source constructs, and ambiguous executable graphs also remain `unknown`.
 
-For an invariant violation, `nextAction` directs the caller to compare the invariant and modeled behavior with the accepted requirement and correct the structural cause without weakening the invariant to obtain a pass. Timeout guidance preserves the required properties and verification scope while the caller investigates model bounds and runner limits.
+For an invariant or action-property violation, `nextAction` directs the caller to compare the property and modeled behavior with the accepted requirement and correct the structural cause without weakening the property to obtain a pass. Timeout guidance preserves the required properties and verification scope while the caller investigates model bounds and runner limits.
 
-The existing error string retains its bounded output tail. A complete failure log and a counterexample file are not retained, and the diagnostic exposes no `tracePath`. JavaScript callers can import `TlcFailureError` and `TlcFailureDiagnosticSchema` from `dist/tlc-failure.js`. When a subprocess error exists, it remains available as `cause`. The legacy v1 runner accepts arbitrary JARs and keeps its existing error response without this controlled classification.
+The runner keeps its error text and bounded output tail, but controlled TLC now uses framed `-tool` output. Raw log text and console prefixes such as `Error: Invariant` are not a compatibility contract. Callers must use the structured failure kind and exact invariant or property name rather than matching those prefixes. Stable diagnostic IDs, CLI exit status, and MCP `isError` remain available.
+
+A complete failure log and a counterexample file are not retained, and the diagnostic exposes no `tracePath`. JavaScript callers can import `TlcFailureError` and `TlcFailureDiagnosticSchema` from `dist/tlc-failure.js`. When a subprocess error exists, it remains available as `cause`. The legacy v1 runner accepts arbitrary JARs and keeps its existing error response without this controlled classification.
 
 Classification does not authorize generation. Successful generation still requires normal process completion, an empty queue, no error or warning, stable inputs, a valid graph, and managed publication. Check-only runs retain their existing comparison behavior without publishing generated files. Fresh failure-log export and retained counterexamples remain separate work.
 

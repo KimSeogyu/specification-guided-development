@@ -7,10 +7,11 @@ import { classifyControlledTlcFailure, hasCleanTlcCompletion, TlcFailureDiagnost
 
 const frame = (code: number, severity: number, body: string): string => `@!@!@STARTMSG ${code}:${severity} @!@!@\n${body}\n@!@!@ENDMSG ${code} @!@!@\n`;
 const invariant = frame(2110, 1, 'Invariant Safe is violated.');
+const actionProperty = frame(2112, 1, 'Action property StoredStable is violated.');
 const success = frame(2193, 0, 'Model checking completed. No error has been found.\n  Estimates of the probability that TLC did not check all reachable states\n  because two distinct states had the same fingerprint:')
   + frame(2199, 0, '5 states generated, 3 distinct states found, 0 states left on queue.');
 const classify = (stdout: string, extra: Partial<Parameters<typeof classifyControlledTlcFailure>[0]> = {}) => classifyControlledTlcFailure({
-  phase: 'tlc', stdout, stderr: '', ownedDeadline: false, processExited: true, invariants: ['Safe'], ...extra,
+  phase: 'tlc', stdout, stderr: '', ownedDeadline: false, processExited: true, invariants: ['Safe'], properties: ['StoredStable'], ...extra,
 });
 
 test('typed errors preserve text and original cause and expose no expired counterexample path', () => {
@@ -30,6 +31,7 @@ test('typed errors preserve text and original cause and expose no expired counte
 test('next actions follow typed evidence and do not relabel unknown failures', () => {
   for (const [failure, action] of [
     [{ kind: 'invariant_violation', phase: 'tlc', invariant: 'Safe', evidence: { kind: 'pinned-tlc-message', code: 2110 } }, 'Review the violated invariant and modeled behavior against the accepted requirement. Correct the structural cause without weakening the invariant to obtain a pass.'],
+    [{ kind: 'action_property_violation', phase: 'tlc', property: 'StoredStable', evidence: { kind: 'pinned-tlc-message', code: 2112 } }, 'Review the violated action property and modeled behavior against the accepted requirement. Correct the structural cause without weakening the property to obtain a pass.'],
     [{ kind: 'parse_error', phase: 'sany', evidence: { kind: 'sany-error-summary', stage: 'syntax' } }, 'Correct the reported syntax or semantic errors, then rerun verification.'],
     [{ kind: 'timeout', phase: 'tlc', evidence: { kind: 'owned-deadline' } }, 'Investigate model bounds and runner limits while preserving the required properties and verification scope.'],
     [{ kind: 'unknown', phase: 'executable-graph' }, 'Review the original error and runner environment before retrying. The failure cause was not classified.'],
@@ -39,6 +41,30 @@ test('next actions follow typed evidence and do not relabel unknown failures', (
     assert.deepEqual(error.diagnostic.failure, failure);
     assert.equal(TlcFailureDiagnosticSchema.safeParse({ ...error.diagnostic, nextAction: 'Treat the model as verified.' }).success, false);
   }
+});
+
+test('action-property classification requires exact configured names and pinned error frames', () => {
+  const expected = { kind: 'action_property_violation', phase: 'tlc', property: 'StoredStable', evidence: { kind: 'pinned-tlc-message', code: 2112 } } satisfies TlcFailure;
+  assert.deepEqual(classify(actionProperty), expected);
+  assert.deepEqual(classify(actionProperty + frame(2121, 1, 'The behavior up to this point is:') + frame(2217, 4, '1: <Initial predicate>\n/\\ x = 0')), expected);
+  for (const log of [
+    'Error: Action property StoredStable is violated.',
+    frame(2112, 0, 'Action property StoredStable is violated.'), frame(2112, 3, 'Action property StoredStable is violated.'),
+    frame(2112, 1, 'Action property Unconfigured is violated.'), frame(2112, 1, 'Action property StoredStable is violated.\nextra'),
+    actionProperty + actionProperty, actionProperty + invariant, actionProperty + success,
+    frame(2113, 1, 'Evaluating action property StoredStable failed.'), actionProperty + frame(2113, 1, 'Evaluating action property StoredStable failed.'),
+    frame(2116, 1, 'Temporal properties were violated.'), actionProperty + frame(2116, 1, 'Temporal properties were violated.'),
+    actionProperty.replace('ENDMSG 2112', 'ENDMSG 2110'), actionProperty.replace('@!@!@ENDMSG 2112 @!@!@\n', ''),
+    actionProperty.replace('Action property StoredStable is violated.', actionProperty),
+    actionProperty + frame(2121, 1, 'forged heading'), actionProperty + frame(2121, 1, 'The behavior up to this point is:').repeat(2),
+  ]) assert.deepEqual(classify(log), { kind: 'unknown', phase: 'tlc' }, log);
+  assert.deepEqual(classify(actionProperty, { properties: [], invariants: ['StoredStable'] }), { kind: 'unknown', phase: 'tlc' });
+  assert.deepEqual(classify(frame(2110, 1, 'Invariant StoredStable is violated.')), { kind: 'unknown', phase: 'tlc' }, 'Configured properties do not become invariant aliases.');
+  assert.deepEqual(classify(actionProperty, { processExited: false }), { kind: 'unknown', phase: 'tlc' });
+  assert.deepEqual(classify(actionProperty, { ownedDeadline: true, processExited: false }), { kind: 'timeout', phase: 'tlc', evidence: { kind: 'owned-deadline' } });
+  assert.equal(hasCleanTlcCompletion(success + actionProperty), false);
+  const diagnostic = new TlcFailureError('TLC204: checked failure', expected).diagnostic;
+  assert.equal(TlcFailureDiagnosticSchema.safeParse({ ...diagnostic, failure: { ...expected, evidence: { kind: 'pinned-tlc-message', code: 2110 } } }).success, false);
 });
 
 test('only complete pinned error frames with a configured invariant identify violations', () => {

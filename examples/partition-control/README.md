@@ -19,7 +19,7 @@ node examples/partition-control/verify-model.mjs
 
 `verify-model.mjs` finds the SDK through its own file location. It uses `TLA2TOOLS_JAR` when set, or the SDK's `.runtime/tla2tools.jar` otherwise. A relative environment path is relative to the invocation directory. The compiler verifies the supplied JAR against its pinned tool version.
 
-The script first builds the authoritative model into a fresh owned scratch directory. It requires both language artifacts and then runs `build --check`. It next changes one model rule at a time and requires the intended TLC violation. A syntax error, timeout, unrelated property failure, or interrupted process cannot satisfy a mutation check. Refused models must publish no output.
+The script first builds the authoritative model into a fresh owned scratch directory. It requires both language artifacts and then runs `build --check`. It next changes one model rule at a time and requires CLI exit `2` plus the exact `sgd-tlc-failure-v1` identity. Five mutations require `invariant_violation` with the intended invariant and pinned code `2110`. Three require `action_property_violation` with the intended configured property and pinned code `2112`. A syntax error, timeout, unrelated property failure, missing diagnostic, or interrupted process cannot satisfy a mutation check. Refused models must publish no output. The verifier does not match raw TLC console prefixes.
 
 The script bounds each compiler process and removes its unique scratch directory after success or failure. It does not install a plugin, change agent configuration, invoke storage, or run native consumers.
 

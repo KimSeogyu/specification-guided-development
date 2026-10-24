@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { assertModelRefusal } from './verify-result.mjs';
 
 const sdkRoot = fileURLToPath(new URL('../../', import.meta.url));
 const exampleRoot = fileURLToPath(new URL('./', import.meta.url));
@@ -13,6 +14,7 @@ const jar = process.env.TLA2TOOLS_JAR
 
 assert.ok(fs.existsSync(cli), 'Build the SDK first with npm run build.');
 assert.ok(fs.existsSync(jar), 'Set TLA2TOOLS_JAR or run node scripts/fetch-tlc.mjs from the SDK root.');
+const { TlcFailureDiagnosticSchema } = await import('../../dist/tlc-failure.js');
 
 const source = fs.readFileSync(path.join(exampleRoot, 'model.tla'), 'utf8');
 const config = fs.readFileSync(path.join(exampleRoot, 'model.cfg'), 'utf8');
@@ -36,7 +38,7 @@ function build(projectPath, out, check = false) {
   const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
   assert.equal(result.error, undefined, `Compiler process failed: ${result.error?.message ?? ''}\n${output}`);
   assert.equal(result.signal, null, `Compiler process was interrupted: ${result.signal}\n${output}`);
-  return { status: result.status, output };
+  return { status: result.status, signal: result.signal, error: result.error, stdout: result.stdout, stderr: result.stderr, output };
 }
 
 const variants = [
@@ -45,48 +47,56 @@ const variants = [
     original: '/\\ hasInserted /\\ ~hasConflict',
     replacement: '/\\ hasInserted',
     property: 'CloseChoice',
+    kind: 'invariant_violation',
   },
   {
     name: 'refusal-becomes-write',
     original: 'CloseRefused ==\n  /\\ phase = "Open"\n  /\\ hasConflict\n  /\\ phase\' = "ReadyRefused"',
     replacement: 'CloseRefused ==\n  /\\ phase = "Open"\n  /\\ hasConflict\n  /\\ phase\' = "ReadyWrite"',
     property: 'CloseAdmission',
+    kind: 'invariant_violation',
   },
   {
     name: 'disabled-refusal-close',
     original: 'CloseRefused ==\n  /\\ phase = "Open"\n  /\\ hasConflict',
     replacement: 'CloseRefused ==\n  /\\ phase = "Open"\n  /\\ FALSE',
     property: 'CloseChoice',
+    kind: 'invariant_violation',
   },
   {
     name: 'clear-refusal',
     original: "  /\\ hasInserted' = TRUE\n  /\\ UNCHANGED <<phase, hasConflict>>",
     replacement: "  /\\ hasInserted' = TRUE\n  /\\ hasConflict' = FALSE\n  /\\ UNCHANGED phase",
     property: 'ConflictSticky',
+    kind: 'action_property_violation',
   },
   {
     name: 'cleared-insertion',
     original: 'Same ==\n  /\\ phase = "Open"\n  /\\ UNCHANGED vars',
     replacement: 'Same ==\n  /\\ phase = "Open"\n  /\\ hasInserted\' = FALSE\n  /\\ UNCHANGED <<phase, hasConflict>>',
     property: 'InsertSticky',
+    kind: 'action_property_violation',
   },
   {
     name: 'reopen',
     original: 'ConsumeNoop ==\n  /\\ phase = "ReadyNoop"\n  /\\ phase\' = "Consumed"',
     replacement: 'ConsumeNoop ==\n  /\\ phase = "ReadyNoop"\n  /\\ phase\' = "Open"',
     property: 'NoReopen',
+    kind: 'action_property_violation',
   },
   {
     name: 'consume-again',
     original: 'ConsumeRefused ==\n  /\\ phase = "ReadyRefused"',
     replacement: 'ConsumeRefused ==\n  /\\ phase \\in {"ReadyRefused", "Consumed"}',
     property: 'SingleConsumption',
+    kind: 'invariant_violation',
   },
   {
     name: 'input-after-close',
     original: 'Same ==\n  /\\ phase = "Open"',
     replacement: 'Same ==\n  /\\ phase \\in {"Open", "Consumed"}',
     property: 'NoInputAfterClose',
+    kind: 'invariant_violation',
   },
 ];
 
@@ -110,9 +120,10 @@ try {
     fs.writeFileSync(path.join(directory, 'project.json'), project);
     const out = path.join(directory, 'out');
     const result = build(path.join(directory, 'project.json'), out);
-    assert.equal(result.status, 2, `${variant.name}: expected a checked compiler refusal.\n${result.output}`);
-    assert.match(result.output, /TLC204: finite model check failed/, `${variant.name}: failure was not the model-check gate.\n${result.output}`);
-    assert.match(result.output, new RegExp(`Error: (?:Invariant|Action property) ${variant.property} is violated\\.`), `${variant.name}: the intended property did not expose the mutation.\n${result.output}`);
+    const expected = variant.kind === 'invariant_violation'
+      ? { kind: variant.kind, phase: 'tlc', invariant: variant.property, evidence: { kind: 'pinned-tlc-message', code: 2110 } }
+      : { kind: variant.kind, phase: 'tlc', property: variant.property, evidence: { kind: 'pinned-tlc-message', code: 2112 } };
+    assertModelRefusal(result, expected, value => TlcFailureDiagnosticSchema.parse(value));
     assert.equal(fs.existsSync(out), false, `${variant.name}: a refused model published output.`);
     process.stdout.write(`${variant.name}: TLC rejected ${variant.property}; no output published.\n`);
   }

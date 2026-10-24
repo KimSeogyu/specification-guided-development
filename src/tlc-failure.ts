@@ -5,6 +5,8 @@ export const TlcFailureSchema = z.union([
   z.object({ kind: z.literal('timeout'), phase: PhaseSchema, evidence: z.object({ kind: z.literal('owned-deadline') }).strict() }).strict(),
   z.object({ kind: z.literal('invariant_violation'), phase: z.literal('tlc'), invariant: z.string().regex(/^[A-Za-z_][A-Za-z_0-9]*$/),
     evidence: z.object({ kind: z.literal('pinned-tlc-message'), code: z.union([z.literal(2107), z.literal(2110)]) }).strict() }).strict(),
+  z.object({ kind: z.literal('action_property_violation'), phase: z.literal('tlc'), property: z.string().regex(/^[A-Za-z_][A-Za-z_0-9]*$/),
+    evidence: z.object({ kind: z.literal('pinned-tlc-message'), code: z.literal(2112) }).strict() }).strict(),
   z.object({ kind: z.literal('parse_error'), phase: z.literal('sany'),
     evidence: z.object({ kind: z.literal('sany-error-summary'), stage: z.enum(['syntax', 'semantic']) }).strict() }).strict(),
   z.object({ kind: z.literal('parse_error'), phase: z.literal('tlc'),
@@ -17,6 +19,7 @@ export type TlcPhase = z.infer<typeof PhaseSchema>;
 function nextAction(failure: TlcFailure): string {
   switch (failure.kind) {
     case 'invariant_violation': return 'Review the violated invariant and modeled behavior against the accepted requirement. Correct the structural cause without weakening the invariant to obtain a pass.';
+    case 'action_property_violation': return 'Review the violated action property and modeled behavior against the accepted requirement. Correct the structural cause without weakening the property to obtain a pass.';
     case 'parse_error': return 'Correct the reported syntax or semantic errors, then rerun verification.';
     case 'timeout': return 'Investigate model bounds and runner limits while preserving the required properties and verification scope.';
     case 'unknown': return 'Review the original error and runner environment before retrying. The failure cause was not classified.';
@@ -49,7 +52,7 @@ export class TlcFailureError extends Error {
 
 interface ToolMessage { code: number; severity: number; body: string }
 type ToolMessages = { kind: 'valid'; messages: ToolMessage[] } | { kind: 'invalid' };
-const errorCodes = new Set([2107, 2110, 2111, 2121, 2146, 2171, 3002]);
+const errorCodes = new Set([2107, 2110, 2111, 2112, 2113, 2121, 2146, 2171, 3002]);
 
 /** Parse the pinned MP.java line protocol. Never recover past a broken frame. */
 function parseToolMessages(log: string): ToolMessages {
@@ -94,7 +97,7 @@ export function hasCleanTlcCompletion(log: string): boolean {
 
 /** Call only for this invocation's pinned, admitted controlled subprocess output. */
 export function classifyControlledTlcFailure(input: {
-  phase: TlcPhase; stdout: string; stderr: string; ownedDeadline: boolean; processExited: boolean; invariants: readonly string[];
+  phase: TlcPhase; stdout: string; stderr: string; ownedDeadline: boolean; processExited: boolean; invariants: readonly string[]; properties: readonly string[];
 }): TlcFailure {
   const { phase } = input;
   if (input.ownedDeadline) return { kind: 'timeout', phase, evidence: { kind: 'owned-deadline' } };
@@ -112,13 +115,13 @@ export function classifyControlledTlcFailure(input: {
   if (phase !== 'tlc') return unknown;
   const parsed = parseToolMessages(log);
   if (parsed.kind === 'invalid' || parsed.messages.some(message => message.code === 2193)) return unknown;
-  const candidates = parsed.messages.filter(message => message.severity === 1 && [2107, 2110, 2171, 3002].includes(message.code));
+  const candidates = parsed.messages.filter(message => message.severity === 1 && [2107, 2110, 2112, 2171, 3002].includes(message.code));
   if (candidates.length !== 1) return unknown;
   const [message] = candidates;
   if (message === undefined) return unknown;
   // 2121 is the pinned error-class trace heading, not a second policy failure.
   const companions = parsed.messages.filter(other => other !== message && other.severity !== 0);
-  if (companions.some(other => message.code !== 2110
+  if (companions.some(other => ![2110, 2112].includes(message.code)
     || !(other.severity === 4 && [2216, 2217].includes(other.code)
       || other.severity === 1 && other.code === 2121 && other.body === 'The behavior up to this point is:'))
     || companions.filter(other => other.code === 2121).length > 1) return unknown;
@@ -128,6 +131,11 @@ export function classifyControlledTlcFailure(input: {
       : /^Invariant ([A-Za-z_][A-Za-z_0-9]*) is violated\.$/).exec(message.body)?.[1];
     if (name === undefined || !input.invariants.includes(name)) return unknown;
     return { kind: 'invariant_violation', phase, invariant: name, evidence: { kind: 'pinned-tlc-message', code: message.code } };
+  }
+  if (message.code === 2112) {
+    const name = /^Action property ([A-Za-z_][A-Za-z_0-9]*) is violated\.$/.exec(message.body)?.[1];
+    if (name === undefined || !input.properties.includes(name)) return unknown;
+    return { kind: 'action_property_violation', phase, property: name, evidence: { kind: 'pinned-tlc-message', code: 2112 } };
   }
   if ((message.code === 2171 || message.code === 3002) && (message.code === 3002
     ? message.body === 'Parsing or semantic analysis failed.'

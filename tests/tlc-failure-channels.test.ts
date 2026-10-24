@@ -108,7 +108,7 @@ test('CLI and MCP preserve genuine spawn failure as unknown without starting Jav
   }
 });
 
-test('real CLI and MCP retain typed invariant and parsing failures without publishing authority', { skip: !jar }, async () => {
+test('real CLI and MCP retain typed invariant, action-property, and parsing failures without publishing authority', { skip: !jar }, async () => {
   assert.ok(jar);
   const root = await mkdtemp(join(tmpdir(), 'sgd-real-failure-channels-'));
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -123,6 +123,8 @@ test('real CLI and MCP retain typed invariant and parsing failures without publi
         { kind: 'invariant_violation', phase: 'tlc', invariant: 'Safe', evidence: { kind: 'pinned-tlc-message', code: 2107 } }],
       [model.replace('====', 'Safe == phase = "New"\n===='), 'SPECIFICATION Spec\nINVARIANT Safe\n',
         { kind: 'invariant_violation', phase: 'tlc', invariant: 'Safe', evidence: { kind: 'pinned-tlc-message', code: 2110 } }],
+      [model.replace('====', 'StoredStable == [][phase = "New" => phase\' = "New"]_phase\n===='), 'SPECIFICATION Spec\nPROPERTY StoredStable\n',
+        { kind: 'action_property_violation', phase: 'tlc', property: 'StoredStable', evidence: { kind: 'pinned-tlc-message', code: 2112 } }],
       [model.replace('Init ==', 'Init == )'), 'SPECIFICATION Spec\n',
         { kind: 'parse_error', phase: 'sany', evidence: { kind: 'sany-error-summary', stage: 'syntax' } }],
       [model.replace('Init == phase = "New"', 'Init == phase = UndefinedName'), 'SPECIFICATION Spec\n',

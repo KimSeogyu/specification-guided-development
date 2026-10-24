@@ -336,7 +336,7 @@ export async function runControlledTlc(input: ControlledTlcInput, profile: Contr
         deadline: started + timeout, maxBuffer: 16 * 1024 * 1024 });
       if (result.kind === 'completed') return result;
       throw new TlcFailureError(`TLC204: finite model check failed or timed out; no executable authority can be generated.\n${result.stdout.slice(-12000)}`,
-        classifyControlledTlcFailure({ phase, ...result, invariants: parsedConfig.invariants }), { cause: result.cause });
+        classifyControlledTlcFailure({ phase, ...result, invariants: parsedConfig.invariants, properties: parsedConfig.properties }), { cause: result.cause });
     };
     const runLog = async (phase: TlcPhase, args: string[]): Promise<string> => { const output = await run(phase, args); return output.stdout + output.stderr; };
     const discover = (log: string): { local: string[]; standard: string[] } => {
@@ -359,7 +359,7 @@ export async function runControlledTlc(input: ControlledTlcInput, profile: Contr
         const processed = /^Semantic processing of module ([A-Za-z_][A-Za-z_0-9]*)$/.exec(line)?.[1];
         if (processed !== undefined) { semantic.add(processed); continue; }
         throw new TlcFailureError(`TLC204: SANY did not cleanly validate the complete finite model.\n${log.slice(-12000)}`,
-          classifyControlledTlcFailure({ phase: 'sany', stdout: log, stderr: '', ownedDeadline: false, processExited: true, invariants: parsedConfig.invariants }));
+          classifyControlledTlcFailure({ phase: 'sany', stdout: log, stderr: '', ownedDeadline: false, processExited: true, invariants: parsedConfig.invariants, properties: parsedConfig.properties }));
       }
       if (!local.has(basename(spec)) || !semantic.has(moduleName) || [...local].some(name => !semantic.has(basename(name, '.tla')))) {
         throw new TlcFailureError('TLC204: SANY did not semantically validate the root and its complete local module closure', { kind: 'unknown', phase: 'sany' });
@@ -387,7 +387,7 @@ export async function runControlledTlc(input: ControlledTlcInput, profile: Contr
       '-metadir', join(temp, 'states'), '-dump', 'dot,actionlabels', dotPath, '-config', '__sgd_finite.cfg', basename(spec)]);
     if (!hasCleanTlcCompletion(tlcLog)) {
       throw new TlcFailureError(`TLC204: TLC did not complete a clean exhaustive finite model check.\n${tlcLog.slice(-12000)}`,
-        classifyControlledTlcFailure({ phase: 'tlc', stdout: tlcLog, stderr: '', ownedDeadline: false, processExited: true, invariants: parsedConfig.invariants }));
+        classifyControlledTlcFailure({ phase: 'tlc', stdout: tlcLog, stderr: '', ownedDeadline: false, processExited: true, invariants: parsedConfig.invariants, properties: parsedConfig.properties }));
     }
     // Reject edits during verification instead of attaching a fresh-file identity to an older snapshot.
     const currentEntries = (await readdir(sourceDirectory)).filter(name => name.endsWith('.tla')).sort();
