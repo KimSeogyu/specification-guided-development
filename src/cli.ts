@@ -4,6 +4,7 @@ import { generateVisualization, loadAutomaton } from './visualize.js';
 import { serve } from './mcp.js';
 import { verifySymbolicErasureFiles } from './symbolic-refinement.js';
 import { version } from './version.js';
+import { StaleOutputError } from './output-check.js';
 
 const help = `sgd ${version}
 
@@ -82,6 +83,7 @@ async function main(args: string[]): Promise<void> {
 }
 
 main(process.argv.slice(2)).catch((error: unknown) => {
-  process.stderr.write(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) + '\n');
+  process.stderr.write(JSON.stringify({ error: error instanceof Error ? error.message : String(error),
+    ...(error instanceof StaleOutputError ? { diagnostic: error.diagnostic } : {}) }) + '\n');
   process.exitCode = 2;
 });

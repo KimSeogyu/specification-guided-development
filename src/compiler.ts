@@ -31,6 +31,7 @@ import { validatePartitionPlan, validatePartitionControlSource } from './partiti
 import { generatePartitionRust } from './backends/partition-rust.js';
 import { generatePartitionTypeScript } from './backends/partition-typescript.js';
 export { writeGenerated } from './managed-output.js';
+export { StaleOutputError, StaleOutputDiagnosticSchema, type StaleOutputDiagnostic } from './output-check.js';
 
 const backends = {
   typescript: generateTypeScript,

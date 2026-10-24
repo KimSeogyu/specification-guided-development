@@ -5,13 +5,15 @@ import { buildProject, compileProject, writeGenerated } from './compiler.js';
 import { generateVisualization, loadAutomaton } from './visualize.js';
 import { verifySymbolicErasureFiles } from './symbolic-refinement.js';
 import { version } from './version.js';
+import { StaleOutputError } from './output-check.js';
 
 export function createServer(): McpServer {
   const server = new McpServer({ name: 'sgd', version });
   const text = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }] });
   const guarded = async (work: () => Promise<unknown>) => {
     try { return text(await work()); }
-    catch (error) { return { ...text({ error: error instanceof Error ? error.message : String(error) }), isError: true }; }
+    catch (error) { return { ...text({ error: error instanceof Error ? error.message : String(error),
+      ...(error instanceof StaleOutputError ? { diagnostic: error.diagnostic } : {}) }), isError: true }; }
   };
   const paths = { project: z.string().describe('Absolute path to a project JSON file.'), jar: z.string().describe('Absolute path to tla2tools.jar.'), out: z.string().describe('Absolute output directory.') };
   const check = z.boolean().default(false).describe('Check stable generated artifacts and inventory without updating managed files. Incomplete output transactions are reported without repair.');
