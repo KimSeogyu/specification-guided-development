@@ -6,9 +6,9 @@ import { z } from 'zod';
 import { sha256 } from './dot.js';
 import { type FiniteValue } from './finite-types.js';
 import { parseSanyXml } from './sany-xml.js';
-import { stepSymbolic, type SymbolicState } from './symbolic-semantics.js';
+import { sameSymbolicValue, stepSymbolic, type SymbolicState } from './symbolic-semantics.js';
 import { parseSymbolicConfig, runSymbolicTlc, type SymbolicTlcEvidence, type TlcConfigScalar, type TlcConfigValue } from './symbolic-tlc.js';
-import { SymbolicValueSchema, type SymbolicModel, type SymbolicValue, symbolicInputs, validateSymbolicModel } from './symbolic-types.js';
+import { SymbolicValueSchema, type SymbolicModel, type SymbolicValue, type SymbolicInputDefinition, symbolicFiniteValueKey, symbolicInputDefinitions, validateSymbolicModel } from './symbolic-types.js';
 import { decodeTlcLabel, parseTlcDot } from './tlc-dot.js';
 
 const identifier = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -149,7 +149,11 @@ interface WitnessEvidenceBase {
   base: SymbolicTlcEvidence;
   oracle: SymbolicTlcEvidence;
 }
-export type SymbolicWitnessEvidence = WitnessEvidenceBase & ({ domain: string; atoms: string[] } | { domains: Record<string, string[]>; inputs: { parameter: string; domain: string }[] });
+export type SymbolicWitnessEvidence = WitnessEvidenceBase & (
+  | { domain: string; atoms: string[] }
+  | { domains: Record<string, string[]>; inputs: { parameter: string; domain: string }[] }
+  | { symbolicIrVersion: 3; inputProfile: 'mixed-finite-opaque-v1'; domains: Record<string, string[]>; inputs: SymbolicInputDefinition[] }
+);
 
 function scalarLiteral(value: FiniteValue): string {
   switch (value.kind) {
@@ -191,18 +195,34 @@ export async function verifySymbolicWitness(input: {
   if (semantic.root !== run.evidence.rootModule) return fail('base semantic root differs from completed TLC evidence');
   const configBytes = await checkedFile(config, run.evidence.configSha256);
   if (JSON.stringify(parseSymbolicConfig(configBytes.toString('utf8'))) !== JSON.stringify(run.config)) return fail('base parsed configuration differs from its checked bytes');
-  const parameters = symbolicInputs(model);
-  const domains: Record<string, string[]> = Object.fromEntries(parameters.map(parameter => {
+  const parameters = symbolicInputDefinitions(model);
+  const domains: Record<string, string[]> = Object.fromEntries(parameters.filter(parameter => parameter.kind === 'opaque').map(parameter => {
     const domain = run.config.constants[parameter.domain];
     if (domain?.kind !== 'set' || domain.values.length === 0 || domain.values.some(value => value.kind !== 'model-value')) return fail('witness input domain must contain configured model atoms');
     return [parameter.domain, domain.values.map(value => value.kind === 'model-value' ? value.value : fail('non-atom in witness input domain'))];
   }));
+  for (const parameter of parameters) if (parameter.kind === 'finite') {
+    const configured = run.config.constants[parameter.domain];
+    if (configured?.kind !== 'set') return fail('finite witness input domain must contain its configured scalar vocabulary');
+    const values = configured.values.map((value): FiniteValue => {
+      switch (value.kind) {
+        case 'string': return { kind: 'string', value: value.value };
+        case 'integer': return { kind: 'integer', value: value.value };
+        case 'boolean': return { kind: 'boolean', value: value.value };
+        case 'model-value': return fail('finite witness input domain cannot contain opaque model atoms');
+      }
+    });
+    const configuredKeys = values.map(symbolicFiniteValueKey).sort(order);
+    if (new Set(configuredKeys).size !== configuredKeys.length || JSON.stringify(configuredKeys) !== JSON.stringify(parameter.values.map(symbolicFiniteValueKey))) {
+      return fail('finite input vocabulary differs from the completed TLC configuration');
+    }
+  }
   const atoms = Object.values(domains).flat();
   if (new Set(atoms).size !== atoms.length) return fail('configured input domains must be pairwise disjoint');
   const firstParameter = parameters[0] ?? fail('missing input parameter');
   const witnessInput = model.version === 1 ? { domain: firstParameter.domain, atoms: domains[firstParameter.domain] ?? fail('missing input domain') } : { domains };
   const witness = importSymbolicDot({ dot: run.dot, name: model.name, ...witnessInput });
-  const inputCount = parameters.reduce((count, parameter) => count * (domains[parameter.domain]?.length ?? 0), 1);
+  const inputCount = parameters.reduce((count, parameter) => count * (parameter.kind === 'finite' ? parameter.values.length : (domains[parameter.domain]?.length ?? 0)), 1);
   const checkedCases = witness.nodes.length * inputCount;
   if (!Number.isSafeInteger(checkedCases) || checkedCases > 250_000) return fail('finite input oracle case limit exceeded; no partial verification is permitted');
   if (JSON.stringify(witness.variables) !== JSON.stringify([...model.variables].sort(order))) return fail('symbolic model does not preserve every witness variable');
@@ -286,10 +306,14 @@ export async function verifySymbolicWitness(input: {
       const inputFrame = Object.fromEntries(parameters.map((parameter, index) => {
         const observer = names.inputs[index] ?? fail('missing input observer');
         const observedInput = initial.values[observer];
-        if (observedInput?.kind !== 'data' || observedInput.domain !== parameter.domain || !domains[parameter.domain]?.includes(observedInput.value)) return fail('oracle initial input is not a configured atom in its domain');
-        return [parameter.parameter, observedInput.value];
+        if (parameter.kind === 'opaque') {
+          if (observedInput?.kind !== 'data' || observedInput.domain !== parameter.domain || !domains[parameter.domain]?.includes(observedInput.value)) return fail('oracle initial input is not a configured atom in its domain');
+          return [parameter.parameter, observedInput.value];
+        }
+        if (!observedInput || observedInput.kind === 'data' || !parameter.values.some(value => sameSymbolicValue(value, observedInput))) return fail('oracle initial finite input is outside its configured scalar vocabulary');
+        return [parameter.parameter, observedInput];
       }));
-      const inputAtom = inputFrame[firstParameter.parameter] ?? fail('missing first input atom');
+      const firstInput = inputFrame[firstParameter.parameter] ?? fail('missing first input value');
       const baseKey = stateKey(initial.values);
       if (!baseStates.has(baseKey)) return fail('oracle initial state is outside the base reachable graph');
       const caseKey = JSON.stringify([baseKey, inputFrame]);
@@ -304,9 +328,10 @@ export async function verifySymbolicWitness(input: {
         const phase = target.values[names.step];
         const action = target.values[names.action];
         if (phase?.kind !== 'string' || phase.value !== 'after' || action?.kind !== 'string' || !actions.includes(action.value)) return fail('invalid oracle successor observers');
-        for (const [index, parameter] of parameters.entries()) {
-          const targetInput = target.values[names.inputs[index] ?? fail('missing input observer')];
-          if (targetInput?.kind !== 'data' || targetInput.domain !== parameter.domain || targetInput.value !== inputFrame[parameter.parameter]) return fail('oracle successor changes an input observer');
+        for (const observer of names.inputs) {
+          const targetInput = target.values[observer];
+          const initialInput = initial.values[observer];
+          if (!targetInput || !initialInput || !sameSymbolicValue(targetInput, initialInput)) return fail('oracle successor changes an input observer');
         }
         const state = Object.fromEntries(witness.variables.map(variable => [variable, target.values[variable] ?? fail('incomplete original oracle successor')]));
         const observedEdge = edgeKey(initial.values, action.value, state);
@@ -315,7 +340,10 @@ export async function verifySymbolicWitness(input: {
         actual.set(JSON.stringify([action.value, stateKey(state)]), { action: action.value, state });
       }
       if (actual.size > 1) return fail('original TLA+ has multiple enabled action/results for one state/input');
-      const expected = stepSymbolic(model, initial.values, model.version === 1 ? inputAtom : inputFrame);
+      const oracleInput = model.version === 1
+        ? typeof firstInput === 'string' ? firstInput : fail('single-input oracle requires an opaque input identity')
+        : inputFrame;
+      const expected = stepSymbolic(model, initial.values, oracleInput);
       if (expected.kind === 'ambiguous') return fail('symbolic IR has multiple enabled branches for one original state/input');
       if (expected.kind === 'disabled') {
         if (actual.size !== 0) return fail('symbolic IR disables an original enabled state/input');
@@ -337,7 +365,9 @@ export async function verifySymbolicWitness(input: {
     }
     return { witness, evidence: {
       kind: 'tlc-finite-input-oracle', scope: 'configured-reachable-state-input-product',
-      ...(model.version === 1 ? { domain: firstParameter.domain, atoms: [...(domains[firstParameter.domain] ?? [])] } : { domains, inputs: parameters.map(parameter => ({ ...parameter })) }),
+      ...(model.version === 1 ? { domain: firstParameter.domain, atoms: [...(domains[firstParameter.domain] ?? [])] }
+        : model.version === 2 ? { domains, inputs: parameters.map(({ parameter, domain }) => ({ parameter, domain })) }
+          : { symbolicIrVersion: 3, inputProfile: 'mixed-finite-opaque-v1', domains, inputs: parameters.map(parameter => ({ ...parameter })) }),
       stateCount: witness.nodes.length, checkedCases, acceptedCases, disabledCases, base: run.evidence, oracle: oracleRun.evidence,
     }, oracleDot: oracleRun.dot, oracleLog: oracleRun.log };
   } finally {

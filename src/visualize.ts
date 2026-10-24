@@ -3,7 +3,7 @@ import { render } from 'pele';
 import { AutomatonSchema, type Automaton, type GeneratedFile } from './types.js';
 import { FiniteGraphSchema, type ExactFiniteAutomaton, type FiniteValue } from './finite-types.js';
 import { z } from 'zod';
-import { SymbolicModelSchema, symbolicInputs, validateSymbolicModel, type SymbolicInput, type SymbolicModel, type SymbolicValue } from './symbolic-types.js';
+import { SymbolicModelSchema, symbolicInputDefinitions, symbolicInputs, validateSymbolicModel, type SymbolicInput, type SymbolicModel, type SymbolicValue } from './symbolic-types.js';
 import { SymbolicWitnessSchema, type SymbolicWitnessGraph } from './symbolic-witness.js';
 import { inspectSymbolicOrbits } from './symbolic-semantics.js';
 
@@ -26,7 +26,7 @@ function displayModel(model: Model): Automaton {
     const inputCaption = (input: SymbolicInput): string => typeof input === 'string' ? input : symbolicInputs(model).map(({ parameter, domain }) => {
       const value = input[parameter];
       if (value === undefined) throw new Error('TLC105: incomplete symbolic input frame');
-      return `${parameter}[${domain}] = ${JSON.stringify(value)}`;
+      return `${parameter}[${domain}] = ${typeof value === 'string' ? JSON.stringify(value) : finiteValue(value)}`;
     }).join(', ');
     const captions = proof.states.map((state, index) => `s${index}\n${model.variables.map(variable => {
       const value = state[variable];
@@ -58,7 +58,13 @@ function displayModel(model: Model): Automaton {
 
 function scope(model: Model, view: Automaton): string {
   if (!('kind' in model)) return `${model.source.stateCount} concrete states · ${model.states.length} projected states · ${model.transitions.length} projected edges`;
-  if (model.kind === 'symbolic-owned') return `${view.states.length} equality/copy orbits · ${view.transitions.length} input-class edges.${model.version === 2 ? ` Inputs: ${symbolicInputs(model).map(({ parameter, domain }) => `${parameter} in ${domain}`).join(', ')}. Domains are disjoint; input classes are checked as complete tuples.` : ''} Atom names are local to each state and can change after renaming. This view covers the supported symbolic relation, not arbitrary TLA+.`;
+  if (model.kind === 'symbolic-owned') {
+    const inputs = model.version === 3 ? ` Inputs: ${symbolicInputDefinitions(model).map(input => input.kind === 'opaque'
+      ? `${input.parameter} in opaque ${input.domain}`
+      : `${input.parameter} in finite ${input.domain} {${input.values.map(finiteValue).join(', ')}}`).join(', ')}. Every finite choice is checked with the retained and fresh opaque input classes.`
+      : model.version === 2 ? ` Inputs: ${symbolicInputs(model).map(({ parameter, domain }) => `${parameter} in ${domain}`).join(', ')}. Domains are disjoint; input classes are checked as complete tuples.` : '';
+    return `${view.states.length} equality/copy orbits · ${view.transitions.length} input-class edges.${inputs} Atom names are local to each state and can change after renaming. This view covers the supported symbolic relation, not arbitrary TLA+.`;
+  }
   if (model.kind === 'symbolic-witness') return `${model.nodes.length} configured finite witness states · ${model.edges.length} edges · complete tagged valuations. Pinned DOT omits action arguments; input-verification.json records the separate per-input TLC oracle.`;
   return `${model.nodes.length} full concrete states · ${model.edges.length} concrete edges · all scalar variables retained`;
 }

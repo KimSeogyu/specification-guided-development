@@ -65,15 +65,35 @@ export const SymbolicModelV2Schema = z.object({
   next: Identifier,
   ...SymbolicProgramTail,
 }).strict();
-export const SymbolicModelSchema = z.discriminatedUnion('version', [SymbolicModelV1Schema, SymbolicModelV2Schema]);
+export const OpaqueSymbolicInputSchema = z.object({ kind: z.literal('opaque'), parameter: Identifier, domain: Identifier }).strict();
+export const FiniteSymbolicInputSchema = z.object({
+  kind: z.literal('finite'), parameter: Identifier, domain: Identifier,
+  values: z.array(FiniteValueSchema).min(1).max(64),
+}).strict();
+export const SymbolicInputDefinitionSchema = z.discriminatedUnion('kind', [OpaqueSymbolicInputSchema, FiniteSymbolicInputSchema]);
+export type SymbolicInputDefinition = z.infer<typeof SymbolicInputDefinitionSchema>;
+export const SymbolicModelV3Schema = z.object({
+  version: z.literal(3), ...SymbolicProgramHead,
+  inputs: z.array(SymbolicInputDefinitionSchema).min(2).max(3),
+  next: Identifier,
+  ...SymbolicProgramTail,
+}).strict();
+export const SymbolicModelSchema = z.discriminatedUnion('version', [SymbolicModelV1Schema, SymbolicModelV2Schema, SymbolicModelV3Schema]);
 export type SymbolicModelV1 = z.infer<typeof SymbolicModelV1Schema>;
 export type SymbolicModelV2 = z.infer<typeof SymbolicModelV2Schema>;
+export type SymbolicModelV3 = z.infer<typeof SymbolicModelV3Schema>;
 export type SymbolicModel = z.infer<typeof SymbolicModelSchema>;
-export type SymbolicProgram = Omit<SymbolicModelV1, 'source'> | Omit<SymbolicModelV2, 'source'>;
-export type SymbolicInput = string | Readonly<Record<string, string>>;
+export type SymbolicProgram = Omit<SymbolicModelV1, 'source'> | Omit<SymbolicModelV2, 'source'> | Omit<SymbolicModelV3, 'source'>;
+export type SymbolicInputFrameValue = string | FiniteValue;
+export type SymbolicInput = string | Readonly<Record<string, SymbolicInputFrameValue>>;
 export function symbolicInputs(model: SymbolicModel): readonly { parameter: string; domain: string }[] {
-  return model.version === 1 ? [{ parameter: model.input.parameter, domain: model.input.domain }] : model.inputs;
+  if (model.version === 1) return [{ parameter: model.input.parameter, domain: model.input.domain }];
+  return model.version === 2 ? model.inputs : model.inputs.map(({ parameter, domain }) => ({ parameter, domain }));
 }
+export function symbolicInputDefinitions(model: SymbolicModel): readonly SymbolicInputDefinition[] {
+  return model.version === 3 ? model.inputs : symbolicInputs(model).map((input): SymbolicInputDefinition => ({ kind: 'opaque', ...input }));
+}
+export function symbolicFiniteValueKey(value: FiniteValue): string { return JSON.stringify([value.kind, value.value]); }
 export function symbolicNext(model: SymbolicModel): string { return model.version === 1 ? model.input.next : model.next; }
 
 export const SymbolicProjectSchema = z.object({
@@ -108,10 +128,19 @@ export function validateSymbolicModel(input: unknown): SymbolicModel {
   const parsed = SymbolicModelSchema.safeParse(input);
   if (!parsed.success) throw new Error(`TLC301: invalid symbolic IR: ${parsed.error.issues.slice(0, 5).map(issue => issue.message).join('; ')}`);
   const model = parsed.data;
-  const inputs = symbolicInputs(model);
+  const inputs = symbolicInputDefinitions(model);
   const parameters = new Set(inputs.map(input => input.parameter));
   const domains = new Set(inputs.map(input => input.domain));
   if (parameters.size !== inputs.length || domains.size !== inputs.length) throw new Error('TLC301: symbolic inputs require distinct parameter names and distinct domains');
+  const opaqueDomains = new Set(inputs.filter(input => input.kind === 'opaque').map(input => input.domain));
+  if (model.version === 3) {
+    if (!inputs.some(input => input.kind === 'opaque') || !inputs.some(input => input.kind === 'finite')) throw new Error('TLC301: mixed input IR requires both opaque and finite inputs');
+    for (const input of inputs) if (input.kind === 'finite') {
+      const keys = input.values.map(symbolicFiniteValueKey);
+      if (new Set(input.values.map(value => value.kind)).size !== 1 || new Set(keys).size !== keys.length) throw new Error('TLC301: finite input requires distinct values of one scalar kind');
+      if (keys.some((key, index) => index > 0 && key <= (keys[index - 1] ?? key))) throw new Error('TLC301: finite input values must use canonical scalar order');
+    }
+  }
   const variables = new Set(model.variables);
   if (variables.size !== model.variables.length || model.variables.length > 12) throw new Error('TLC301: symbolic-owned requires 1–12 distinct variables');
   const exactKeys = (record: object): boolean => Object.keys(record).length === variables.size && Object.keys(record).every(name => variables.has(name));
@@ -122,12 +151,12 @@ export function validateSymbolicModel(input: unknown): SymbolicModel {
     if (expression.kind === 'input' && !inputAllowed) throw new Error('TLC301: input is unavailable in an invariant or action property');
     if (expression.kind === 'input') {
       if (model.version === 1 && 'parameter' in expression) throw new Error('TLC301: version 1 input expressions cannot name a parameter');
-      if (model.version === 2 && (!('parameter' in expression) || !parameters.has(expression.parameter))) throw new Error('TLC301: version 2 input expressions must name a declared parameter');
+      if (model.version !== 1 && (!('parameter' in expression) || !parameters.has(expression.parameter))) throw new Error(`TLC301: version ${model.version} input expressions must name a declared parameter`);
     }
   }
   function checkGuard(guard: SymbolicGuard, nextAllowed: boolean, inputAllowed: boolean): void {
     for (const expression of guardExpressions(guard)) checkExpression(expression, nextAllowed, inputAllowed);
-    if (guard.kind === 'in-domain' && !domains.has(guard.domain)) throw new Error('TLC301: unknown symbolic data domain');
+    if (guard.kind === 'in-domain' && !opaqueDomains.has(guard.domain)) throw new Error('TLC301: unknown symbolic data domain');
     if (guard.kind === 'member' && new Set(guard.elements.map(element => element.kind)).size > 1) throw new Error('TLC301: finite literal sets require one scalar kind');
     if (guard.kind === 'and' || guard.kind === 'or') guard.terms.forEach(term => checkGuard(term, nextAllowed, inputAllowed));
     if (guard.kind === 'not') checkGuard(guard.term, nextAllowed, inputAllowed);
@@ -148,6 +177,7 @@ export function validateSymbolicModel(input: unknown): SymbolicModel {
 
 export function symbolicModel(program: Omit<SymbolicModelV1, 'source'>): SymbolicModelV1;
 export function symbolicModel(program: Omit<SymbolicModelV2, 'source'>): SymbolicModelV2;
+export function symbolicModel(program: Omit<SymbolicModelV3, 'source'>): SymbolicModelV3;
 export function symbolicModel(program: SymbolicProgram): SymbolicModel;
 export function symbolicModel(program: SymbolicProgram): SymbolicModel {
   return validateSymbolicModel({ ...program, source: { semanticSha256: semanticIdentity(program) } });

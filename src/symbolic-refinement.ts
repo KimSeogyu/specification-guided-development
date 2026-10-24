@@ -1,7 +1,7 @@
 import { lstat, readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { inspectSymbolicOrbits, sameSymbolicValue, stepSymbolic, type SymbolicState } from './symbolic-semantics.js';
-import { symbolicInputs, validateSymbolicModel, type SymbolicInput, type SymbolicModel, type SymbolicValue } from './symbolic-types.js';
+import { symbolicFiniteValueKey, symbolicInputDefinitions, validateSymbolicModel, type SymbolicInput, type SymbolicInputFrameValue, type SymbolicModel, type SymbolicValue } from './symbolic-types.js';
 
 const Identifier = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).refine(name => name !== '__proto__');
 export const SymbolicErasureBindingSchema = z.object({
@@ -21,17 +21,21 @@ function exactMapping(mapping: Record<string, string>, keys: string[], destinati
 }
 
 function representativeInputs(model: SymbolicModel, state: SymbolicState): SymbolicInput[] {
-  const parameters = symbolicInputs(model);
-  let frames: Record<string, string>[] = [{}];
+  const parameters = symbolicInputDefinitions(model);
+  let frames: Record<string, SymbolicInputFrameValue>[] = [{}];
   for (const parameter of parameters) {
     const atoms = [...new Set(Object.values(state).flatMap(value => value.kind === 'data' && value.domain === parameter.domain ? [value.value] : []))];
     let fresh = '@sgd/fresh';
     while (atoms.includes(fresh)) fresh += '/fresh';
-    frames = frames.flatMap(frame => [...atoms, fresh].map(atom => ({ ...frame, [parameter.parameter]: atom })));
+    const choices: readonly SymbolicInputFrameValue[] = parameter.kind === 'finite' ? parameter.values : [...atoms, fresh];
+    frames = frames.flatMap(frame => choices.map(value => ({ ...frame, [parameter.parameter]: value })));
   }
-  if (model.version === 2) return frames;
+  if (model.version !== 1) return frames;
   const parameter = parameters[0] ?? fail('missing abstract input');
-  return frames.map(frame => frame[parameter.parameter] ?? fail('missing representative input'));
+  return frames.map(frame => {
+    const value = frame[parameter.parameter];
+    return typeof value === 'string' ? value : fail('missing opaque representative input');
+  });
 }
 
 /** Check a complete enabled-input erasure under the admitted equality/copy grammar. */
@@ -41,8 +45,8 @@ export function verifySymbolicErasure(input: { abstract: unknown; concrete: unkn
   const parsed = SymbolicErasureBindingSchema.safeParse(input.binding);
   if (!parsed.success) fail('invalid erasure binding');
   const binding = parsed.data;
-  const abstractInputs = symbolicInputs(abstract);
-  const concreteInputs = symbolicInputs(concrete);
+  const abstractInputs = symbolicInputDefinitions(abstract);
+  const concreteInputs = symbolicInputDefinitions(concrete);
   const abstractActions = [...new Set(abstract.branches.map(branch => branch.action))].sort();
   const concreteActions = [...new Set(concrete.branches.map(branch => branch.action))].sort();
   exactMapping(binding.variables, abstract.variables, concrete.variables, 'variable projection');
@@ -53,7 +57,11 @@ export function verifySymbolicErasure(input: { abstract: unknown; concrete: unkn
   for (const parameter of abstractInputs) {
     const source = concreteInputs.find(candidate => candidate.parameter === binding.inputs[parameter.parameter]);
     if (!source) fail('missing projected input parameter');
-    domains.set(source.domain, parameter.domain);
+    if (source.kind !== parameter.kind) fail('projected input kinds differ');
+    if (source.kind === 'finite' && parameter.kind === 'finite') {
+      const keys = source.values.map(symbolicFiniteValueKey);
+      if (keys.length !== parameter.values.length || parameter.values.some((value, index) => symbolicFiniteValueKey(value) !== keys[index])) fail('projected finite input vocabularies differ');
+    } else if (source.kind === 'opaque' && parameter.kind === 'opaque') domains.set(source.domain, parameter.domain);
   }
   const projectValue = (value: SymbolicValue): SymbolicValue => {
     if (value.kind !== 'data') return value;
@@ -76,9 +84,10 @@ export function verifySymbolicErasure(input: { abstract: unknown; concrete: unkn
       const concreteParameter = binding.inputs[parameter.parameter] ?? fail('missing projected input');
       return [parameter.parameter, frame[concreteParameter] ?? fail('missing concrete input value')];
     }));
-    if (abstract.version === 2) return projected;
+    if (abstract.version !== 1) return projected;
     const parameter = abstractInputs[0] ?? fail('missing abstract input');
-    return projected[parameter.parameter] ?? fail('missing projected input value');
+    const projectedValue = projected[parameter.parameter];
+    return typeof projectedValue === 'string' ? projectedValue : fail('missing projected opaque input value');
   };
   if (!sameState(abstract.initial, projectState(concrete.initial))) fail('projected initial state differs from the abstract model');
   // Each model checks its own complete variable tuple for square-action stuttering.

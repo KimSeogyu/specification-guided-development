@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto';
-import { symbolicInputs, validateSymbolicModel, type SymbolicBackendInput, type SymbolicExpression, type SymbolicGuard, type SymbolicValue } from '../symbolic-types.js';
+import { symbolicInputDefinitions, symbolicInputs, validateSymbolicModel, type SymbolicBackendInput, type SymbolicExpression, type SymbolicGuard, type SymbolicValue } from '../symbolic-types.js';
 import { inspectSymbolicOrbits } from '../symbolic-semantics.js';
 import type { GeneratedFile } from '../types.js';
+
+function textDirectionControl(code: number): boolean {
+  return code === 0x61c || code === 0x200e || code === 0x200f || (code >= 0x202a && code <= 0x202e) || (code >= 0x2066 && code <= 0x2069);
+}
 
 function rustString(value: string): string {
   let escaped = '';
@@ -10,10 +14,17 @@ function rustString(value: string): string {
     if (code === undefined || (code >= 0xd800 && code <= 0xdfff)) throw new Error('TLC301: Rust strings require Unicode scalar values');
     if (character === '"') escaped += '\\"';
     else if (character === '\\') escaped += '\\\\';
-    else if (code < 0x20 || code === 0x7f) escaped += `\\u{${code.toString(16)}}`;
+    else if (code < 0x20 || code === 0x7f || textDirectionControl(code)) escaped += `\\u{${code.toString(16)}}`;
     else escaped += character;
   }
   return `"${escaped}"`;
+}
+
+function documentedValue(value: SymbolicValue): string {
+  return [...JSON.stringify(value)].map(character => {
+    const code = character.codePointAt(0);
+    return code !== undefined && textDirectionControl(code) ? `\\u${code.toString(16).padStart(4, '0')}` : character;
+  }).join('');
 }
 
 function renderValue(value: SymbolicValue): string {
@@ -76,13 +87,26 @@ export function generateSymbolicRust(input: SymbolicBackendInput & {
   const model = validateSymbolicModel(input.model);
   inspectSymbolicOrbits(model);
   const parameters = symbolicInputs(model);
+  const definitions = symbolicInputDefinitions(model);
+  const className = input.className;
+  const enumName = (index: number): string => `${className}Input${index}`;
   const inputNames = new Map(parameters.map((parameter, index) => [parameter.parameter, model.version === 1 ? 'input_value' : `input_value_${index}`]));
   const legacyInput = model.version === 1 ? 'input_value' : undefined;
   const render = (expression: SymbolicExpression): string => renderExpression(expression, inputNames, legacyInput);
   const argumentNames = parameters.map((_parameter, index) => model.version === 1 ? 'input' : `input_${index}`);
-  const signature = argumentNames.map(name => `${name}: &str`).join(', ');
-  const inputValues = parameters.map((parameter, index) => `        let ${inputNames.get(parameter.parameter)} = SymbolicValue::Data { domain: ${rustString(parameter.domain)}.to_owned(), value: ${argumentNames[index]}.to_owned() };`).join('\n');
-  const className = input.className;
+  const signature = definitions.map((definition, index) => `${argumentNames[index]}: ${definition.kind === 'finite' ? enumName(index) : '&str'}`).join(', ');
+  const inputValues = definitions.map((parameter, index) => parameter.kind === 'opaque'
+    ? `        let ${inputNames.get(parameter.parameter)} = SymbolicValue::Data { domain: ${rustString(parameter.domain)}.to_owned(), value: ${argumentNames[index]}.to_owned() };`
+    : `        let ${inputNames.get(parameter.parameter)} = match ${argumentNames[index]} {\n${parameter.values.map((value, choice) => `            ${enumName(index)}::Choice${choice} => ${renderValue(value)},`).join('\n')}\n        };`).join('\n');
+  const inputEnums = definitions.flatMap((parameter, index) => parameter.kind === 'opaque' ? [] : [`/// Exact finite input \`${parameter.parameter}\` from \`${parameter.domain}\`; variants are scalar choices, not actions.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ${enumName(index)} {
+${parameter.values.map((value, choice) => `    /// ${documentedValue(value)}\n    Choice${choice},`).join('\n')}
+}
+
+`]).join('');
+  const overflowArguments = definitions.map((parameter, index) => parameter.kind === 'finite' ? `${enumName(index)}::Choice0` : rustString(model.version === 1 ? 'fresh-overflow-input' : `fresh-overflow-input-${index}`)).join(', ');
+  const apiTypes = definitions.map((parameter, index) => parameter.kind === 'finite' ? enumName(index) : '&str').join(', ');
   const reserved = ['Self', 'SymbolicValue', 'ValueExpression', 'Snapshot', 'Receipt', 'PreparedTransition', 'TransitionError', 'TransitionErrorReason',
     'String', 'BTreeMap', 'Serialize', 'Result', 'Option', 'Some', 'None', 'Ok', 'Err', 'MODEL'];
   if (!/^[A-Z][A-Za-z0-9]*$/.test(className) || reserved.includes(className)) throw new Error('TLC301: Rust authority requires a distinct UpperCamelCase className');
@@ -93,7 +117,7 @@ export function generateSymbolicRust(input: SymbolicBackendInput & {
     return `            (${rustString(variable)}.to_owned(), ${renderValue(value)}),`;
   }).join('\n');
   const condition = (guard: SymbolicGuard): string => {
-    if (input.minimalGuardConditions && (guard.kind === 'and' || guard.kind === 'or')) {
+    if ((input.minimalGuardConditions || model.version === 3) && (guard.kind === 'and' || guard.kind === 'or')) {
       return guard.terms.map(term => renderGuard(term, inputNames, legacyInput)).join(guard.kind === 'and' ? ' && ' : ' || ') || (guard.kind === 'and' ? 'true' : 'false');
     }
     return renderGuard(guard, inputNames, legacyInput);
@@ -153,7 +177,7 @@ pub enum SymbolicValue {
     Data { domain: String, value: String },
 }
 
-/// The source of each simultaneous assignment, copied from the symbolic IR.
+${inputEnums}/// The source of each simultaneous assignment, copied from the symbolic IR.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum ValueExpression {
@@ -288,18 +312,38 @@ mod tests {
         let mut owner = ${className}::new();
         owner.revision = u64::MAX;
         let before = owner.read();
-        match owner.prepare(${parameters.map((_parameter, index) => rustString(model.version === 1 ? 'fresh-overflow-input' : `fresh-overflow-input-${index}`)).join(', ')}) {
+        match owner.prepare(${overflowArguments}) {
             Err(error) => assert_eq!(error.state, before),
             Ok(_) => panic!("no preparation follows u64::MAX"),
         }
         assert_eq!(owner.read(), before);
-        let error = owner.send(${parameters.map((_parameter, index) => rustString(model.version === 1 ? 'fresh-overflow-input' : `fresh-overflow-input-${index}`)).join(', ')}).expect_err("no revision follows u64::MAX");
+        let error = owner.send(${overflowArguments}).expect_err("no revision follows u64::MAX");
         assert_eq!(error.state, before);
         assert_eq!(owner.read(), before);
     }
 }
 ` },
-    { path: 'README.md', content: `# Generated symbolic-owned Rust authority
+    { path: 'README.md', content: model.version === 3 ? `# Generated mixed-input Rust authority
+
+This standalone crate is \`${packageName}\`. Keep it as a separate dependency:
+
+\`\`\`toml
+[dependencies]
+authority = { package = "${packageName}", path = "../generated/rust" }
+\`\`\`
+
+Import \`authority::${className}\` and each finite input enum. Create an owner with \`new()\` and call \`send(${apiTypes})\` or \`prepare(${apiTypes})\` in model input order:
+
+${definitions.map((parameter, index) => `- \`${argumentNames[index]}\` maps to \`${parameter.parameter}\` in \`${parameter.domain}\`: ${parameter.kind === 'opaque' ? 'an immutable UTF-8 string identity (`&str`) in its distinct opaque namespace' : `\`${enumName(index)}\`, with exact mapping ${parameter.values.map((value, choice) => `\`Choice${choice}\` = \`${documentedValue(value)}\``).join('; ')}`}.`).join('\n')}
+
+Finite enum variants map to tagged scalar values and never select an action directly. Their deterministic ChoiceN order follows the canonical IR scalar order. Opaque data and finite scalar strings remain distinct when text matches; other opaque domains also stay distinct. Large integers remain exact decimal strings in snapshots. No runtime string parser or unchecked enum constructor is provided. Safe Rust rejects another input's enum, invalid variants, raw integers, and strings at a finite input boundary.
+
+Generated guards select the model action. The receipt contains the complete \`before\` and \`after\` snapshots, the checked revision, and named simultaneous assignment origins in \`updates\`. Guards and updates read the old state. Snapshots own their values; editing them cannot alter private state. The owner has no Clone, Deserialize, raw constructor, setter, or restore API.
+
+A successful \`PreparedTransition<'_>\` exclusively borrows its original owner. Inspect the proposed receipt with \`receipt()\`, then consume the token with \`commit(self)\`. Commit only moves fully prepared fields. Dropping the token leaves state and revision unchanged. The token has no Clone, Deserialize, raw constructor, owner selector, or mutation API. The borrow checker prevents reads, sends, another preparation, and token replay while the original token remains live. \`send\` uses the same prepare/commit path.
+
+Generation validates supplied mixed-input IR and its equality/copy orbit space. Controlled SANY/TLC and original-action oracle checks must complete separately to establish source provenance and the configured finite check. A finite enum value does not attest any real file operation. This is one abstract live-object owner with unchanged generated code and safe Rust callers. It does not establish file or resource authority, persistence, external-effect atomicity, application-wide source coverage, or arbitrary TLA+ semantics. Trust the generated crate and dependencies.
+` : `# Generated symbolic-owned Rust authority
 
 This standalone crate is \`${packageName}\`. Keep it as a separate dependency:
 

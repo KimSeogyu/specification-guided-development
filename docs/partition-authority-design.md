@@ -148,6 +148,8 @@ Completion of this unit requires a reviewed implementation, real model execution
 
 ## Concrete following source boundaries
 
+The [resource protocol compiler layer](resource-protocol.md) now supports mixed opaque identities and finite events, plus required source-obligation and complete-relation checks. It does not yet bind an actual native load or writer. A two-resource graph or a caller-asserted `present` event cannot establish that boundary.
+
 Live Parangsae grounding found additional routes that the resource implementation must close. The private same-module `write_batch(&Path, ...)` serves both Fact and Gap writes; a wrapper around it does not establish exclusive Fact authority. Raw/history paths join a full listing key after classifying only its basename, so a valid archive name does not establish a safe relative key or requested-prefix membership. A typed VisionKey must enforce that path contract before those effects. Kline needs a closed generated dataset selector because five normative datasets share KlineFact.
 
 Workspace binaries also have independent sinks. Backtest's caller-selected ledger reaches arbitrary append/fsync; examples include a DuckDB process. Enumerating only collector libraries cannot establish their namespace or target coverage. The next source profile must classify or refuse every admitted target and effect route, including aliases, function values, new Cargo targets and unsupported expansion. Registry build scripts and genuine trusted dependencies remain a separately stated environment boundary. No current data-fold or package effect grant establishes these properties.
