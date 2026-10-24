@@ -5,8 +5,8 @@ import { hostname } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { z } from 'zod';
-import { recordSchema } from './schema-record.js';
 import type { GeneratedFile } from './types.js';
+import { checkGeneratedOutput } from './output-check.js';
 
 const execute = promisify(execFile);
 const inventoryName = '.sgd-generated.json';
@@ -433,20 +433,12 @@ async function manage(root: string, lease: Lease, files: GeneratedFile[], check:
     fail('output directory has no generated-file inventory. Use an empty directory.');
   }
   if (check) {
-    if (JSON.stringify([...previous].sort()) !== JSON.stringify(wanted)) throw new Error('TLC104: generated output set changed');
+    const checked = [];
     for (const file of files) {
       const bytes = await currentBytes(root, outputPath(root, file.path));
-      if (bytes === null) throw new Error(`TLC104: missing generated file ${file.path}`);
-      const current = Buffer.from(bytes, 'base64').toString('utf8');
-      if (file.stableJsonKeys) {
-        const actual = recordSchema(z.string(), z.unknown()).parse(JSON.parse(current));
-        const expected = recordSchema(z.string(), z.unknown()).parse(JSON.parse(file.content));
-        for (const key of file.stableJsonKeys) {
-          if (JSON.stringify(actual[key]) !== JSON.stringify(expected[key])) throw new Error(`TLC104: stale receipt field ${key}`);
-        }
-      }
-      if (!file.volatile && current !== file.content) throw new Error(`TLC104: stale generated file ${file.path}`);
+      checked.push({ file, current: bytes === null ? null : Buffer.from(bytes, 'base64') });
     }
+    checkGeneratedOutput({ previous, files: checked });
     return;
   }
   const changes: Transaction['files'] = [];
