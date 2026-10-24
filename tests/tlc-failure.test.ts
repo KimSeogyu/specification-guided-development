@@ -29,9 +29,9 @@ test('typed errors preserve text and original cause and expose no expired counte
 
 test('next actions follow typed evidence and do not relabel unknown failures', () => {
   for (const [failure, action] of [
-    [{ kind: 'invariant_violation', phase: 'tlc', invariant: 'Safe', evidence: { kind: 'pinned-tlc-message', code: 2110 } }, 'Review the reported invariant and error output, correct the model or configuration, then rerun verification.'],
+    [{ kind: 'invariant_violation', phase: 'tlc', invariant: 'Safe', evidence: { kind: 'pinned-tlc-message', code: 2110 } }, 'Review the violated invariant and modeled behavior against the accepted requirement. Correct the structural cause without weakening the invariant to obtain a pass.'],
     [{ kind: 'parse_error', phase: 'sany', evidence: { kind: 'sany-error-summary', stage: 'syntax' } }, 'Correct the reported syntax or semantic errors, then rerun verification.'],
-    [{ kind: 'timeout', phase: 'tlc', evidence: { kind: 'owned-deadline' } }, 'Review model size and runner limits before retrying verification.'],
+    [{ kind: 'timeout', phase: 'tlc', evidence: { kind: 'owned-deadline' } }, 'Investigate model bounds and runner limits while preserving the required properties and verification scope.'],
     [{ kind: 'unknown', phase: 'executable-graph' }, 'Review the original error and runner environment before retrying. The failure cause was not classified.'],
   ] satisfies [TlcFailure, string][]) {
     const error = new TlcFailureError('TLC204: original error', failure);

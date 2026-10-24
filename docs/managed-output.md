@@ -48,6 +48,8 @@ In the source checkout, failures represented by `TlcFailureError` in the control
 
 An invariant violation requires a complete pinned TLC error frame with code `2107` or `2110` and a name from the current configuration. A timeout requires the runner's own deadline to expire. Recognized SANY syntax or semantic errors, or pinned TLC parsing messages, support `parse_error`. Within these typed boundaries, external termination, spawn failure, output limits, malformed messages, unsupported source constructs, and ambiguous executable graphs remain `unknown`.
 
+For an invariant violation, `nextAction` directs the caller to compare the invariant and modeled behavior with the accepted requirement and correct the structural cause without weakening the invariant to obtain a pass. Timeout guidance preserves the required properties and verification scope while the caller investigates model bounds and runner limits.
+
 The existing error string retains its bounded output tail. A complete failure log and a counterexample file are not retained, and the diagnostic exposes no `tracePath`. JavaScript callers can import `TlcFailureError` and `TlcFailureDiagnosticSchema` from `dist/tlc-failure.js`. When a subprocess error exists, it remains available as `cause`. The legacy v1 runner accepts arbitrary JARs and keeps its existing error response without this controlled classification.
 
 Classification does not authorize generation. Successful generation still requires normal process completion, an empty queue, no error or warning, stable inputs, a valid graph, and managed publication. Check-only runs retain their existing comparison behavior without publishing generated files. Fresh failure-log export and retained counterexamples remain separate work.

@@ -16,9 +16,9 @@ export type TlcPhase = z.infer<typeof PhaseSchema>;
 
 function nextAction(failure: TlcFailure): string {
   switch (failure.kind) {
-    case 'invariant_violation': return 'Review the reported invariant and error output, correct the model or configuration, then rerun verification.';
+    case 'invariant_violation': return 'Review the violated invariant and modeled behavior against the accepted requirement. Correct the structural cause without weakening the invariant to obtain a pass.';
     case 'parse_error': return 'Correct the reported syntax or semantic errors, then rerun verification.';
-    case 'timeout': return 'Review model size and runner limits before retrying verification.';
+    case 'timeout': return 'Investigate model bounds and runner limits while preserving the required properties and verification scope.';
     case 'unknown': return 'Review the original error and runner environment before retrying. The failure cause was not classified.';
     default: { const unexpected: never = failure; return unexpected; }
   }
