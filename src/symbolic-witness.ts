@@ -3,6 +3,7 @@ import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
+import { recordSchema } from './schema-record.js';
 import { sha256 } from './dot.js';
 import { type FiniteValue } from './finite-types.js';
 import { parseSanyXml } from './sany-xml.js';
@@ -18,13 +19,13 @@ const digest = (bytes: Uint8Array): string => createHash('sha256').update(bytes)
 const fail: (message: string) => never = message => { throw new Error(`TLC303: ${message}`); };
 const WitnessBase = z.object({
   kind: z.literal('symbolic-witness'), name: Identifier, variables: z.array(Identifier).min(1),
-  nodes: z.array(z.object({ id: Identifier, values: z.record(Identifier, SymbolicValueSchema) }).strict()).min(1),
+  nodes: z.array(z.object({ id: Identifier, values: recordSchema(Identifier, SymbolicValueSchema) }).strict()).min(1),
   initial: z.array(Identifier).min(1),
   edges: z.array(z.object({ from: Identifier, event: Identifier, to: Identifier }).strict()),
   source: z.object({ dotSha256: z.string().regex(/^[a-f0-9]{64}$/), stateCount: z.number().int().positive(), edgeCount: z.number().int().nonnegative() }).strict(),
 }).strict();
 const SingleWitnessSchema = WitnessBase.extend({ version: z.literal(1), domain: Identifier, atoms: z.array(Identifier).min(1) }).strict();
-const ProductWitnessSchema = WitnessBase.extend({ version: z.literal(2), domains: z.record(Identifier, z.array(Identifier).min(1)) }).strict();
+const ProductWitnessSchema = WitnessBase.extend({ version: z.literal(2), domains: recordSchema(Identifier, z.array(Identifier).min(1)) }).strict();
 export const SymbolicWitnessSchema = z.discriminatedUnion('version', [SingleWitnessSchema, ProductWitnessSchema]).superRefine((graph, context) => {
   const issue = (path: (string | number)[], message: string): void => context.addIssue({ code: z.ZodIssueCode.custom, path, message });
   const variables = new Set(graph.variables);

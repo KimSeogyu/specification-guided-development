@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { recordSchema } from './schema-record.js';
 
 export const TransitionSchema = z.object({ from: z.string(), event: z.string(), to: z.string() }).strict();
 export type Transition = z.infer<typeof TransitionSchema>;
@@ -26,7 +27,7 @@ const TransitionBindingSchema = z.object({
 }).strict();
 const DependencyBindingSchema = z.object({
   kind: z.literal('dependency'),
-  modules: z.record(z.string(), z.array(z.string().min(1)).min(1)),
+  modules: recordSchema(z.string(), z.array(z.string().min(1)).min(1)),
 }).strict();
 export const BindingSchema = z.discriminatedUnion('kind', [TransitionBindingSchema, DependencyBindingSchema]);
 export type Binding = z.infer<typeof BindingSchema>;

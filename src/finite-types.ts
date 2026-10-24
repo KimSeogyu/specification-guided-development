@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { recordSchema } from './schema-record.js';
 
 function isUnicodeScalarString(value: string): boolean {
   for (const character of value) {
@@ -21,13 +22,7 @@ export const FiniteValueSchema = z.discriminatedUnion('kind', [
 ]);
 export type FiniteValue = z.infer<typeof FiniteValueSchema>;
 
-// Zod records drop an own __proto__ key. Reject it before parsing so no graph
-// valuation can be silently changed by that library behavior.
-const ConcreteValuesSchema = z.unknown().superRefine((value, context) => {
-  if (typeof value === 'object' && value !== null && Object.hasOwn(value, '__proto__')) {
-    context.addIssue({ code: z.ZodIssueCode.custom, message: '__proto__ is unsupported as a concrete variable key' });
-  }
-}).pipe(z.record(z.string(), FiniteValueSchema));
+const ConcreteValuesSchema = recordSchema(z.string(), FiniteValueSchema);
 export const FiniteNodeSchema = z.object({ id: NodeIdSchema, values: ConcreteValuesSchema }).strict();
 export const FiniteEdgeSchema = z.object({ from: NodeIdSchema, event: LabelSchema, to: NodeIdSchema }).strict();
 

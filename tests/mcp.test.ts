@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createServer } from '../src/mcp.js';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -15,6 +15,16 @@ test('MCP negotiates tools and reports a failed read as a tool error', async () 
     await client.connect(clientTransport);
     const list=await client.listTools();
     assert.deepEqual(list.tools.map(tool=>tool.name).sort(),['sgd_build','sgd_compile','sgd_inspect','sgd_model','sgd_refine','sgd_visualize']);
+    for (const name of ['sgd_build', 'sgd_compile']) {
+      const tool = list.tools.find(tool => tool.name === name);
+      assert.ok(tool);
+      assert.deepEqual([...(tool.inputSchema.required ?? [])].sort(), (name === 'sgd_build' ? ['jar', 'out', 'project'] : ['dot', 'out', 'project']));
+      const check = tool.inputSchema.properties?.check;
+      assert.ok(check && typeof check === 'object');
+      assert.ok('default' in check && 'type' in check);
+      assert.equal(check.default, false);
+      assert.equal(check.type, 'boolean');
+    }
     const result=await client.callTool({name:'sgd_inspect',arguments:{ir:'/does-not-exist/automaton.json'}});
     assert.equal(result.isError,true);
     assert.equal(list.tools.find(tool=>tool.name==='sgd_refine')?.annotations?.readOnlyHint,true);
@@ -34,6 +44,11 @@ test('MCP check mode refuses edited generated output without repairing it', asyn
     await writeFile(project, JSON.stringify({ version: 1, name: 'Example', spec: 'Example.tla', config: 'Example.cfg', stateVariable: 'state', targets: ['typescript'], binding: { kind: 'transition', function: 'transition' } }));
     await writeFile(dot, String.raw`digraph DiskGraph { 1 [label="state = \"New\"", style=filled]; 1 -> 1 [label="Wait"]; }`);
     const args = { project, dot, out };
+    const invalidOut = join(root, 'invalid-output');
+    const invalid = await client.callTool({ name: 'sgd_compile', arguments: { project, dot, out: invalidOut, check: 'yes' } });
+    assert.equal(invalid.isError, true);
+    assert.match(JSON.stringify(invalid.content), /Invalid arguments|invalid_type/);
+    await assert.rejects(access(invalidOut), { code: 'ENOENT' });
     const built = await client.callTool({ name: 'sgd_compile', arguments: args });
     assert.ok(!built.isError, JSON.stringify(built));
     const original = await readFile(join(out, 'typescript/checker.mjs'));

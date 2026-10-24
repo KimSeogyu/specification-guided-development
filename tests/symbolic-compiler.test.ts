@@ -19,8 +19,8 @@ const execute = promisify(execFile);
 const jar = process.env.TLA2TOOLS_JAR ? resolve(process.env.TLA2TOOLS_JAR) : undefined;
 const tsc = resolve('node_modules/typescript/bin/tsc');
 const example = resolve('examples/fact-merge');
-const Snapshot = z.object({ model: z.string(), modelRevision: z.string(), revision: z.string(), values: z.record(SymbolicValueSchema) }).strict();
-const Trace = z.array(z.object({ input: z.string(), action: z.string(), before: Snapshot, after: Snapshot, updates: z.record(SymbolicExpressionSchema) }).strict());
+const Snapshot = z.object({ model: z.string(), modelRevision: z.string(), revision: z.string(), values: z.record(z.string(), SymbolicValueSchema) }).strict();
+const Trace = z.array(z.object({ input: z.string(), action: z.string(), before: Snapshot, after: Snapshot, updates: z.record(z.string(), SymbolicExpressionSchema) }).strict());
 const Traces = z.array(Trace);
 type NativeTrace = z.infer<typeof Trace>;
 
