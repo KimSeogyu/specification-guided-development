@@ -115,7 +115,7 @@ export function validatePartitionPlan(input: unknown): PartitionPlan {
     const payload = model.inputs.find(parameter => parameter.parameter === binding.model.payloadInput);
     const provenance = model.inputs.find(parameter => parameter.parameter === binding.model.provenanceInput);
     const payloadAtom = edge.input[binding.model.payloadInput]; const provenanceAtom = edge.input[binding.model.provenanceInput];
-    if (!payload || !provenance || payloadAtom === undefined || provenanceAtom === undefined) return fail('row orbit inputs are incomplete');
+    if (!payload || !provenance || typeof payloadAtom !== 'string' || typeof provenanceAtom !== 'string') return fail('row orbit inputs must be complete opaque identities');
     const inputPayload: SymbolicValue = { kind: 'data', domain: payload.domain, value: payloadAtom };
     const inputProvenance: SymbolicValue = { kind: 'data', domain: provenance.domain, value: provenanceAtom };
     const oldPayload = before[stored.payload];

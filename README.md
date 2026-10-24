@@ -163,6 +163,8 @@ Interrupted generation has [journaled process-termination recovery](docs/managed
 
 For a real Codex CLI session with fresh MCP generation and native checks, use the [manual host verification guide](docs/codex-host-verification.md). It requires an existing login and leaves global configuration unchanged. Plugin discovery and permanent installation have separate acceptance checks.
 
+Compiler API support for mixed opaque/finite inputs and abstract resource checks is described in the [resource protocol reference](docs/resource-protocol.md).
+
 ## Model architecture and behavior
 
 The intended method starts before lint integration:

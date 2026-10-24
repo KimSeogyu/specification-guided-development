@@ -1,4 +1,5 @@
-import { type SymbolicExpression, type SymbolicGuard, type SymbolicInput, type SymbolicModel, type SymbolicValue, SymbolicValueSchema, symbolicInputs, validateSymbolicModel } from './symbolic-types.js';
+import { FiniteValueSchema, type FiniteValue } from './finite-types.js';
+import { type SymbolicExpression, type SymbolicGuard, type SymbolicInput, type SymbolicInputFrameValue, type SymbolicModel, type SymbolicValue, SymbolicValueSchema, symbolicInputDefinitions, validateSymbolicModel } from './symbolic-types.js';
 
 export type SymbolicState = Record<string, SymbolicValue>;
 export const sameSymbolicValue = (a: SymbolicValue, b: SymbolicValue): boolean => a.kind === b.kind && a.value === b.value && (a.kind !== 'data' || (b.kind === 'data' && a.domain === b.domain));
@@ -51,8 +52,22 @@ export type SymbolicStep =
   | { kind: 'accepted'; action: string; state: SymbolicState; updates: Record<string, SymbolicExpression> }
   | { kind: 'disabled' }
   | { kind: 'ambiguous' };
+
+function finiteInput(value: unknown, vocabulary: readonly FiniteValue[]): FiniteValue {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('TLC301: finite symbolic input requires a tagged scalar value');
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== 2 || keys.some(key => key !== 'kind' && key !== 'value')) throw new Error('TLC301: finite symbolic input requires exactly kind and value');
+  const kind = Object.getOwnPropertyDescriptor(value, 'kind');
+  const payload = Object.getOwnPropertyDescriptor(value, 'value');
+  if (!kind || !payload || !('value' in kind) || !('value' in payload)) throw new Error('TLC301: finite symbolic input fields must be own data properties');
+  const parsed = FiniteValueSchema.safeParse({ kind: kind.value, value: payload.value });
+  if (!parsed.success) throw new Error('TLC301: finite symbolic input requires a valid tagged scalar value');
+  if (!vocabulary.some(candidate => sameSymbolicValue(candidate, parsed.data))) throw new Error('TLC301: finite symbolic input is outside its declared vocabulary');
+  return parsed.data;
+}
+
 export function stepSymbolic(model: SymbolicModel, state: SymbolicState, input: SymbolicInput): SymbolicStep {
-  const inputs = symbolicInputs(model);
+  const inputs = symbolicInputDefinitions(model);
   const atom = (domain: string, value: unknown): SymbolicValue => {
     const parsed = SymbolicValueSchema.safeParse({ kind: 'data', domain, value });
     if (!parsed.success) throw new Error('TLC301: symbolic input requires immutable Unicode string identities');
@@ -67,11 +82,11 @@ export function stepSymbolic(model: SymbolicModel, state: SymbolicState, input: 
     const values = new Map(inputs.map(item => {
       const descriptor = Object.getOwnPropertyDescriptor(input, item.parameter);
       if (!descriptor || !('value' in descriptor)) throw new Error('TLC301: product input parameters must be own data properties');
-      return [item.parameter, atom(item.domain, descriptor.value)];
+      return [item.parameter, item.kind === 'opaque' ? atom(item.domain, descriptor.value) : finiteInput(descriptor.value, item.values)];
     }));
     value = { kind: 'inputs', values };
   }
-  const domains = new Set(inputs.map(item => item.domain));
+  const domains = new Set(inputs.filter(item => item.kind === 'opaque').map(item => item.domain));
   if (Object.values(state).some(item => item.kind === 'data' && !domains.has(item.domain))) throw new Error('TLC301: state contains an undeclared opaque domain');
   const enabled = model.branches.filter(branch => evaluateGuard(branch.guard, state, value));
   if (enabled.length === 0) return { kind: 'disabled' };
@@ -87,7 +102,7 @@ export function stepSymbolic(model: SymbolicModel, state: SymbolicState, input: 
 }
 
 function canonicalState(model: SymbolicModel, state: SymbolicState): SymbolicState {
-  const atoms = new Map(symbolicInputs(model).map(item => [item.domain, new Map<string, string>()]));
+  const atoms = new Map(symbolicInputDefinitions(model).filter(item => item.kind === 'opaque').map(item => [item.domain, new Map<string, string>()]));
   return Object.fromEntries(model.variables.map(variable => {
     const value = state[variable];
     if (!value) throw new Error('TLC301: incomplete abstract state');
@@ -100,7 +115,7 @@ function canonicalState(model: SymbolicModel, state: SymbolicState): SymbolicSta
   }));
 }
 
-/** Equality and copy commute with atom renaming. Each state needs its existing atoms plus one fresh input. */
+/** Equality and copy commute with atom renaming. Finite inputs retain their complete literal vocabulary. */
 export function inspectSymbolicOrbits(input: unknown): {
   kind: 'equality-copy-orbits'; states: SymbolicState[];
   edges: { from: number; input: SymbolicInput; action: string; to: number }[];
@@ -119,15 +134,15 @@ export function inspectSymbolicOrbits(input: unknown): {
       if (!evaluateGuard(invariant.predicate, state, null)) throw new Error(`TLC302: invariant ${invariant.name} fails in an equality/copy orbit`);
     }
     // [P]_vars means P OR UNCHANGED vars. Its implicit stuttering step always satisfies it.
-    let product: Record<string, string>[] = [{}];
-    for (const input of symbolicInputs(model)) {
+    let product: Record<string, SymbolicInputFrameValue>[] = [{}];
+    for (const input of symbolicInputDefinitions(model)) {
       const atoms = [...new Set(Object.values(state).flatMap(value => value.kind === 'data' && value.domain === input.domain ? [value.value] : []))];
-      const choices = [...atoms, `a${atoms.length}`];
+      const choices: readonly SymbolicInputFrameValue[] = input.kind === 'finite' ? input.values : [...atoms, `a${atoms.length}`];
       product = product.flatMap(frame => choices.map(value => ({ ...frame, [input.parameter]: value })));
     }
     const inputs: SymbolicInput[] = model.version === 1 ? product.map(frame => {
       const value = frame[model.input.parameter];
-      if (value === undefined) throw new Error('TLC301: missing orbit input');
+      if (typeof value !== 'string') throw new Error('TLC301: missing opaque orbit input');
       return value;
     }) : product;
     let accepted = 0;
