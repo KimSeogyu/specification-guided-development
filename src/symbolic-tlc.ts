@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { runControlledTlc, type ControlledTlcEvidence, type ControlledTlcInput, type ParsedSymbolicConfig } from './finite-tlc.js';
+import type { SanyModule } from './sany-xml.js';
 
 export { parseSymbolicConfig, type ParsedSymbolicConfig, type TlcConfigScalar, type TlcConfigValue } from './finite-tlc.js';
 
@@ -12,10 +13,10 @@ export interface SymbolicTlcEvidence extends ControlledTlcEvidence {
 
 /** TLC verifies the configured finite instance. XML supports separate symbolic lowering; it is not an unbounded invariant proof. */
 export async function runSymbolicTlc(input: ControlledTlcInput): Promise<{
-  dot: string; xml: string; log: string; config: ParsedSymbolicConfig; evidence: SymbolicTlcEvidence;
+  dot: string; xml: string; log: string; config: ParsedSymbolicConfig; semantic: SanyModule; evidence: SymbolicTlcEvidence;
 }> {
   const result = await runControlledTlc(input, 'symbolic-owned-v1');
-  return { dot: result.dot, xml: result.xml, log: result.log, config: result.config, evidence: {
+  return { dot: result.dot, xml: result.xml, log: result.log, config: result.config, semantic: result.semantic, evidence: {
     kind: 'tlc-symbolic-completed', profile: 'symbolic-owned-v1', extractor: 'SANY-XML-v1',
     xmlSha256: createHash('sha256').update(result.xml).digest('hex'), ...result.evidence,
   } };
