@@ -15,6 +15,20 @@ pub struct Error {
     pub column: Option<usize>,
 }
 impl Error {
+    pub(crate) fn scope(message: impl Into<String>) -> Self {
+        Self {
+            rule_id: "TLC308",
+            message: message.into(),
+            file: None,
+            line: None,
+            column: None,
+        }
+    }
+    pub(crate) fn scope_at(file: &str, span: Span, message: impl Into<String>) -> Self {
+        let mut error = Self::at(file, span, message);
+        error.rule_id = "TLC308";
+        error
+    }
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             rule_id: "TLC305",

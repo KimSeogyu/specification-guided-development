@@ -163,7 +163,7 @@ Interrupted generation has [journaled process-termination recovery](docs/managed
 
 For a real Codex CLI session with fresh MCP generation and native checks, use the [manual host verification guide](docs/codex-host-verification.md). It requires an existing login and leaves global configuration unchanged. Plugin discovery and permanent installation have separate acceptance checks.
 
-Compiler API support for mixed opaque/finite inputs and abstract resource checks is described in the [resource protocol reference](docs/resource-protocol.md).
+Compiler API support for mixed opaque/finite inputs and abstract resource checks is described in the [resource protocol reference](docs/resource-protocol.md). The native Rust helper also has a separate [closed source-scope mode](tools/rust-bindings/README.md#closed-source-scope-mode) for Cargo target discovery and resolved local function references. It refuses unsupported source and grants no storage authority.
 
 ## Model architecture and behavior
 

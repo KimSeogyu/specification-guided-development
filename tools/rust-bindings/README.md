@@ -48,3 +48,27 @@ cargo test --locked --manifest-path tools/rust-bindings/Cargo.toml
 ```
 
 The tests use public Parangsae Fact and core implementations, pending Kline schema equivalence, and source mutations. They cover omitted fields, changed equality, getter/macro representation drift, shared mutable fields, finite equivalence laws, primitive and standard namespace shadowing, hidden Drop implementations, consuming getters, conditional source, symlinks, and generated-output bootstrap. The fixture's reduced workspace and the actual application source analysis remain distinct evidence.
+
+## Closed source-scope mode
+
+The separate `source-scope` command checks every target discovered by Cargo against a small unconditional Rust language:
+
+```sh
+sgd-rust-bindings source-scope --root /app
+```
+
+The library entry point is `analyze_source_scope(root)`. A successful command prints a `rust-source-scope-v1` report. Its scope is `all-discovered-targets-unconditional-closed-source`, and `storageAuthority` is always `false`. Failure prints a `TLC308` diagnostic with `storageAuthority:false` and exits with code 2. The existing row-binding command, JSON plan, and production-library scope are unchanged.
+
+The command runs real `cargo metadata --offline --locked --format-version 1` after local configuration and manifest checks. It requires an existing `Cargo.lock`, exact workspace member paths, and explicit local path dependencies inside the selected workspace root. It records each library, binary, integration test, example, and bench with its package identity and separate `crate::` namespace. Own-library imports and renamed dependencies resolve to the corresponding library target. A custom dependency library name currently requires an explicit renamed dependency alias. Other custom-name mappings fail closed.
+
+Source identities contain UTF-8 file name components joined with `/`, independent of the host's native path separator. Native Windows separators are supported. Literal backslashes in POSIX file names remain unsupported. Cargo input paths use portable forward slashes. Source files and their parent components must remain inside the selected root without symlinks.
+
+The first profile refuses registry dependencies, workspace member globs, inherited dependencies, nonempty feature declarations, target-dependent dependencies, build scripts, procedural macros, local toolchain overrides, and unknown Cargo target kinds. Local Cargo configuration supports only `[alias]`. It rejects ambiguous configuration names and build, environment, source, and registry overrides before invoking Cargo. The inherited environment, global and above-root Cargo configuration, toolchain, cache, and platform are trusted prerequisites. This command does not attest or change those prerequisites.
+
+The admitted source language contains ordinary modules, explicit imports and reexports, safe nongeneric free functions, primitive scalar data, tuples, arrays, immutable references, and immutable local function aliases. Calls resolve to actual local function identities. Every loaded function body and import is checked, including unused private functions. A local function named `write` can pass. A function value that resolves through a reexport to `std::fs::write` fails with that qualified identity. All standard or foreign APIs lack pure summaries in this profile. Known filesystem, IO, process, network, and platform references receive an effect classification and fail.
+
+The checker refuses receiver and trait dispatch, custom types and lifecycle code, generic callbacks, escaping function values, macros, unknown attributes, mutable bindings, closures, unsafe code, and unsupported expressions. It rejects every documentation attribute, doc comment, `cfg`, `cfg_attr`, and test attribute instead of silently excluding that source. Rustdoc can compile fenced or indented documentation code into executables that Cargo metadata does not enumerate, so this profile refuses documentation input entirely. Ordinary non-doc comments remain supported. Target kinds are recorded; conditional and feature views are not evaluated. Toolchain-generated test and bench harness code is outside user-source analysis. Standard prelude behavior, builtin operators, panic behavior, and runtime behavior remain part of the trusted toolchain boundary. Primitive shape checks are not a general Rust typechecker or a compilation result.
+
+Before returning success, the command repeats safe Cargo discovery and verifies captured source, manifest, lockfile, and configuration bytes. It also rechecks absent configuration and alternative module paths. An added automatic binary or ambiguous module layout changes the result even when earlier source files remain unchanged. No generated directory or file is excluded in this mode. These checks detect ordinary edits across analysis phases. They do not create an atomic filesystem snapshot.
+
+This mode produces source evidence only. It does not admit current Parangsae codecs, derive loaded-resource identity, grant a filesystem namespace, or generate storage authority. Unsupported source fails instead of returning partial workspace success.
