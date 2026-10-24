@@ -11,15 +11,24 @@ export const ResourceProtocolBindingSchema = z.object({
     loadOutcome: Identifier, decision: Identifier, coverage: Identifier, attempts: Identifier, replacements: Identifier, effect: Identifier,
   }).strict(),
 }).strict();
+export const ResourceProtocolBindingV2Schema = ResourceProtocolBindingSchema.extend({
+  version: z.literal(2),
+  variables: ResourceProtocolBindingSchema.shape.variables.extend({ writeOutcome: Identifier }).strict(),
+}).strict();
+export const VersionedResourceProtocolBindingSchema = z.discriminatedUnion('version', [ResourceProtocolBindingSchema, ResourceProtocolBindingV2Schema]);
 export type ResourceProtocolBinding = z.infer<typeof ResourceProtocolBindingSchema>;
+export type ResourceProtocolBindingV2 = z.infer<typeof ResourceProtocolBindingV2Schema>;
+export type VersionedResourceProtocolBinding = z.infer<typeof VersionedResourceProtocolBindingSchema>;
 export type ResourceCoverage = 'required-before-write' | 'independent';
-type Role = keyof ResourceProtocolBinding['variables'];
+type BaseRole = keyof ResourceProtocolBinding['variables'];
+type Role = BaseRole | 'writeOutcome';
 const phases = ['New', 'Selected', 'Loaded', 'Prepared', 'Attempted', 'Done', 'Failed'];
-const roles = ['phase', 'selected', 'loaded', 'prepared', 'attempted', 'loadOutcome', 'decision', 'coverage', 'attempts', 'replacements', 'effect'] satisfies Role[];
-const OperationSchema = z.enum(['Select', 'Present', 'NotFound', 'ReadError', 'DecodeError', 'PrepareWrite', 'PrepareNoop', 'PrepareRefused', 'CoverSuccess', 'CoverFailure', 'AttemptWrite', 'AttemptNoop', 'AttemptRefused', 'FinishSuccess', 'FinishFailure', 'Terminal']);
-const operations = OperationSchema.options;
+const baseRoles = ['phase', 'selected', 'loaded', 'prepared', 'attempted', 'loadOutcome', 'decision', 'coverage', 'attempts', 'replacements', 'effect'] satisfies BaseRole[];
+const BaseOperationSchema = z.enum(['Select', 'Present', 'NotFound', 'ReadError', 'DecodeError', 'PrepareWrite', 'PrepareNoop', 'PrepareRefused', 'CoverSuccess', 'CoverFailure', 'AttemptWrite', 'AttemptNoop', 'AttemptRefused', 'FinishSuccess', 'FinishFailure', 'Terminal']);
+const OperationSchema = z.enum([...BaseOperationSchema.options, 'FinishWriteNotReplaced', 'FinishWriteIndeterminate', 'FinishWriteAfterError']);
 type Operation = z.infer<typeof OperationSchema>;
 const fail: (message: string) => never = message => { throw new Error(`TLC305: ${message}`); };
+const invalidBinding = (error: z.ZodError): never => fail(`invalid resource role binding: ${error.issues.slice(0, 5).map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ')}`);
 const literal = (value: string): SymbolicExpression => ({ kind: 'literal', value: { kind: 'string', value } });
 const integer = (value: string): SymbolicExpression => ({ kind: 'literal', value: { kind: 'integer', value } });
 const boolean = (value: boolean): SymbolicExpression => ({ kind: 'literal', value: { kind: 'boolean', value } });
@@ -28,10 +37,22 @@ const and = (...terms: SymbolicGuard[]): SymbolicGuard => ({ kind: 'and', terms 
 const implies = (left: SymbolicGuard, right: SymbolicGuard): SymbolicGuard => ({ kind: 'implies', left, right });
 const member = (value: SymbolicExpression, values: string[]): SymbolicGuard => ({ kind: 'member', value, elements: values.map(value => ({ kind: 'string', value })) });
 
-function parseInput(input: { model: unknown; binding: unknown; coverage: ResourceCoverage }): { model: SymbolicModelV3; binding: ResourceProtocolBinding; coverage: ResourceCoverage } {
+function bindingRoles(binding: VersionedResourceProtocolBinding): Role[] {
+  return binding.version === 1 ? baseRoles : [...baseRoles, 'writeOutcome'];
+}
+
+function roleVariable(binding: VersionedResourceProtocolBinding, role: Role): string {
+  if (role === 'writeOutcome') {
+    if (binding.version !== 2) return fail('write outcome role requires resource binding v2');
+    return binding.variables.writeOutcome;
+  }
+  return binding.variables[role];
+}
+
+function parseInput(input: { model: unknown; binding: unknown; coverage: ResourceCoverage }): { model: SymbolicModelV3; binding: VersionedResourceProtocolBinding; coverage: ResourceCoverage } {
   if (input.coverage !== 'required-before-write' && input.coverage !== 'independent') return fail('resource coverage composition must be explicit');
-  const parsed = ResourceProtocolBindingSchema.safeParse(input.binding);
-  if (!parsed.success) return fail(`invalid resource role binding: ${parsed.error.issues.slice(0, 5).map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ')}`);
+  const parsed = VersionedResourceProtocolBindingSchema.safeParse(input.binding);
+  if (!parsed.success) return invalidBinding(parsed.error);
   let model;
   try { model = validateSymbolicModel(input.model); }
   catch (error) { return fail(`invalid resource model: ${error instanceof Error ? error.message : String(error)}`); }
@@ -42,7 +63,7 @@ function parseInput(input: { model: unknown; binding: unknown; coverage: Resourc
   if (resource?.kind !== 'opaque' || event?.kind !== 'finite') return fail('resource and event roles must bind distinct opaque and finite inputs');
   if (event.values.some(value => value.kind !== 'string')) return fail('resource event input must be a finite string vocabulary');
   const variables = Object.values(binding.variables);
-  if (variables.length !== model.variables.length || new Set(variables).size !== variables.length || variables.some(variable => !model.variables.includes(variable))) return fail('resource roles must bijectively bind all eleven model variables');
+  if (variables.length !== model.variables.length || new Set(variables).size !== variables.length || variables.some(variable => !model.variables.includes(variable))) return fail(`resource roles must bijectively bind all ${binding.version === 1 ? 'eleven' : 'twelve'} model variables`);
   return { model, binding, coverage: input.coverage };
 }
 
@@ -68,28 +89,38 @@ function normalGuard(guard: SymbolicGuard): string {
   }
 }
 
-function sourceObligations(binding: ResourceProtocolBinding): { invariants: { role: string; predicate: SymbolicGuard }[]; terminal: SymbolicGuard; coverage: SymbolicGuard } {
-  const state = (role: Role): SymbolicExpression => ({ kind: 'state', variable: binding.variables[role] });
-  const next = (role: Role): SymbolicExpression => ({ kind: 'next-state', variable: binding.variables[role] });
+function sourceObligations(binding: VersionedResourceProtocolBinding): { invariants: { role: string; predicate: SymbolicGuard }[]; terminal: SymbolicGuard; coverage: SymbolicGuard } {
+  const state = (role: Role): SymbolicExpression => ({ kind: 'state', variable: roleVariable(binding, role) });
+  const next = (role: Role): SymbolicExpression => ({ kind: 'next-state', variable: roleVariable(binding, role) });
   const notNone = (role: Role): SymbolicGuard => ({ kind: 'not-equal', left: state(role), right: literal('none') });
+  const invariants = [
+    { role: 'affinity', predicate: and(
+      implies(notNone('loaded'), equal(state('loaded'), state('selected'))),
+      implies(notNone('prepared'), equal(state('prepared'), state('loaded'))),
+      implies(notNone('attempted'), equal(state('attempted'), state('prepared'))),
+    ) },
+    { role: 'read origin', predicate: and(
+      implies(notNone('loaded'), member(state('loadOutcome'), ['Present', 'NotFound'])),
+      implies(member(state('loadOutcome'), ['ReadError', 'DecodeError']), and(equal(state('loaded'), literal('none')), equal(state('phase'), literal('Failed')))),
+    ) },
+    { role: 'Write-only replacement', predicate: and(
+      implies(equal(state('replacements'), integer('1')), binding.version === 1
+        ? and(equal(state('decision'), literal('Write')), equal(state('effect'), literal('Write')), equal(state('attempts'), integer('1')), equal(state('phase'), literal('Done')))
+        : and(equal(state('decision'), literal('Write')), equal(state('effect'), literal('Write')), equal(state('attempts'), integer('1')), equal(state('writeOutcome'), literal('Replaced')), member(state('phase'), ['Done', 'Failed']))),
+      implies(member(state('decision'), ['Noop', 'Refused']), equal(state('replacements'), integer('0'))),
+      implies(equal(state('attempts'), integer('0')), equal(state('replacements'), integer('0'))),
+    ) },
+  ];
+  if (binding.version === 2) invariants.push({ role: 'write observation', predicate: and(
+    implies(notNone('writeOutcome'), and(equal(state('decision'), literal('Write')), equal(state('effect'), literal('Write')), equal(state('attempts'), integer('1')))),
+    implies(equal(state('effect'), literal('Write')), notNone('writeOutcome')),
+    implies(equal(state('writeOutcome'), literal('Pending')), and(equal(state('phase'), literal('Attempted')), equal(state('replacements'), integer('0')))),
+    implies(member(state('writeOutcome'), ['NotReplaced', 'Indeterminate']), and(equal(state('phase'), literal('Failed')), equal(state('replacements'), integer('0')))),
+    implies(equal(state('writeOutcome'), literal('Replaced')), and(member(state('phase'), ['Done', 'Failed']), equal(state('replacements'), integer('1')))),
+  ) });
   return {
-    invariants: [
-      { role: 'affinity', predicate: and(
-        implies(notNone('loaded'), equal(state('loaded'), state('selected'))),
-        implies(notNone('prepared'), equal(state('prepared'), state('loaded'))),
-        implies(notNone('attempted'), equal(state('attempted'), state('prepared'))),
-      ) },
-      { role: 'read origin', predicate: and(
-        implies(notNone('loaded'), member(state('loadOutcome'), ['Present', 'NotFound'])),
-        implies(member(state('loadOutcome'), ['ReadError', 'DecodeError']), and(equal(state('loaded'), literal('none')), equal(state('phase'), literal('Failed')))),
-      ) },
-      { role: 'Write-only replacement', predicate: and(
-        implies(equal(state('replacements'), integer('1')), and(equal(state('decision'), literal('Write')), equal(state('effect'), literal('Write')), equal(state('attempts'), integer('1')), equal(state('phase'), literal('Done')))),
-        implies(member(state('decision'), ['Noop', 'Refused']), equal(state('replacements'), integer('0'))),
-        implies(equal(state('attempts'), integer('0')), equal(state('replacements'), integer('0'))),
-      ) },
-    ],
-    terminal: implies(member(state('phase'), ['Done', 'Failed']), and(...roles.map(role => equal(next(role), state(role))))),
+    invariants,
+    terminal: implies(member(state('phase'), ['Done', 'Failed']), and(...bindingRoles(binding).map(role => equal(next(role), state(role))))),
     coverage: implies(and(equal(state('attempts'), integer('0')), equal(next('attempts'), integer('1')), equal(next('effect'), literal('Write'))), equal(state('coverage'), boolean(true))),
   };
 }
@@ -97,7 +128,7 @@ function sourceObligations(binding: ResourceProtocolBinding): { invariants: { ro
 /** Configured lowered predicates are checked as source expressions, not by names
  * or hashes. This assumes supplied IR faithfully represents its source; it does
  * not establish SANY/TLC provenance or authenticate any native resource. */
-export function validateResourceProtocolSource(input: { model: unknown; binding: unknown; coverage: ResourceCoverage }): void {
+function validateVersionedResourceProtocolSource(input: { model: unknown; binding: unknown; coverage: ResourceCoverage }): void {
   const { model, binding, coverage } = parseInput(input);
   const required = sourceObligations(binding);
   for (const obligation of required.invariants) {
@@ -108,12 +139,13 @@ export function validateResourceProtocolSource(input: { model: unknown; binding:
   }
 }
 
-function expectedInitial(binding: ResourceProtocolBinding): SymbolicState {
+function expectedInitial(binding: VersionedResourceProtocolBinding): SymbolicState {
   const values: Record<Role, SymbolicValue> = {
     phase: { kind: 'string', value: 'New' }, selected: { kind: 'string', value: 'none' }, loaded: { kind: 'string', value: 'none' }, prepared: { kind: 'string', value: 'none' }, attempted: { kind: 'string', value: 'none' },
     loadOutcome: { kind: 'string', value: 'none' }, decision: { kind: 'string', value: 'none' }, coverage: { kind: 'boolean', value: false }, attempts: { kind: 'integer', value: '0' }, replacements: { kind: 'integer', value: '0' }, effect: { kind: 'string', value: 'none' },
+    writeOutcome: { kind: 'string', value: 'none' },
   };
-  return Object.fromEntries(roles.map(role => [binding.variables[role], values[role]]));
+  return Object.fromEntries(bindingRoles(binding).map(role => [roleVariable(binding, role), values[role]]));
 }
 
 function sameState(variables: readonly string[], left: SymbolicState, right: SymbolicState): boolean {
@@ -125,16 +157,16 @@ function sameState(variables: readonly string[], left: SymbolicState, right: Sym
 
 /** Complete role transitions, without event or action spelling. The association
  * between finite inputs and these operations is inferred from actual behavior. */
-function expectedSteps(input: { state: SymbolicState; resource: SymbolicValue; binding: ResourceProtocolBinding; coverage: ResourceCoverage }): Map<Operation, SymbolicState> {
+function expectedSteps(input: { state: SymbolicState; resource: SymbolicValue; binding: VersionedResourceProtocolBinding; coverage: ResourceCoverage }): Map<Operation, SymbolicState> {
   const { state, resource, binding, coverage } = input;
-  const value = (role: Role): SymbolicValue => state[binding.variables[role]] ?? fail(`missing ${role} state`);
+  const value = (role: Role): SymbolicValue => state[roleVariable(binding, role)] ?? fail(`missing ${role} state`);
   const is = (role: Role, expected: string): boolean => value(role).value === expected;
   const phase = value('phase');
   if (phase.kind !== 'string' || !phases.includes(phase.value)) return fail('unsupported resource phase');
   const expected = new Map<Operation, SymbolicState>();
   const add = (operation: Operation, changes: Partial<Record<Role, SymbolicValue>>): void => {
     const next = { ...state };
-    for (const role of roles) { const changed = changes[role]; if (changed !== undefined) next[binding.variables[role]] = changed; }
+    for (const role of bindingRoles(binding)) { const changed = changes[role]; if (changed !== undefined) next[roleVariable(binding, role)] = changed; }
     expected.set(operation, next);
   };
   const string = (value: string): SymbolicValue => ({ kind: 'string', value });
@@ -156,15 +188,27 @@ function expectedSteps(input: { state: SymbolicState; resource: SymbolicValue; b
     if (value('coverage').value === false) { add('CoverSuccess', { coverage: { kind: 'boolean', value: true } }); add('CoverFailure', { phase: string('Failed') }); }
     for (const [operation, decision, effect] of [['AttemptWrite', 'Write', 'Write'], ['AttemptNoop', 'Noop', 'None'], ['AttemptRefused', 'Refused', 'Diagnostic']] satisfies [Operation, string, string][]) {
       if (!is('decision', decision) || !is('attempts', '0') || (decision === 'Write' && coverage === 'required-before-write' && value('coverage').value !== true)) continue;
-      add(operation, { phase: string(decision === 'Noop' ? 'Done' : 'Attempted'), attempted: resource, attempts: { kind: 'integer', value: '1' }, effect: string(effect) });
+      const changes: Partial<Record<Role, SymbolicValue>> = { phase: string(decision === 'Noop' ? 'Done' : 'Attempted'), attempted: resource, attempts: { kind: 'integer', value: '1' }, effect: string(effect) };
+      if (binding.version === 2 && decision === 'Write') changes.writeOutcome = string('Pending');
+      add(operation, changes);
     }
     return expected;
   }
   if (phase.value === 'Attempted') {
-    add('FinishFailure', { phase: string('Failed') });
-    if (is('effect', 'Write')) add('FinishSuccess', { phase: string('Done'), replacements: { kind: 'integer', value: '1' } });
-    else if (is('effect', 'Diagnostic')) add('FinishSuccess', { phase: string('Done') });
-    else return fail('unsupported attempted effect');
+    if (binding.version === 1) {
+      add('FinishFailure', { phase: string('Failed') });
+      if (is('effect', 'Write')) add('FinishSuccess', { phase: string('Done'), replacements: { kind: 'integer', value: '1' } });
+      else if (is('effect', 'Diagnostic')) add('FinishSuccess', { phase: string('Done') });
+      else return fail('unsupported attempted effect');
+    } else if (is('effect', 'Write')) {
+      add('FinishWriteNotReplaced', { phase: string('Failed'), writeOutcome: string('NotReplaced') });
+      add('FinishWriteIndeterminate', { phase: string('Failed'), writeOutcome: string('Indeterminate') });
+      add('FinishWriteAfterError', { phase: string('Failed'), writeOutcome: string('Replaced'), replacements: { kind: 'integer', value: '1' } });
+      add('FinishSuccess', { phase: string('Done'), writeOutcome: string('Replaced'), replacements: { kind: 'integer', value: '1' } });
+    } else if (is('effect', 'Diagnostic')) {
+      add('FinishFailure', { phase: string('Failed') });
+      add('FinishSuccess', { phase: string('Done') });
+    } else return fail('unsupported attempted effect');
     return expected;
   }
   return fail('unmatched resource role state');
@@ -174,9 +218,9 @@ function expectedSteps(input: { state: SymbolicState; resource: SymbolicValue; b
  * native writer, archive coverage, filesystem authority or TLC provenance is
  * established by this library check. All accepted AND disabled input orbits are
  * compared with the admitted relation, so removing progress is not a proof. */
-export function validateResourceProtocol(input: { model: unknown; binding: unknown; coverage: ResourceCoverage }) {
+function validateVersionedResourceProtocol(input: { model: unknown; binding: unknown; coverage: ResourceCoverage }) {
   const { model, binding, coverage } = parseInput(input);
-  validateResourceProtocolSource({ model, binding, coverage });
+  validateVersionedResourceProtocolSource({ model, binding, coverage });
   if (!sameState(model.variables, model.initial, expectedInitial(binding))) return fail('resource protocol must initialize every role to its exact supported sentinel or count');
   let proof;
   try { proof = inspectSymbolicOrbits(model); }
@@ -204,7 +248,7 @@ export function validateResourceProtocol(input: { model: unknown; binding: unkno
     } else if (actual.kind !== 'disabled') return fail('ambiguous resource transition');
     observations.push({ before, event: event.value, expected, actual });
   }
-  for (const operation of operations) if (![...eventRoles.values()].includes(operation)) return fail(`resource protocol omits meaningful ${operation} progress`);
+  for (const operation of binding.version === 1 ? BaseOperationSchema.options : OperationSchema.options) if (![...eventRoles.values()].includes(operation)) return fail(`resource protocol omits meaningful ${operation} progress`);
   for (const observation of observations) {
     const operation = eventRoles.get(observation.event);
     const expected = operation === undefined ? undefined : observation.expected.get(operation);
@@ -212,7 +256,33 @@ export function validateResourceProtocol(input: { model: unknown; binding: unkno
     if (expected === undefined ? actual.kind !== 'disabled' : actual.kind !== 'accepted' || !sameState(model.variables, actual.state, expected)) return fail(`resource transition at ${String(observation.before[binding.variables.phase]?.value)}/${observation.event} omits or exceeds its inferred ${operation ?? 'disabled'} role`);
   }
   return {
-    version: 1, kind: 'abstract-resource-protocol', storageAuthority: false,
+    version: 1, kind: 'abstract-resource-protocol', profile: binding.version === 1 ? 'abstract-resource-v1' : 'observed-write-v2', storageAuthority: false,
     scope: 'complete-equality-copy-orbits', coverage, model, binding, proof,
-  } satisfies { version: 1; kind: 'abstract-resource-protocol'; storageAuthority: false; scope: 'complete-equality-copy-orbits'; coverage: ResourceCoverage; model: SymbolicModelV3; binding: ResourceProtocolBinding; proof: ReturnType<typeof inspectSymbolicOrbits> };
+  } satisfies { version: 1; kind: 'abstract-resource-protocol'; profile: 'abstract-resource-v1' | 'observed-write-v2'; storageAuthority: false; scope: 'complete-equality-copy-orbits'; coverage: ResourceCoverage; model: SymbolicModelV3; binding: VersionedResourceProtocolBinding; proof: ReturnType<typeof inspectSymbolicOrbits> };
+}
+
+/** Validate the original eleven-role profile and preserve its public result type. */
+export function validateResourceProtocol(input: { model: unknown; binding: unknown; coverage: ResourceCoverage }) {
+  const parsed = ResourceProtocolBindingSchema.safeParse(input.binding);
+  if (!parsed.success) return invalidBinding(parsed.error);
+  return { ...validateVersionedResourceProtocol({ ...input, binding: parsed.data }), binding: parsed.data, profile: 'abstract-resource-v1' } satisfies { binding: ResourceProtocolBinding; profile: 'abstract-resource-v1' };
+}
+
+/** Validate all twelve observation roles. This does not authenticate native IO. */
+export function validateObservedResourceProtocol(input: { model: unknown; binding: unknown; coverage: ResourceCoverage }) {
+  const parsed = ResourceProtocolBindingV2Schema.safeParse(input.binding);
+  if (!parsed.success) return invalidBinding(parsed.error);
+  return { ...validateVersionedResourceProtocol({ ...input, binding: parsed.data }), binding: parsed.data, profile: 'observed-write-v2' } satisfies { binding: ResourceProtocolBindingV2; profile: 'observed-write-v2' };
+}
+
+export function validateResourceProtocolSource(input: { model: unknown; binding: unknown; coverage: ResourceCoverage }): void {
+  const parsed = ResourceProtocolBindingSchema.safeParse(input.binding);
+  if (!parsed.success) return invalidBinding(parsed.error);
+  validateVersionedResourceProtocolSource({ ...input, binding: parsed.data });
+}
+
+export function validateObservedResourceProtocolSource(input: { model: unknown; binding: unknown; coverage: ResourceCoverage }): void {
+  const parsed = ResourceProtocolBindingV2Schema.safeParse(input.binding);
+  if (!parsed.success) return invalidBinding(parsed.error);
+  validateVersionedResourceProtocolSource({ ...input, binding: parsed.data });
 }
