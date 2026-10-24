@@ -3,13 +3,14 @@ import assert from 'node:assert/strict';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createServer } from '../src/mcp.js';
-import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { ReleaseVersionSchema } from '../src/version.js';
+import { BuildSummarySchema, buildProject } from '../src/compiler.js';
 
 test('runtime release versions follow the standalone distribution semantic version profile', () => {
   for (const value of ['0.0.0', '1.2.3', '0.2.0-alpha.1', '1.2.3-0', '1.2.3-alpha-01', '1.2.3+build.01', '1.2.3-alpha.1+build.01']) {
@@ -43,12 +44,89 @@ test('MCP negotiates tools and reports a failed read as a tool error', async () 
       assert.equal(check.default, false);
       assert.equal(check.type, 'boolean');
     }
+    for (const name of ['sgd_build', 'sgd_model']) {
+      const detail = list.tools.find(tool => tool.name === name)?.inputSchema.properties?.detail;
+      assert.ok(detail && typeof detail === 'object' && 'default' in detail && 'enum' in detail);
+      assert.equal(detail.default, 'summary');
+      assert.deepEqual(detail.enum, ['summary', 'full']);
+    }
+    assert.ok(!('check' in (list.tools.find(tool => tool.name === 'sgd_model')?.inputSchema.properties ?? {})));
     const result=await client.callTool({name:'sgd_inspect',arguments:{ir:'/does-not-exist/automaton.json'}});
     assert.equal(result.isError,true);
     assert.equal(list.tools.find(tool=>tool.name==='sgd_refine')?.annotations?.readOnlyHint,true);
     const erasure=await client.callTool({name:'sgd_refine',arguments:{abstract:'/does-not-exist/high.json',concrete:'/does-not-exist/low.json',binding:'/does-not-exist/binding.json'}});
     assert.equal(erasure.isError,true);
   } finally {await client.close();await server.close();}
+});
+
+test('MCP rejects invalid detail before reading model inputs or creating output', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sgd-mcp-detail-'));
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = createServer(); const client = new Client({ name: 'sgd-detail-test', version: '1.0.0' });
+  await server.connect(serverTransport);
+  try {
+    await client.connect(clientTransport);
+    for (const name of ['sgd_build', 'sgd_model']) {
+      const out = join(root, name);
+      const result = await client.callTool({ name, arguments: { project: '/absent/project.json', jar: '/absent/tla2tools.jar', out, detail: 'nodes' } });
+      assert.equal(result.isError, true);
+      assert.match(JSON.stringify(result.content), /Invalid arguments|invalid_value/);
+      assert.doesNotMatch(JSON.stringify(result.content), /ENOENT/);
+      await assert.rejects(access(out), { code: 'ENOENT' });
+    }
+  } finally { await client.close(); await server.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test('real MCP summary and full views run one pipeline and preserve inspect, SDK, and CLI IR contracts', { skip: !process.env.TLA2TOOLS_JAR, timeout: 120_000 }, async () => {
+  const jar = process.env.TLA2TOOLS_JAR; assert.ok(jar);
+  const root = await mkdtemp(join(tmpdir(), 'sgd-mcp-build-report-'));
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = createServer(); const client = new Client({ name: 'sgd-build-report-test', version: '1.0.0' });
+  const originalPath = process.env.PATH;
+  const execute = promisify(execFile);
+  await server.connect(serverTransport);
+  try {
+    const java = (await execute('which', ['java'])).stdout.trim();
+    const counter = join(root, 'java-calls.jsonl');
+    const binaries = join(root, 'bin'); await mkdir(binaries);
+    await writeFile(counter, '');
+    await writeFile(join(binaries, 'java'), `#!${process.execPath}\nconst fs = require('node:fs');\nconst { spawnSync } = require('node:child_process');\nconst args = process.argv.slice(2);\nif (args.includes('tlc2.TLC')) fs.appendFileSync(${JSON.stringify(counter)}, JSON.stringify(args) + '\\n');\nconst child = spawnSync(${JSON.stringify(java)}, args, { stdio: 'inherit' });\nprocess.exit(child.status ?? 1);\n`, { mode: 0o755 });
+    process.env.PATH = `${binaries}:${originalPath ?? ''}`;
+    const calls = async () => (await readFile(counter, 'utf8')).split('\n').filter(Boolean).length;
+    await client.connect(clientTransport);
+    const input = { project: resolve('examples/approval/project.json'), jar: resolve(jar), out: join(root, 'generated') };
+    async function call(name: string, args: Record<string, unknown>): Promise<unknown> {
+      const before = await calls();
+      const result = await client.callTool({ name, arguments: args });
+      assert.ok(!result.isError, JSON.stringify(result));
+      assert.equal(await calls() - before, name === 'sgd_inspect' ? 0 : 1, `${name} must not repeat TLC for its response`);
+      const content = result.content;
+      assert.ok(Array.isArray(content));
+      const first = content[0]; assert.ok(first && first.type === 'text' && typeof first.text === 'string');
+      return JSON.parse(first.text);
+    }
+    const summary = BuildSummarySchema.parse(await call('sgd_build', input));
+    assert.equal(summary.operation, 'build');
+    assert.ok(!('nodes' in summary.graph));
+    const published = JSON.parse(await readFile(join(input.out, 'automaton.json'), 'utf8'));
+    assert.deepEqual(await call('sgd_build', { ...input, check: true, detail: 'full' }), published);
+    assert.deepEqual(await call('sgd_inspect', { ir: join(input.out, 'automaton.json') }), published);
+    const beforeSdk = await calls();
+    assert.deepEqual(await buildProject({ ...input, check: true }), published);
+    assert.equal(await calls() - beforeSdk, 1);
+    const beforeCli = await calls();
+    const cli = await execute(process.execPath, ['--import', 'tsx', fileURLToPath(new URL('../src/cli.ts', import.meta.url)),
+      'build', '--project', input.project, '--jar', input.jar, '--out', input.out, '--check']);
+    assert.deepEqual(JSON.parse(cli.stdout), published);
+    assert.equal(await calls() - beforeCli, 1);
+    const modeled = BuildSummarySchema.parse(await call('sgd_model', input));
+    assert.equal(modeled.operation, 'model');
+    assert.deepEqual(modeled.verification.checks.map(check => check.kind), ['controlled-tlc']);
+    assert.deepEqual(await call('sgd_model', { ...input, detail: 'full' }), published);
+  } finally {
+    if (originalPath === undefined) delete process.env.PATH; else process.env.PATH = originalPath;
+    await client.close(); await server.close(); await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('MCP release awareness is read-only, strict, and does not turn offline metadata into a tool error', async () => {

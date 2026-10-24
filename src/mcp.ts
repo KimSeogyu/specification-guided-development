@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { buildProject, compileProject, writeGenerated } from './compiler.js';
+import { buildProjectReport, compileProject, writeGenerated } from './compiler.js';
 import { generateVisualization, loadAutomaton } from './visualize.js';
 import { verifySymbolicErasureFiles } from './symbolic-refinement.js';
 import { version } from './version.js';
@@ -18,19 +18,26 @@ export function createServer(): McpServer {
   };
   const paths = { project: z.string().describe('Absolute path to a project JSON file.'), jar: z.string().describe('Absolute path to tla2tools.jar.'), out: z.string().describe('Absolute output directory.') };
   const check = z.boolean().default(false).describe('Check stable generated artifacts and inventory without updating managed files. Incomplete output transactions are reported without repair.');
+  const detail = z.enum(['summary', 'full']).default('summary').describe('Return the build summary by default, or the complete automaton IR with full. Inspect also returns the complete IR.');
   server.registerTool('sgd_update_status', {
     description: 'Compare the running SGD runtime with public release metadata. Select stable releases, or alpha.N releases and stable promotions. Report matching archive metadata without downloading archives. Unknown results do not block modeling. This does not inspect installed plugins or the desktop app.',
     inputSchema: UpdateStatusInputSchema,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, args => guarded(() => checkUpdateStatus(args)));
   server.registerTool('sgd_model', {
-    description: 'Run TLC to completion and export the finite automaton. Execute only models the user authorized.',
-    inputSchema: paths, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-  }, args => guarded(() => buildProject({ ...args, modelOnly: true })));
+    description: 'Run TLC to completion and export the finite automaton. Return a summary with graph scope, completed checks, and evidence paths; detail full returns the complete IR. Execute only models the user authorized.',
+    inputSchema: { ...paths, detail }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  }, ({ detail, ...args }) => guarded(async () => {
+    const report = await buildProjectReport({ ...args, modelOnly: true });
+    return detail === 'full' ? report.automaton : report.summary;
+  }));
   server.registerTool('sgd_build', {
-    description: 'Run TLC and generate TypeScript and Rust artifacts. V6 partition-fold composes complete-row and finite-control models with audited family projections into a closed fold and consumed unbound data report; it grants no storage authority. V5 row-owned binds Rust equality and complete rows to payload/provenance state. V4 symbolic-owned accepts disjoint data domains; V3 accepts one. These compile SANY equality/copy actions with a finite original-action TLC oracle. V2 generates finite state owners. V1 generates diagnostics.',
-    inputSchema: { ...paths, check }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-  }, args => guarded(() => buildProject(args)));
+    description: 'Run TLC and generate TypeScript and Rust artifacts. Return a summary with graph scope, completed checks, and evidence paths; detail full returns the complete IR. V6 partition-fold composes complete-row and finite-control models with audited family projections into a closed fold and consumed unbound data report; it grants no storage authority. V5 row-owned binds Rust equality and complete rows to payload/provenance state. V4 symbolic-owned accepts disjoint data domains; V3 accepts one. These compile SANY equality/copy actions with a finite original-action TLC oracle. V2 generates finite state owners. V1 generates diagnostics.',
+    inputSchema: { ...paths, check, detail }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  }, ({ detail, ...args }) => guarded(async () => {
+    const report = await buildProjectReport(args);
+    return detail === 'full' ? report.automaton : report.summary;
+  }));
   server.registerTool('sgd_compile', {
     description: 'Compile action-labeled DOT into v1 language-specific diagnostics. Imported DOT is unverified and cannot generate executable authority.',
     inputSchema: { project: paths.project, dot: z.string().describe('Absolute path to action-labeled TLC DOT.'), out: paths.out, check },
