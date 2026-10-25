@@ -1,31 +1,48 @@
 # Specification Guided Development
 
-Compile supported TLA+ models into state authorities and source checks for TypeScript 7 and Rust.
-Use the bundled agent skills to model architecture and behavior, then develop with generated ownership and diagnostics.
-The package name is `specification-guided-development` and the CLI name is `sgd`.
-The source-checkout examples below invoke that CLI with `node dist/cli.js`.
+A correct model does not protect application data unless the code uses its ownership rules. In [Parangsae issue #34](https://github.com/KimSeogyu/parangsae/issues/34), a report I/O failure discarded already-computed results. The model required those results to survive, but the batch API returned only an error string.
 
-```text
-Requirements
-  -> TLA+ model and TLC configuration
-  -> TLC model checking and DOT state graph
-  -> typed automaton
-  -> generated TypeScript or Rust state authority / linter
-  -> application integration and native verification
+Specification Guided Development (SGD) compiles supported TLA+ models into TypeScript 7 and Rust state owners and source checks. For that defect, the generated operation owns the actual payload and lends it to the report writer. Both success and failure return the payload, and the writer's actual result selects the modeled outcome. [Parangsae PR #37](https://github.com/KimSeogyu/parangsae/pull/37) connects that owner to the production batch and CLI boundaries.
+
+The method starts with the enclosing responsibility, then identifies the lower contract and its actual code owner. The [development method](docs/development-method.md) requires missing bindings and unsupported relations to remain visible. In the report example, the lower finite model does not establish refinement to Parangsae's enclosing `EvidenceLifetime` model.
+
+## Try a structural repair
+
+Run a synthetic walkthrough from the source checkout. The released alpha4 plugin archives remain unchanged. The walkthrough covers the report-loss defect, generated ownership, and a model change. The same TypeScript and Rust consumers retain the payload after a report failure. After regeneration with a changed admission condition, those consumers refuse the report without calling its writer.
+
+Install Node.js 22 or later, Java 17 or later, and Rust with Cargo and rustfmt. For a new source checkout, run:
+
+```sh
+git clone https://github.com/KimSeogyu/specification-guided-development.git
+cd specification-guided-development
+npm ci
+node scripts/fetch-tlc.mjs
+npm run demo:retained -- --jar "$PWD/.runtime/tla2tools.jar"
 ```
 
-Specification Guided Development is an initial compiler for this workflow.
-The [production goal](docs/production-goal.md) is successful and sustainable adoption in Parangsae.
-Project v2 retains full concrete state and generates an owner that permits only modeled transitions.
-Project v3 adds immutable data input and compiles a supported symbolic equality/copy relation from SANY, checked against original TLA+ actions with a finite input oracle.
-Project v4 separates payload and provenance through independent data inputs and supports checked erasure to a higher-level symbolic model.
-Project v5 derives a closed whole-row binding from supported Rust equality, wrappers, and getters, then generates actual row owners and portable TypeScript DTO owners.
-Project v6 composes those rows with a finite aggregate controller and literal family projections to generate a closed partition data fold.
-Project v1 projects one string variable and generates declaration or import diagnostics.
-The [finite-owned guide](docs/finite-owned.md) describes project v2. The public [v0.2.0-alpha.3 release](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.2.0-alpha.3) includes the later compiler and native plugin milestones, structured stale-output diagnostics, automatic Pele fitting, read-only release awareness, and ZIP packaging. The older v0.1.0 archives retain the diagnostic prototype.
-The current source version is unreleased `0.2.0-alpha.4`. Its [common artifact preparation contract](docs/artifact-contract.md) is separate from the published alpha3 runtimes.
+The fetch command explicitly downloads and checks the pinned TLC JAR. The demo does not download it. Cargo may fetch declared dependencies on the first run. Add `--offline` after `--` only when the Cargo dependency cache is ready.
 
-## What works
+The command prints its stage results and the path to a new `.runtime/demo-retained-*` directory. Open its `report.json` and the Pele views at `ready/view/index.html` and `not-ready/view/index.html`. The directory also retains model inputs, generated sources, and logs. Read [the walkthrough](examples/retained-operation/README.md) for expected observations and failure recovery.
+
+This walkthrough uses synthetic payloads. The linked Parangsae change supplies the separate application evidence. Running the walkthrough does not replay Parangsae, discover bugs automatically, or establish an installed-agent workflow.
+
+## Use SGD in a project
+
+Start with the requirement and the affected responsibility, rather than selecting an isolated state enum. Identify the owning code, the participating lifecycles, and the forbidden path. Then use the supported compiler profile to carry that contract into generated code and native checks.
+
+```text
+Accepted requirement and enclosing responsibility
+  -> TLA+ models, their relations, and explicit coverage gaps
+  -> TLC verification and a supported typed automaton
+  -> generated TypeScript or Rust ownership and source checks
+  -> actual application binding and independent native verification
+```
+
+Independent [Codex and Claude Code plugins](#use-an-agent-plugin) provide the modeling skill and MCP tools. The CLI package is `specification-guided-development`, and its command is `sgd`. Source-checkout commands use `node dist/cli.js`.
+
+The public [v0.2.0-alpha.4 release](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.2.0-alpha.4) contains native plugins for macOS arm64, including retained operations, compact build summaries, typed TLC failures, and common artifact preparation. It is a prerelease. The [1.0 acceptance gates](docs/one-point-zero.md) distinguish demonstration, supported enforcement, real maintenance, and public usability. [The production goal](docs/production-goal.md) remains sustainable Parangsae development through features, requirement changes, and defect fixes.
+
+## Supported compiler profiles
 
 The current source supports these profiles:
 
@@ -35,6 +52,7 @@ The current source supports these profiles:
 | Whole rows (project v5) | Authenticated immutable DTOs with exact representations | Closed actual Fact types behind a private adapter | Source equality and retained metadata agree with the modeled payload/provenance relation; complete rows are prepared before commit |
 | Independent data inputs (project v4) | Fixed-arity primitive inputs and closure-owned tagged state | Fixed-arity inputs and a separate private owner crate | Complete payload/provenance updates; checked enabled-input erasure between supported models |
 | Symbolic data input (project v3) | Closure-owned tagged values | Separate private crate with owned string identities | Generated guards choose the action for the actual input; assignments retain their old-state/input origins |
+| Retained operation (project v2) | Frozen result retains the actual payload reference | Private result owns the payload and lends it to one callback | Model admission controls the attempt; actual callback success or failure selects the transition; every ordinary return retains the payload |
 | Finite owned state (project v2) | Closure-owned state with a frozen facade and snapshots | Separate crate with private authority state | Each successful dispatch follows the edge from the exact full current state |
 | Transition | A configured function call with three string literals | A configured function call or macro with three string literals | The declared source state, action, and target state form a permitted edge |
 | Dependency | Imports between mapped module paths | Imports between mapped module paths | The source module may directly depend on the target module |
@@ -47,16 +65,15 @@ Dependency checks permit imports within the same mapped module and ignore action
 Each checker covers the source files supplied to its command.
 Read [the compiler contract](docs/compiler.md) for the supported profile and its limits.
 
-## Run the compiler
+## Run individual compiler commands
 
 Use Node.js 22 or later.
-For a TLC run, also install Java and obtain `tla2tools.jar` from the [TLA+ tools project](https://github.com/tlaplus/tlaplus/releases).
+For a TLC run, also install Java 17 or later and obtain `tla2tools.jar` from the [TLA+ tools project](https://github.com/tlaplus/tlaplus/releases).
 The compiler does not download the JAR.
 The optional `node scripts/fetch-tlc.mjs` helper explicitly downloads the pinned JAR to `.runtime/tla2tools.jar` and checks its integrity.
 
 ```sh
 npm ci
-npm run check
 npm run build
 ```
 
@@ -201,9 +218,9 @@ Read [the development method](docs/development-method.md) for modeling choices, 
 
 ## Use an agent plugin
 
-The public `v0.2.0-alpha.3` archives contain complete plugins for macOS arm64: [Codex TAR](https://github.com/KimSeogyu/specification-guided-development/releases/download/v0.2.0-alpha.3/specification-guided-development-codex-0.2.0-alpha.3-darwin-arm64.tar.gz), [Claude Code TAR](https://github.com/KimSeogyu/specification-guided-development/releases/download/v0.2.0-alpha.3/specification-guided-development-claude-code-0.2.0-alpha.3-darwin-arm64.tar.gz), and [Claude Code ZIP](https://github.com/KimSeogyu/specification-guided-development/releases/download/v0.2.0-alpha.3/specification-guided-development-claude-code-0.2.0-alpha.3-darwin-arm64.zip).
+The public `v0.2.0-alpha.4` archives contain complete plugins for macOS arm64: [Codex TAR](https://github.com/KimSeogyu/specification-guided-development/releases/download/v0.2.0-alpha.4/specification-guided-development-codex-0.2.0-alpha.4-darwin-arm64.tar.gz), [Claude Code TAR](https://github.com/KimSeogyu/specification-guided-development/releases/download/v0.2.0-alpha.4/specification-guided-development-claude-code-0.2.0-alpha.4-darwin-arm64.tar.gz), and [Claude Code ZIP](https://github.com/KimSeogyu/specification-guided-development/releases/download/v0.2.0-alpha.4/specification-guided-development-claude-code-0.2.0-alpha.4-darwin-arm64.zip).
 For an extracted archive, use its standalone marketplace preparer as described in the [native plugin guide](docs/plugins.md#prepare-the-packages).
-The [Claude remote-feed instructions](docs/plugins.md#use-the-macos-arm64-release-feed) describe the staged HTTPS ZIP catalogue and native auto-update opt-in. Its URL becomes live after the feed files merge into `main`. Native migration and background delivery remain unverified.
+The [Claude remote-feed instructions](docs/plugins.md#use-the-macos-arm64-release-feed) describe the live HTTPS ZIP catalogue and native auto-update opt-in. A published feed does not prove that a running session has loaded the new version or that background delivery occurred.
 Other platforms and architectures require source preparation on the target host.
 
 The repository contains independent native packages for Codex and Claude Code.
@@ -252,7 +269,7 @@ The launcher checks `runtime/runtime-platform.json` and rejects a runtime for an
 An ordinary npm source package does not include these runtime dependencies.
 See [plugin setup](docs/plugins.md) for cache checks and troubleshooting.
 
-The [Parangsae native pilot](docs/native-parangsae-pilot.md) remains on alpha2, with successful fresh native MCP calls through both plugins. Its existing Desktop chat's current serving version remains unobserved. Alpha3 publication does not establish a pilot upgrade, automatic delivery, or the complete installed-agent development workflow.
+The [Parangsae native pilot record](docs/native-parangsae-pilot.md) separates installed payloads, fresh native calls, and the runtime serving an existing session. Public alpha4 availability does not by itself establish a pilot upgrade, automatic delivery, or a complete installed-agent development workflow.
 
 ## Understand the guarantee
 

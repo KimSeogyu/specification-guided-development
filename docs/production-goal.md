@@ -35,7 +35,17 @@ Follow the current execution order in [the production plan](production-plan.md#c
 
 Parangsae remains the pilot and its active development must be coordinated with its owning chat. This goal concerns software development and contract enforcement. Trading profitability and live-trading readiness are separate judgments.
 
-## Current status
+## Current checkpoint — 2026-10-25
+
+The public [alpha4 release](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.2.0-alpha.4) includes retained operations, structural comparison, compact MCP summaries, typed TLC failures, and common artifact preparation. Its original archives and public downloads were verified. Both Claude release feeds point to that release. Publication did not update an installed agent or prove automatic delivery.
+
+The report-custody case is implemented and integrated through [SDK PR #29](https://github.com/KimSeogyu/specification-guided-development/pull/29) and [Parangsae PR #37](https://github.com/KimSeogyu/parangsae/pull/37). Actual ownership/error-return and strict CLI handoff changes passed their scoped native controls and protected CI. This is one defect-maintenance case, not the complete production goal.
+
+The [public walkthrough](../examples/retained-operation/README.md) makes that failure class reproducible with synthetic inputs. The [1.0 readiness gates](one-point-zero.md) track remaining structural coverage, installed-agent maintenance, stable interfaces, and public usability. Repeated feature and authorized requirement-change cycles remain necessary.
+
+## Historical progress record
+
+The following records preserve earlier implementation and validation stages. References to a current release or pending next unit describe the stage when recorded. Use the checkpoint above for current release and pilot status.
 
 The original public v0.1.0 preview supplies declaration and import checks, MCP, native plugin packages, and Pele rendering. Later compiler milestones add controlled TLC execution, full finite state owners, symbolic equality/copy owners, independent payload and provenance inputs, an original-action oracle, and checked model erasure. The [source-bound row profile](row-owned.md) derives payload identity from supported Rust equality and retains complete rows. Native TypeScript 7 and Rust owners prepare complete values before committing their modeled transition. The public alpha1 release first packaged these later milestones for macOS arm64. Alpha2 added structured stale-output diagnostics and automatic Pele fitting. The current [v0.2.0-alpha.3 release](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.2.0-alpha.3) adds read-only release awareness and ZIP packaging. Earlier release artifacts remain unchanged.
 
