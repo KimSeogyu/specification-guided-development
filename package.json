@@ -31,7 +31,8 @@
     "demo": "npm run build && node scripts/demo.mjs",
     "prepare": "npm run build",
     "verify:codex-host": "node scripts/verify-codex-host.mjs",
-    "test:codex-host-protocol": "node --test scripts/verify-codex-host.test.mjs"
+    "test:codex-host-protocol": "node --test scripts/verify-codex-host.test.mjs",
+    "demo:retained": "npm run build && node scripts/demo-retained.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
