@@ -37,7 +37,7 @@ function valueExpression(value: FiniteValue): string {
 }
 
 /** Generate a separate safe-Rust authority crate for one exact finite model. */
-export function generateOwnedRust(input: OwnedBackendInput): GeneratedFile[] {
+export function generateOwnedRust(input: OwnedBackendInput, surface: 'public' | 'embedded' = 'public'): GeneratedFile[] {
   const graph = validateExecutableGraph(input.automaton);
   const className = input.className;
   const reserved = ['Self', 'Event', 'FiniteValue', 'Snapshot', 'Receipt', 'TransitionError', 'TransitionErrorReason',
@@ -113,14 +113,14 @@ ${variants}
 }
 
 impl Event {
-    /// The exact action label in the verified model, without identifier changes.
+${surface === 'public' ? `    /// The exact action label in the verified model, without identifier changes.
     pub fn model_name(self) -> &'static str {
         match self {
 ${names}
         }
     }
 
-    /// Unknown labels cannot be dispatched as an Event.
+` : ''}    /// Unknown labels cannot be dispatched as an Event.
     pub fn from_model_name(name: &str) -> Option<Self> {
         match name {
 ${fromNames}
@@ -129,7 +129,7 @@ ${fromNames}
     }
 }
 
-pub const ALL_EVENTS: &[Event] = &[${actions.map(label => `Event::${actionNames.get(label)}`).join(', ')}];
+${surface === 'embedded' ? '#[cfg(test)]\n' : ''}pub const ALL_EVENTS: &[Event] = &[${actions.map(label => `Event::${actionNames.get(label)}`).join(', ')}];
 
 /// Every supported concrete model value. Integers remain exact decimal strings.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

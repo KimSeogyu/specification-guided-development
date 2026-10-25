@@ -109,6 +109,114 @@ process.stdout.write(JSON.stringify({ guard: 'enforced', trace: ['Approve', 'Sub
   return { modelCheck: 'completed', concreteStates: 3, nativeTypeScript: '7.0.2', ...executed, pele: 'full-state rendered', unverifiedAuthority: 'rejected without output' };
 }
 
+async function verifyRetainedOperation({ client, plugin, name }) {
+  const model = join(temporary, name, 'retained-model');
+  const out = join(temporary, name, 'retained-operation');
+  const references = join(plugin, 'skills/specification-guided-development/references');
+  await mkdir(model, { recursive: true });
+  for (const file of ['ReportCustody.tla', 'ReportCustody.cfg']) {
+    await cp(join(references, file), join(model, file));
+  }
+  const project = join(model, 'project.json');
+  await writeFile(project, JSON.stringify({
+    version: 2, profile: 'finite-owned', name: 'ReportCustody',
+    spec: 'ReportCustody.tla', config: 'ReportCustody.cfg', targets: ['typescript', 'rust'],
+    binding: { className: 'ReportCustody', operation: {
+      kind: 'retained-operation', start: 'StartReport', success: 'ReportSucceeded',
+      failure: 'ReportFailed', retainedVariable: 'resident',
+    } },
+  }));
+  const summary = toolValue(await client.callTool({ name: 'sgd_build', arguments: { project, jar, out } }));
+  assert.equal(summary.schema, 'sgd-build-summary-v1');
+  assert.equal(summary.operation, 'build');
+  assert.deepEqual(summary.verification.checks.find(check => check.kind === 'retained-operation'), {
+    kind: 'retained-operation', role: 'model', scope: 'one-borrowed-synchronous-callback', payload: 'retained-on-all-return-paths',
+  });
+  assert.deepEqual(summary.limits, {
+    applicationIntegration: 'not-established', persistence: 'not-established', externalEffects: 'not-established',
+  });
+  assert.ok(!('nodes' in summary.graph));
+  const inventory = JSON.parse(await readFile(join(out, '.sgd-generated.json'), 'utf8'));
+  for (const file of ['automaton.json', 'binding.json', 'verification.json', 'typescript/operation.ts', 'rust/Cargo.toml', 'rust/src/lib.rs', 'rust/src/machine.rs']) {
+    assert.ok(summary.output.artifacts.includes(file), `retained summary omitted ${file}`);
+    assert.ok(inventory.files.includes(file), `retained ownership inventory omitted ${file}`);
+    await access(join(out, file));
+  }
+  const graph = toolValue(await client.callTool({ name: 'sgd_inspect', arguments: { ir: join(out, 'automaton.json') } }));
+  assert.equal(graph.kind, 'exact-finite');
+  assert.ok(graph.nodes.every(node => node.values.resident.kind === 'boolean' && node.values.resident.value === true));
+  const view = join(temporary, name, 'retained-view');
+  toolValue(await client.callTool({ name: 'sgd_visualize', arguments: { ir: [join(out, 'automaton.json')], out: view } }));
+  const html = await readFile(join(view, 'index.html'), 'utf8');
+  assert.match(html, /full concrete states/);
+  assert.match(html, /resident = TRUE/);
+  for (const variable of ['phase', 'ready', 'resident']) assert.ok(graph.variables.some(item => item.name === variable));
+  assert.deepEqual(JSON.parse(await readFile(join(view, 'models.json'), 'utf8')), [graph]);
+  const receipt = JSON.parse(await readFile(join(out, 'verification.json'), 'utf8'));
+  assert.equal(receipt.kind, 'tlc-finite-completed');
+  assert.equal(receipt.profile, 'finite-owned-v1');
+  const compiler = join(plugin, 'runtime/node_modules/typescript/bin/tsc');
+  assert.match(execFileSync(process.execPath, [compiler, '--version'], { encoding: 'utf8', timeout: 30_000 }), /^Version 7\.0\.2\s*$/);
+  execFileSync(process.execPath, [compiler, '-p', join(out, 'typescript/tsconfig.json')], {
+    cwd: temporary, encoding: 'utf8', timeout: 30_000,
+  });
+  const runner = join(temporary, name, 'verify-retained.mjs');
+  await writeFile(runner, `import assert from 'node:assert/strict';
+const { finalize, isFinalized } = await import(process.argv[2]);
+for (const ok of [true, false]) {
+  const executionError = new Error('original execution failure');
+  const payload = {units:[{raw:[1,2],metrics:42}],executionError,ledger:'terminal-uncertain'};
+  const observed = {path:'report',stage:ok?'complete':'sync'};
+  let calls = 0;
+  const finalized = finalize(payload, borrowed => {
+    calls++;
+    assert.equal(borrowed, payload);
+    return ok ? {ok:true,value:observed} : {ok:false,error:observed};
+  });
+  assert.equal(calls,1);
+  assert.equal(finalized.payload(),payload);
+  assert.equal(finalized.payload().executionError,executionError);
+  assert.equal(finalized.payload().ledger,'terminal-uncertain');
+  assert.equal(finalized.status().kind,'completed');
+  const outcome = finalized.status().observation;
+  assert.equal(outcome.kind,'returned');
+  assert.equal(outcome.outcome.ok,ok);
+  assert.equal(outcome.outcome[ok?'value':'error'],observed);
+  assert.equal(finalized.snapshot().values.phase.value,ok?'Succeeded':'Failed');
+  assert.equal(finalized.snapshot().values.resident.value,true);
+  assert.equal(finalized.snapshot().revision,'2');
+  assert.equal(isFinalized(finalized),true);
+  assert.equal(isFinalized({...finalized}),false);
+  assert.equal('send' in finalized,false);
+  assert.equal(Reflect.set(finalized,'payload',()=>null),false);
+}
+process.stdout.write(JSON.stringify({payload:'same object retained on success and failure',callback:'one borrowed synchronous invocation',completion:'selected from actual callback result',priorFacts:'execution error and ledger uncertainty retained separately',publicDispatch:'absent',forgery:'rejected'}));
+`);
+  const executed = JSON.parse(execFileSync(process.execPath, [runner, pathToFileURL(join(out, 'typescript/dist/operation.js')).href], {
+    cwd: temporary, encoding: 'utf8', timeout: 30_000,
+  }));
+  assert.equal(executed.payload, 'same object retained on success and failure');
+  const rust = await readFile(join(out, 'rust/src/lib.rs'), 'utf8');
+  assert.match(rust, /^mod machine;/m);
+  assert.match(rust, /pub fn finalize<T, R, E>/);
+  assert.doesNotMatch(rust, /pub\s+(?:mod\s+machine|fn\s+send\b)/);
+  assert.doesNotMatch(rust, /pub use machine::[^;]*\bEvent\b/);
+  const manifest = await readFile(join(out, 'rust/Cargo.toml'), 'utf8');
+  assert.match(manifest, /^\[package\]$/m);
+  assert.match(manifest, /^name = "sgd-owned-reportcustody-[a-f0-9]+"$/m);
+  assert.match(manifest, /^edition = "2021"$/m);
+  return {
+    modelTemplate: 'loaded from this copied native package', modelCheck: 'completed',
+    nativeTypeScript: 'packaged 7.0.2', ...executed,
+    artifactOwnership: 'TypeScript and Rust outputs listed in managed inventory',
+    pele: 'full finite model view emitted with phase, ready, and resident; browser rendering not exercised',
+    rustSource: 'private machine module, no public event dispatch, generated package manifest inspected',
+    rustRuntime: 'not executed in this copied-cache flow',
+    installedAgentHost: 'not exercised', applicationIntegration: 'not established by this copied-cache fixture',
+    persistence: 'not established', enclosingModelRefinement: 'not established',
+  };
+}
+
 async function verifySymbolicOwned({ client, plugin, name }) {
   const out = join(temporary, name, 'symbolic-owned');
   toolValue(await client.callTool({ name: 'sgd_build', arguments: {
@@ -567,16 +675,17 @@ try {
       assert.ok(!visualized.isError, JSON.stringify(visualized));
       assert.match(await readFile(join(temporary, name, 'view/index.html'), 'utf8'), /Model explorer/);
       const finiteOwned = await verifyFiniteOwned({ client, plugin, name });
+      const retainedOperation = await verifyRetainedOperation({ client, plugin, name });
       const symbolicOwned = await verifySymbolicOwned({ client, plugin, name });
       const productOwned = await verifyProductOwned({ client, plugin, name, abstractIr: join(temporary, name, 'symbolic-owned/symbolic-model.json') });
       const row = await verifyRowOwned({ client, plugin, name });
       const partitionOwned = await verifyPartitionOwned({ client, plugin, name, fixture: row.fixture });
       const sourceScope = await verifySourceScope({ plugin, name });
       const codecRecipe = await verifyCodecRecipe({ plugin, name });
-      results.push({ plugin: name, environment: 'isolated copied plugin cache; not an installed agent host', actualInstalledAgentHost: 'not exercised', nativeRuntime: `${process.platform}-${process.arch}`, tools, modelCheck: 'completed', generatedTypeScript: 'accepted', pele: 'rendered', finiteOwned, symbolicOwned, productOwned, rowOwned: row.details, partitionOwned, sourceScope, codecRecipe });
+      results.push({ plugin: name, environment: 'isolated copied plugin cache; not an installed agent host', actualInstalledAgentHost: 'not exercised', nativeRuntime: `${process.platform}-${process.arch}`, tools, modelCheck: 'completed', generatedTypeScript: 'accepted', pele: 'rendered', finiteOwned, retainedOperation, symbolicOwned, productOwned, rowOwned: row.details, partitionOwned, sourceScope, codecRecipe });
     } finally { await client.close(); }
   }
   await mkdir(resolve('.runtime'), { recursive: true });
   await writeFile(resolve('.runtime/plugin-verification.json'), JSON.stringify(results, null, 2) + '\n');
-  process.stdout.write('Both isolated copied plugin caches completed MCP, real TLC, v1 diagnostics, v2 finite-owned, v3 symbolic-owned, v4 product-input, v5 source-bound whole rows, and v6 closed partition data folds with their bundled control templates. The bundled Rust analyzer, packaged TypeScript 7.0.2, complete payload/provenance behavior, input-tuple oracle, supplied-IR erasure, Pele, v5-to-v6 migration, Noop/Refused complete-row behavior, immutable --check, tamper checks, unverified DOT refusal, the bundled closed source-scope pure-target/writer-refusal checks, and complete Funding codec/constructor analysis with wrong-field refusal passed. Codec reports retain no storage authority. Actual installed-agent hosts and completed Parangsae adoption were not established by these copied-cache fixtures.\n');
+  process.stdout.write('Both isolated copied plugin caches completed MCP, real TLC, v1 diagnostics, v2 finite-owned and retained-operation payload custody through bundled model templates and packaged TypeScript, v3 symbolic-owned, v4 product-input, v5 source-bound whole rows, and v6 closed partition data folds with their bundled control templates. The bundled Rust analyzer, packaged TypeScript 7.0.2, complete payload/provenance behavior, input-tuple oracle, supplied-IR erasure, Pele, v5-to-v6 migration, Noop/Refused complete-row behavior, immutable --check, tamper checks, unverified DOT refusal, the bundled closed source-scope pure-target/writer-refusal checks, and complete Funding codec/constructor analysis with wrong-field refusal passed. Codec reports retain no storage authority. Actual installed-agent hosts and completed Parangsae adoption were not established by these copied-cache fixtures.\n');
 } finally { await rm(temporary, { recursive: true, force: true }); }

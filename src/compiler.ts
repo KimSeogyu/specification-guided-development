@@ -1,3 +1,6 @@
+import { generateRetainedRust } from './backends/retained-rust.js';
+import { generateRetainedTypeScript } from './backends/retained-typescript.js';
+import { validateRetainedOperation } from './retained-operation.js';
 import { lstat, readFile, realpath } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { ProjectSchema, type GeneratedFile, type Project, type Automaton, type BackendInput, type Target } from './types.js';
@@ -225,6 +228,10 @@ async function collectLegacyArtifacts(input: BuildInput & { generateBackends?: b
     if (!input.modelOnly) {
       validateExecutableGraph(automaton);
       checks.push({ kind: 'executable-graph', role, profile: 'finite-owned-v1', scope: 'per-live-object' });
+      if (project.binding.operation !== undefined) {
+        validateRetainedOperation({ automaton, className: project.binding.className, operation: project.binding.operation });
+        checks.push({ kind: 'retained-operation', role, scope: 'one-borrowed-synchronous-callback', payload: 'retained-on-all-return-paths' });
+      }
     }
     const files: ArtifactFile[] = [
       { path: 'automaton.json', content: JSON.stringify(automaton, null, 2) + '\n' },
@@ -232,7 +239,11 @@ async function collectLegacyArtifacts(input: BuildInput & { generateBackends?: b
     ].map(compilerFile);
     if (!input.modelOnly && input.generateBackends !== false) {
       for (const target of new Set(project.targets)) {
-        const generated = ownedBackends[target]({ automaton, className: project.binding.className });
+        const backendInput = { automaton, className: project.binding.className };
+        const operation = project.binding.operation;
+        const generated = operation === undefined ? ownedBackends[target](backendInput)
+          : target === 'rust' ? generateRetainedRust({ ...backendInput, operation })
+            : generateRetainedTypeScript({ ...backendInput, operation });
         files.push(...generated.map(file => compilerFile({ ...file, path: `${target}/${file.path}` })));
       }
     }

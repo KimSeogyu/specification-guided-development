@@ -60,7 +60,8 @@ Project v6 `partition-fold` composes checked complete-row and finite-control mod
 Project v5 `row-owned` derives a complete-row binding from supported native Rust Fact sources and explicit payload/provenance state.
 Project v4 `symbolic-owned` generates equality/copy behavior with two or three independent inputs and explicit provenance state.
 Project v3 `symbolic-owned` generates equality/copy behavior over immutable string input.
-Project v2 `finite-owned` generates a state owner with named events and no data parameters.
+Project v2 `finite-owned` generates state control for named, unparameterized model events.
+For one synchronous fallible operation that must retain its actual payload, use the optional [retained-operation binding](references/retained-operation.md). Connect the generated owning result to the real application return boundary.
 Project v1 generates diagnostics for declared transition triples or mapped imports.
 
 ## Select the contract
@@ -224,9 +225,9 @@ The check preserves enabled-input decisions, action classification, and complete
 It checks supplied IR and does not attest original TLC provenance or application integration.
 Keep the separate build receipts and rerun erasure after either model changes.
 
-For v2, call TypeScript `send(event)` or Rust `send(Event)` with a generated named event.
+For ordinary v2, call TypeScript `send(event)` or Rust `send(Event)` with a generated named event. For a retained-operation binding, call `finalize(payload, writer)` instead. The generated boundary selects the outcome from the actual callback result.
 The owner follows the exact full-node/action edge.
-This API has no data parameters or automatic connection to database fields.
+The underlying finite event dispatch has no data parameters or automatic connection to database fields. The retained-operation boundary separately retains the native payload supplied to `finalize`.
 
 Handle rejection without changing application state to the requested target.
 Each factory call creates a new independent object at Init.

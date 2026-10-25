@@ -3,6 +3,52 @@
 The user-selected completion criterion is [successful and sustainable Parangsae adoption](production-goal.md).
 Recent goal work added and independently reviewed v5 source-bound complete rows, then integrated generated owners into the actual Parangsae collector on a separate branch. Native behavior, copied plugin-cache checks, and [successful v5 Linux CI](https://github.com/KimSeogyu/specification-guided-development/actions/runs/40019410080) provide concrete progress. Sustainable application adoption remains pending.
 
+## Current execution order — 2026-10-25
+
+This section supersedes the sequencing in the historical units below. Those units retain evidence and decisions from earlier stages. They are not the current backlog.
+
+### Confirmed foundation and remaining limits
+
+- Main includes common artifact preparation, compact MCP build summaries, typed TLC failures, and public structural contract comparison (PRs #23, #24, #27, and #28).
+- Structural comparison supports v3 and v4 source models against a supplied baseline. Independent baseline selection, native application authority, and v2, v5, and v6 root comparison remain gaps.
+- Source changes are ahead of delivery. Public alpha3, the ordinary pilot's last recorded alpha2 installation, and unreleased alpha4 source are separate states. The current Desktop serving version is unobserved.
+- The first alpha4 candidate failed its archive preparer. A payload-identity correction is committed locally but has not merged. Preserve the failed candidate.
+- Cargo placement integration awaits full validation and review. An isolated Claude migration completed native update commands but failed its final payload verifier. Preserve its incomplete receipt. A separate read-only check must distinguish host-owned cache metadata from published payload.
+
+These delivery findings do not establish a completed installed-agent structural workflow.
+
+### 1. Establish one structural acceptance case
+
+The selected joint case is [Parangsae issue #34](https://github.com/KimSeogyu/parangsae/issues/34): a report I/O failure drops owned execution evidence at the batch return boundary. The [retained-operation design](retained-operation.md) defines the compiler boundary. The Parangsae owner coordinates application integration and its independent acceptance tests.
+
+Select one real Parangsae failure with its owning chat. Record the accepted requirement, forbidden path, root responsibility, participating lifecycles, affected contract closure, and actual code authority. Keep the original failure unchanged as evidence.
+
+Acceptance: the model exposes the structural defect, and a proposed repair excludes the failure class without weakening the enclosing requirement. Unsupported relations remain explicit. Do not rewrite application semantics to fit the current compiler.
+
+### 2. Implement the missing enforcement for that case
+
+Use the case to determine which composition, source coverage, resource, scheduling, or effect boundary the compiler must support next. Add independent baseline selection and evidence validation where the case requires preservation. Carry supported decisions into TypeScript and Rust authority and source checks.
+
+Acceptance: a local workaround, missing binding, duplicate mutable owner, or weakened acceptance property cannot pass the supported gate. A permitted change still passes. A generated artifact cannot serve as its own acceptance oracle.
+
+### 3. Complete the installed-agent maintenance loop
+
+Finish only the delivery blockers needed for the selected trial. Merge the preparer correction after required checks. Build a distinct release candidate from reviewed source. Validate Cargo integration before including it. Keep native migration rechecks separate from their original failed attempts.
+
+Run the installed skill through structural diagnosis, TLA+ changes, TLC, generation, implementation, Pele inspection, and native CI. Then exercise feature addition, an authorized requirement change, and defect repair in Parangsae.
+
+Acceptance: record interventions, false positives, missed violations, unsupported behavior, and maintenance cost. Repeat affected workflows after material fixes. A manual update and an enabled preference do not establish automatic delivery.
+
+### 4. Expand only from observed structural gaps
+
+Extend root composition profiles and application authority from pilot evidence. Improve visualization so reviewers can follow requirements, model relations, code bindings, failures, and coverage gaps. Broader platform delivery and background-update work follow the core workflow unless they block the trial.
+
+The compiler and plugins remain the deliverables. Parangsae supplies integration and maintenance evidence, not an additional product roadmap.
+
+## Historical implementation record
+
+The following milestones and units describe earlier stages. Use the execution order above for new work.
+
 ## Milestones
 
 1. **Preserve semantics and own actual state.** Add a distinct exact finite automaton IR, controlled TLC execution, and generated state authorities for TypeScript 7 and Rust. Preserve every supported concrete variable. Enforce guards with exact current-node adjacency. Keep the projected diagnostic IR separate.

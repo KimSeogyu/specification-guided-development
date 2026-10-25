@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { RetainedOperationSchema } from './retained-operation-types.js';
 import { recordSchema } from './schema-record.js';
 import { TlcFailureError } from './tlc-failure.js';
 
@@ -95,7 +96,7 @@ export const MachineProjectSchema = z.object({
   spec: z.string().min(1),
   config: z.string().min(1),
   targets: z.array(z.enum(['typescript', 'rust'])).min(1),
-  binding: z.object({ className: z.string().regex(/^[A-Z][A-Za-z0-9]*$/) }).strict(),
+  binding: z.object({ className: z.string().regex(/^[A-Z][A-Za-z0-9]*$/), operation: RetainedOperationSchema.optional() }).strict(),
 }).strict();
 export type MachineProject = z.infer<typeof MachineProjectSchema>;
 

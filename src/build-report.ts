@@ -19,6 +19,8 @@ export const GraphSummarySchema = z.discriminatedUnion('kind', [
 export type GraphSummary = z.infer<typeof GraphSummarySchema>;
 
 export const VerificationCheckSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('retained-operation'), role: ModelRole,
+    scope: z.literal('one-borrowed-synchronous-callback'), payload: z.literal('retained-on-all-return-paths') }).strict(),
   z.object({ kind: z.literal('legacy-tlc'), role: z.literal('model'),
     scope: z.literal('observed-possible-transitions') }).strict(),
   z.object({ kind: z.literal('controlled-tlc'), role: ModelRole,

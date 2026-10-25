@@ -2,11 +2,25 @@
 
 ## Current objective
 
-Develop Specification Guided Development into a production-grade toolkit for TypeScript 7 and Rust, delivered through independent Codex and Claude Code plugins. Demonstrate successful and sustainable adoption in [Parangsae](https://github.com/KimSeogyu/parangsae). Complete this goal when Parangsae can use the methodology for actual feature development, requirement changes, and defect fixes, while preserving its modeled contracts through generation, implementation, native verification, and CI.
+Develop Specification Guided Development into a production-grade compiler and independent Codex and Claude Code plugins for TypeScript 7.0.2 and Rust. Agents must derive affected contracts from project-level responsibilities, repair structural defects in those contracts, and develop under generated enforcement. Demonstrate sustainable use in Parangsae through actual feature additions, requirement changes, and defect fixes. Completion requires preserved requirements, checked model-to-code bindings, native verification, CI, and repeatable maintenance without recurring manual rescue.
 
 The user selected Parangsae adoption and continued maintainability as the completion criterion. This criterion replaces the earlier requirement for broad independent-user validation. Public usability remains a product objective. Universal enthusiasm is an aspiration, not a release gate.
 
 The SGD compiler and the Codex and Claude Code plugins are the primary deliverables. Parangsae is the real-project validation pilot. This task changes Parangsae only for toolkit integration and controlled validation scenarios. Independent Parangsae product work requires a separate user request. Feature, requirement, and defect trials evaluate the toolkit's ability to support real changes. They do not add a separate Parangsae product roadmap to this task.
+
+## Priority reset — 2026-10-25
+
+The primary product outcome is a mechanically supported structural development workflow. Installation and packaging work supports that outcome. A successful package or isolated model does not complete it.
+
+1. Establish root responsibilities and derive the affected contract closure before implementation. Represent ownership, information, time, resources, and lifecycle distinctions required by accepted properties.
+2. Make structural diagnosis reviewable and machine-checkable. Connect the failure, enclosing acceptance property, owning model, application binding, and enforcement evidence. Missing evidence remains a gap. An agent's diagnosis label does not authorize a local repair.
+3. Connect supported contracts to actual application authority. Check model composition against an independently selected baseline. Detect omitted bindings and bypasses within an explicit source scope.
+4. Exercise feature, requirement, and defect maintenance through installed plugins in Parangsae. Preserve the original failure and test the failure class against an independent acceptance property.
+5. Deliver reproducible releases, actionable diagnostics, and linked Pele views for that workflow. Treat background updates and active serving-version detection as separate acceptance claims.
+
+Treat structural defects as the first diagnosis target. The proportion of defects caused by structure has not been measured. Modeling required distinctions as state is a design approach, not evidence that all application behavior is already covered.
+
+Follow the current execution order in [the production plan](production-plan.md#current-execution-order--2026-10-25).
 
 ## Evidence required for completion
 
