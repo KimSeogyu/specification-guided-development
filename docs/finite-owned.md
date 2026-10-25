@@ -38,6 +38,10 @@ The project file selects the executable profile:
 
 `build` verifies the model before generating authority. `compile --dot` rejects this profile because imported DOT does not establish a complete model check. `model` exports the verified IR without language artifacts; it can retain multiple initial states or nondeterministic successors for inspection. Executable generation requires one initial state and one successor per state and action.
 
+## Actual payload retention
+
+For a synchronous fallible operation that must return its original payload, use the optional [retained-operation binding](retained-operation.md). It generates a private payload boundary whose callback outcome selects the model transition. The ordinary named-event API below applies when this binding is absent.
+
 ## TypeScript
 
 Build the generated module:
