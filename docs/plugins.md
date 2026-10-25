@@ -78,6 +78,14 @@ The tool checks the complete package, native configuration, version, and platfor
 It refuses an existing output and prints the native installation commands. It does not install a plugin, change agent settings, or download a runtime.
 The prepared marketplace works after the extracted source directory is removed. Keep the marketplace while using Claude's local in-place loading.
 
+The preparer captures regular-file bytes, file permission bits, and the complete relative file and directory inventory.
+Its read guard compares `dev`, `ino`, `mode`, `size`, and `mtimeNs` before opening a file, after opening it, and after reading it.
+Every copy read must match the captured byte digest. After copying, the preparer repeats the complete capture and compares its guards, digests, and inventory.
+Source-change diagnostics name one source-relative path and the changed fields, with the path limited to 180 characters.
+The checks ignore `ctime` and extended attributes. Neither value is copied into the marketplace.
+File writes request the captured `0777` permission bits. Directory creation requests `0755`. Both are subject to the process umask.
+These checks detect ordinary changes at their observations. They do not establish continuous immutability or an atomic snapshot, and exclude a hostile concurrent filesystem owner.
+
 Keep Node.js 22 or later available on the agent's `PATH`.
 Keep Java available for TLC.
 Select a local `tla2tools.jar` for modeling commands.
