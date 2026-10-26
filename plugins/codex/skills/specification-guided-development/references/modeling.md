@@ -1,127 +1,5 @@
 # Model the contract that the application uses
 
-## Bind complete native rows with v5
-
-Select project v5 `row-owned` when a supported native Rust Fact must remain the actual stored value.
-The compiler first checks the two-domain payload/provenance model described in the v4 section.
-It then parses the application library sources and derives a complete field and codec plan from native Eq.
-The caller submits one owned row, never q/p, Same/Clash, or an equality callback.
-
-The project adds an application root and source binding:
-
-```json
-{
-  "version": 5,
-  "profile": "row-owned",
-  "name": "FactWriteEnvelope",
-  "spec": "FactWriteEnvelope.tla",
-  "config": "FactWriteEnvelope.cfg",
-  "application": "../application",
-  "targets": ["typescript", "rust"],
-  "binding": {
-    "className": "FactEnvelopeMachine",
-    "rustCrateMode": "workspace",
-    "row": {
-      "version": 1,
-      "profile": "rust-whole-row-v1",
-      "source": {
-        "manifest": "crates/collector/Cargo.toml",
-        "module": "crate::vision::rows",
-        "facts": [
-          { "name": "KlineFact", "rustPath": "crate::vision::KlineFact", "metadata": ["received_ts"] }
-        ]
-      },
-      "model": {
-        "payloadInput": "v",
-        "provenanceInput": "provenance",
-        "pairs": [
-          { "name": "stored", "payload": "stored", "provenance": "storedProvenance" },
-          { "name": "rejected", "payload": "rejected", "provenance": "rejectedProvenance" }
-        ]
-      }
-    }
-  }
-}
-```
-
-Model, config, and application paths are relative to the project file.
-The source manifest is relative to the application root.
-Generated WriteEffect variants preserve exact source action IDs such as Insert, Same, and Clash.
-An outcomes relabeling table is unsupported and fails before model execution.
-Action IDs identify source actions rather than proving business roles.
-Renaming an action requires exhaustive native matches to change, followed by erasure and native integration checks.
-Use a generated output directory inside that root.
-`rustCrateMode: "workspace"` generates a crate suitable for application workspace membership.
-`"standalone"` keeps the separate generated crate's own workspace boundary.
-Actual membership, dependency policy, and module hooks remain explicit application integration changes.
-
-Source Eq supports a conjunction of matching field equalities.
-An explicit finite u32 clause can use unqualified, unshadowed standard `matches!` with resolved constants.
-The analyzer verifies that its finite relation is already symmetric and transitive.
-It rejects unknown source semantics instead of guessing an equality predicate.
-Every omitted field must be explicit metadata.
-Normalized fields remain payload and also retain their raw value in provenance.
-For Parangsae Kline, schema 1 and 2 form one payload class, while received time and original raw schema remain preserved.
-Funding, Metrics, and Book schema comparison stays strict.
-
-Codecs support exact i64/u32/bool/string values, unit enums, and audited owned wrappers with pure getters.
-The analyzer checks representation, standard derived Clone/Eq, getter chain, imports/re-exports, and the timestamp macro template.
-Bare type names are insufficient.
-Custom Clone/Drop, shared mutable representations, unsupported conditional items, ambiguous aliases, and opaque implementation-producing macros fail.
-Standard macro input blocks cannot hide nonlocal implementations.
-Literal production-disabled test/Kani source is outside this binding profile.
-Do not claim complete Cargo target/feature coverage.
-
-The profile trusts checked standard Rust namespaces and genuine declared default-registry serde/clap derives on unrelated items.
-Local paths or excluded outputs cannot impersonate those macro dependencies.
-Cargo git/custom-registry dependencies, patch/replace, and local source/build/environment overrides fail.
-Local Cargo config is hashed and permits only ordinary aliases.
-Global Cargo configuration/cache, the toolchain, registry dependencies, and platform remain a trusted environment boundary.
-
-Run `sgd_build` before claiming a row binding.
-Model-only output records `rowBinding: null` and performs no native source analysis.
-Inspect `row-binding-plan.json` for every field, native getter chain, source identity, finite class, and payload/provenance role.
-The compiler rechecks read source bytes before publishing output.
-The controlled generated adapter and primitive source are outputs, not inputs to their own binding.
-Original manifests and private module hooks remain checked source inputs.
-
-Each paired model assignment must copy one complete incoming row, one complete retained row, or both initial sentinels.
-Mixing payload and provenance from different origins fails the binding.
-All encoding, cloning, and fallible binding checks finish before a private prepared transition commits.
-A receipt is an observation and cannot authorize an application filesystem write.
-
-Include the Rust adapter as a private application module and depend on the separate primitive crate.
-Use `FactOwner::<KlineFact>::new()` and `write(actual_fact)`.
-The sealed bound admits the analyzed concrete types, not arbitrary `T: Eq`.
-`stored()` and `rejected()` expose immutable observations.
-Do not add setters, restore, manual action selectors, or a second handwritten transition implementation.
-
-For TypeScript, use `createKlineFactRow(completeRawFields)` and `createKlineFactOwner().write(row)`.
-The factory copies and authenticates every field in a frozen token.
-It rejects missing/extra fields, accessors, unsupported representations, and forged tokens.
-i64 uses the complete signed bigint range, u32 uses a bounded integer Number, and enum values use exact variant names.
-This is a portable DTO derived from Rust source, not a TypeScript source-AST binding.
-It does not reproduce Symbol, Qty, or Amount constructor admission checks.
-Encoding and equality parity apply to native-admitted values.
-Retain application parsing/domain validation separately.
-
-Prepared native plugins bundle their host's Rust analyzer binary.
-Source-checkout setup needs Cargo to prepare the analyzer fallback.
-Rust output needs rustfmt and uses the explicit rustfmt 2021 style profile.
-The formatter version is informational, while profile/configuration and generated bytes remain checked.
-Native Rust compilation still requires Cargo and the generated crate dependencies.
-
-Verify equal schema/changed receipt reingest, unknown schema conflict, every strict payload field, and A@r1, B@r2, B@r3, A@r4.
-The original complete A@r1 must remain stored and latest rejected B@r3 must remain after the final A.
-Mutate source Eq and metadata declarations, regenerate, and check the changed behavior.
-An added omitted field must fail instead of silently losing coverage.
-Direct generated-code edits must fail `build --check`.
-Keep source-only integration evidence distinct from actual application native checks and maintenance cycles.
-
-Per-live-object ownership does not establish partition folding, baseline validation, external effect permission, exclusive writers, crash durability, reset prevention, or persisted history.
-For Parangsae, preserve whole-partition refusal after any conflict and coverage-before-write ordering.
-The independent pilot branch and its collector tests are progress, not completed sustainable adoption.
-
 ## Own data-bound equality/copy behavior with v3
 
 Select project v3 `symbolic-owned` for actions that compare and copy one opaque input value.
@@ -142,7 +20,6 @@ Runtime values distinguish scalar strings, booleans, exact decimal integers, and
 A model string `"none"` and input data whose text is `none` are different values.
 The runtime uses exact string equality without Unicode normalization.
 The TypeScript API rejects unpaired surrogate code units.
-Rust `&str` already contains valid UTF-8.
 
 The compiler reads strict SANY semantic XML and rejects unsupported executable operators or incomplete updates.
 Top-level assumptions, module instances, and proofs are outside this source profile.
@@ -238,10 +115,7 @@ The project selects semantic compilation and the generated owner name:
   "name": "ManifestWrite",
   "spec": "ManifestWrite.tla",
   "config": "ManifestWrite.cfg",
-  "targets": [
-    "typescript",
-    "rust"
-  ],
+  "targets": ["typescript"],
   "binding": {
     "className": "FactMachine"
   }
@@ -311,23 +185,9 @@ Origins identify a literal, input, or old-state variable.
 Use all assignments when integrating the behavior, rather than hardcoding a mutation from the action name.
 A successful `Same` leaves model values unchanged and still increments the owner's revision.
 
-For Rust, add the generated crate as a separate dependency using the package name in its README.
-With a dependency named `authority`, the API uses actual string input:
-
-```rust
-use authority::FactMachine;
-
-let mut fact = FactMachine::new();
-assert_eq!(fact.send("none").unwrap().action, "Insert");
-assert_eq!(fact.send("none").unwrap().action, "Same");
-let clash = fact.send("different").unwrap();
-assert_eq!(clash.action, "Clash");
-```
-
 TypeScript protects state in a closure and returns frozen copies.
-Rust keeps state private in the generated crate and returns owned copies.
 A rejected input preserves both state and revision.
-Neither API exposes a custom equality callback, arbitrary object input, raw-state constructor, or restore method.
+The API does not expose a custom equality callback, arbitrary object input, raw-state constructor, or restore method.
 
 Before applying this API to application payloads, define an explicit adapter to immutable string identity.
 Prove or test that the encoding preserves the application's equality contract.
@@ -425,7 +285,7 @@ The receipt records every domain and its finite witness atoms.
 `symbolicIrVersion: 2` and `inputProfile: "disjoint-input-product-v1"` identify the v4 lowering grammar.
 
 Both native targets take primitive arguments in the order of `inputs`.
-For inputs `v` and `provenance`, TypeScript and Rust use `send("A", "r1")`.
+For inputs `v` and `provenance`, TypeScript uses `send("A", "r1")`.
 Neither API accepts a map, object, callback, or caller-selected action.
 The reference interpreter's input record is an artifact representation, not the native method signature.
 Every receipt includes all payload and provenance variables before and after the action.
@@ -544,7 +404,7 @@ The executable project selects language targets and the generated type name:
   "name": "Approval",
   "spec": "Approval.tla",
   "config": "Approval.cfg",
-  "targets": ["typescript", "rust"],
+  "targets": ["typescript"],
   "binding": { "className": "ApprovalMachine" }
 }
 ```
@@ -558,7 +418,7 @@ node /absolute/plugin/path/scripts/run.mjs build --project /app/model/project.js
 
 Inspect `/app/generated/automaton.json` to review all concrete variables.
 The generated `verification.json` records the completed finite run and its source closure.
-Do not use `sgd_compile` for v2, v3, v4, or v5.
+Do not use `sgd_compile` for v2, v3, or v4.
 That tool rejects imported DOT as a source of executable authority.
 
 Build the generated TypeScript package before importing its JavaScript:
@@ -583,12 +443,7 @@ const submitted = approval.send("Submit");
 if (!submitted.ok) throw new Error("Submit must succeed after approval");
 ```
 
-For Rust, read the generated README for the crate name and add that crate as a path dependency.
-Keep the generated library separate from application modules.
-Use `ApprovalMachine::new()` and `send(Event)` through that dependency.
-`Event::from_model_name` maps exact model action names to typed events.
-
-Both targets expose full copied snapshots through `read()`.
+The owner exposes full copied snapshots through `read()`.
 Snapshot values use tagged string, boolean, or integer values.
 Integer values and the checked u64 revision serialize as decimal strings.
 A successful send returns the before and after snapshots.
@@ -597,8 +452,7 @@ Here terminal means that lifecycle state no longer changes.
 It does not mean that every send is rejected.
 A rejected send preserves both the current state and revision.
 The TypeScript snapshot and API facade are frozen.
-The Rust owner has private fields and returns owned snapshot copies.
-Neither target exposes restore or arbitrary-state construction.
+The owner does not expose restore or arbitrary-state construction.
 
 The API accepts named events without data parameters.
 The generated state begins at Init and changes only through concrete graph edges.
@@ -614,7 +468,7 @@ Do not copy values into a second mutable state object and describe that object a
 
 Use project v1 for literal transition diagnostics.
 Select a nonempty scalar string state variable for projection.
-The model supplies allowed edges, and the binding selects a call or macro name:
+The model supplies allowed edges, and the binding selects a TypeScript function name:
 
 ```json
 {
@@ -623,7 +477,7 @@ The model supplies allowed edges, and the binding selects a call or macro name:
   "spec": "Submission.tla",
   "config": "Submission.cfg",
   "stateVariable": "state",
-  "targets": ["typescript", "rust"],
+  "targets": ["typescript"],
   "parent": { "model": "architecture", "state": "Service" },
   "binding": { "kind": "transition", "function": "transition" }
 }
@@ -633,10 +487,6 @@ The corresponding source constructs declare an edge:
 
 ```typescript
 transition("Draft", "Submit", "Submitted");
-```
-
-```rust
-transition!("Draft", "Submit", "Submitted");
 ```
 
 The checker compares those literal triples with the projected graph.
@@ -666,7 +516,7 @@ Use this binding in a separate v1 architecture project:
   "spec": "Architecture.tla",
   "config": "Architecture.cfg",
   "stateVariable": "module",
-  "targets": ["typescript", "rust"],
+  "targets": ["typescript"],
   "binding": {
     "kind": "dependency",
     "modules": {

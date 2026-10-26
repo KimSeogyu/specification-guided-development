@@ -5,8 +5,7 @@
   "spec": "ManifestWrite.tla",
   "config": "ManifestWrite.cfg",
   "targets": [
-    "typescript",
-    "rust"
+    "typescript"
   ],
   "binding": {
     "className": "FactMachine"

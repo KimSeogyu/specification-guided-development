@@ -1,320 +1,108 @@
 # Specification Guided Development
 
-A correct model does not protect application data unless the code uses its ownership rules. In [Parangsae issue #34](https://github.com/KimSeogyu/parangsae/issues/34), a report I/O failure discarded already-computed results. The model required those results to survive, but the batch API returned only an error string.
+Generate domain code from TLA+ state models. SGD runs TLC, checks the finite operation protocol with Lean, and emits a TypeScript domain object with injected ports for application effects.
 
-Specification Guided Development (SGD) compiles supported TLA+ models into TypeScript 7 and Rust state owners and source checks. For that defect, the generated operation owns the actual payload and lends it to the report writer. Both success and failure return the payload, and the writer's actual result selects the modeled outcome. [Parangsae PR #37](https://github.com/KimSeogyu/parangsae/pull/37) connects that owner to the production batch and CLI boundaries.
-
-The method starts with the enclosing responsibility, then identifies the lower contract and its actual code owner. The [development method](docs/development-method.md) requires missing bindings and unsupported relations to remain visible. In the report example, the lower finite model does not establish refinement to Parangsae's enclosing `EvidenceLifetime` model.
-
-## Try a structural repair
-
-Run a synthetic walkthrough from the source checkout. The released alpha4 plugin archives remain unchanged. The walkthrough covers the report-loss defect, generated ownership, and a model change. The same TypeScript and Rust consumers retain the payload after a report failure. After regeneration with a changed admission condition, those consumers refuse the report without calling its writer.
-
-Install Node.js 22 or later, Java 17 or later, and Rust with Cargo and rustfmt. For a new source checkout, run:
-
-```sh
-git clone https://github.com/KimSeogyu/specification-guided-development.git
-cd specification-guided-development
-npm ci
-node scripts/fetch-tlc.mjs
-npm run demo:retained -- --jar "$PWD/.runtime/tla2tools.jar"
-```
-
-The fetch command explicitly downloads and checks the pinned TLC JAR. The demo does not download it. Cargo may fetch declared dependencies on the first run. Add `--offline` after `--` only when the Cargo dependency cache is ready.
-
-The command prints its stage results and the path to a new `.runtime/demo-retained-*` directory. Open its `report.json` and the Pele views at `ready/view/index.html` and `not-ready/view/index.html`. The directory also retains model inputs, generated sources, and logs. Read [the walkthrough](examples/retained-operation/README.md) for expected observations and failure recovery.
-
-This walkthrough uses synthetic payloads. The linked Parangsae change supplies the separate application evidence. Running the walkthrough does not replay Parangsae, discover bugs automatically, or establish an installed-agent workflow.
-
-## Use SGD in a project
-
-Start with the requirement and the affected responsibility, rather than selecting an isolated state enum. Identify the owning code, the participating lifecycles, and the forbidden path. Then use the supported compiler profile to carry that contract into generated code and native checks.
+The generated object owns state, admits operations through model transitions, and selects completion from each port's actual fulfillment or rejection.
 
 ```text
-Accepted requirement and enclosing responsibility
-  -> TLA+ models, their relations, and explicit coverage gaps
-  -> TLC verification and a supported typed automaton
-  -> generated TypeScript or Rust ownership and source checks
-  -> actual application binding and independent native verification
+TLA+ model and configuration
+  → TLC full-state graph
+  → Lean operation-protocol check
+  → TypeScript domain + injected ports
 ```
 
-Independent [Codex and Claude Code plugins](#use-an-agent-plugin) provide the modeling skill and MCP tools. The CLI package is `specification-guided-development`, and its command is `sgd`. Source-checkout commands use `node dist/cli.js`.
+## Generate a TypeScript domain
 
-The public [v0.2.0-alpha.4 release](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.2.0-alpha.4) contains native plugins for macOS arm64, including retained operations, compact build summaries, typed TLC failures, and common artifact preparation. It is a prerelease. The [1.0 acceptance gates](docs/one-point-zero.md) distinguish demonstration, supported enforcement, real maintenance, and public usability. [The production goal](docs/production-goal.md) remains sustainable Parangsae development through features, requirement changes, and defect fixes.
-
-## Supported compiler profiles
-
-The current source supports these profiles:
-
-| Binding | TypeScript | Rust | Checked property |
-| --- | --- | --- | --- |
-| Closed partition fold (project v6) | Authenticated rows and a single-use frozen handle | Sealed Fact fold and consuming report | Complete row/control observations, counts and ordered conflicts produce an unbound report; storage authority remains separate |
-| Whole rows (project v5) | Authenticated immutable DTOs with exact representations | Closed actual Fact types behind a private adapter | Source equality and retained metadata agree with the modeled payload/provenance relation; complete rows are prepared before commit |
-| Independent data inputs (project v4) | Fixed-arity primitive inputs and closure-owned tagged state | Fixed-arity inputs and a separate private owner crate | Complete payload/provenance updates; checked enabled-input erasure between supported models |
-| Symbolic data input (project v3) | Closure-owned tagged values | Separate private crate with owned string identities | Generated guards choose the action for the actual input; assignments retain their old-state/input origins |
-| Retained operation (project v2) | Frozen result retains the actual payload reference | Private result owns the payload and lends it to one callback | Model admission controls the attempt; actual callback success or failure selects the transition; every ordinary return retains the payload |
-| Finite owned state (project v2) | Closure-owned state with a frozen facade and snapshots | Separate crate with private authority state | Each successful dispatch follows the edge from the exact full current state |
-| Transition | A configured function call with three string literals | A configured function call or macro with three string literals | The declared source state, action, and target state form a permitted edge |
-| Dependency | Imports between mapped module paths | Imports between mapped module paths | The source module may directly depend on the target module |
-
-The finite-owned profile preserves guards over all supported scalar variables in the explored graph.
-Its boundary is one live object; persistent identity, recovery, effects, and application-wide coverage remain work toward the production goal.
-Transition constructs in project v1 declare edges.
-They do not verify that the application's runtime state follows those edges.
-Dependency checks permit imports within the same mapped module and ignore action names.
-Each checker covers the source files supplied to its command.
-Read [the compiler contract](docs/compiler.md) for the supported profile and its limits.
-
-## Run individual compiler commands
-
-Use Node.js 22 or later.
-For a TLC run, also install Java 17 or later and obtain `tla2tools.jar` from the [TLA+ tools project](https://github.com/tlaplus/tlaplus/releases).
-The compiler does not download the JAR.
-The optional `node scripts/fetch-tlc.mjs` helper explicitly downloads the pinned JAR to `.runtime/tla2tools.jar` and checks its integrity.
+Use Node.js 22+, Java 17+, and Lean 4.35.0. From the repository root:
 
 ```sh
 npm ci
+node scripts/fetch-tlc.mjs
 npm run build
-```
-
-Build and type checking use the pinned `typescript@7.0.2` compiler.
-The npm scripts select that compiler directly instead of relying on the shared `tsc` executable.
-Generated TypeScript checkers use the same native TypeScript 7.0.2 runtime through `typescript/unstable/sync` and `typescript/unstable/ast`.
-These API paths are unstable, so the exact version pin is part of the supported contract.
-The [TypeScript 7.0 announcement](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/#running-side-by-side-with-typescript-60) describes the absence of the stable legacy API.
-This implementation explicitly uses the version-pinned unstable native API.
-
-Set `TLA2TOOLS_JAR` to the absolute path of your JAR.
-Build a full-state authority and inspect its guard states with Pele:
-
-```sh
-node dist/cli.js build --project examples/approval/project.json --jar "$TLA2TOOLS_JAR" --out .runtime/approval
-node dist/cli.js visualize --ir .runtime/approval/automaton.json --out .runtime/approval/view
-```
-
-The generated TypeScript API is `createApprovalMachine().read()/send(event)`.
-The Rust crate exports `ApprovalMachine::new/read/send(Event)`.
-Both reject `Submit` until `Approve` changes the full concrete state.
-Read [the finite-owned guide](docs/finite-owned.md) for native builds, integration, supported semantics, and limits.
-
-For parameterized equality/copy rules, build the original fact-merge model:
-
-```sh
-node dist/cli.js build --project examples/fact-merge/project.json --jar "$TLA2TOOLS_JAR" --out .runtime/facts
-node dist/cli.js visualize --ir .runtime/facts/automaton.json --ir .runtime/facts/symbolic-model.json --out .runtime/facts/view
-```
-
-The generated `FactMachine.send(input)` selects Insert, Same, or Clash from the model. After A, B, and C, it retains stored A and latest rejected C. Data identities are immutable strings, distinct from scalar model strings. Read [the symbolic-owned guide](docs/symbolic-owned.md) for the source grammar, finite versus symbolic verification, and the actual Parangsae integration still required.
-
-When equal payloads can have different receipt or source metadata, use [independent data inputs](docs/product-inputs.md). The [fact-envelope example](examples/fact-envelope/README.md) models that metadata explicitly and checks its erasure to the original fact-merge contract with `sgd refine`. An erasure check covers the supplied symbolic programs; actual Fact encoding, native object ownership, and partition writes need application bindings.
-
-For a generated collection fold, read [the v6 partition guide](docs/partition-fold.md). It checks complete row roles and the aggregate protocol, generates raw key projections from audited source codecs, and returns unbound data. Loaded-resource and writer authority remain required work.
-
-For existing Rust rows, read [the whole-row binding guide](docs/row-owned.md). V5 analyzes actual source equality and the owned type closure, preserves metadata excluded or normalized by equality, and returns original model action IDs. Its library-source scope excludes all-target/feature coverage and storage authority. TypeScript DTOs preserve the audited representations; they do not infer every native constructor precondition.
-
-For native row reconstruction, read [the codec recipe reference](docs/codec-recipes.md). The separate source profile checks complete column mappings and actual constructor bodies, with captured input and Cargo discovery rechecks. It returns source evidence with no storage authority. Existing project versions and MCP tools are unchanged.
-
-For declaration diagnostics, build the included v1 order model:
-
-```sh
 node dist/cli.js build \
-  --project examples/order/project.json \
-  --jar "$TLA2TOOLS_JAR" \
-  --out .runtime/order
+  --project examples/domain-approval/project.json \
+  --jar "$PWD/.runtime/tla2tools.jar" \
+  --lean /absolute/path/to/lean \
+  --out .runtime/approval-domain
+node node_modules/typescript/bin/tsc -p .runtime/approval-domain/typescript/tsconfig.json
 ```
 
-Inspect the compiled automaton:
+The fetch helper explicitly downloads and verifies the pinned TLC JAR. TypeScript is pinned to 7.0.2. A missing Lean executable or failed proof stops generation before publication.
+
+Use the generated domain with your application's adapters:
+
+```ts
+import { writeFile } from 'node:fs/promises';
+import { createApprovalDomain } from './.runtime/approval-domain/typescript/dist/domain.js';
+
+const approval = createApprovalDomain({
+  publisher: async (report: { path: string; text: string }) => {
+    await writeFile(report.path, report.text, { flag: 'wx' });
+    return report.path;
+  },
+});
+
+approval.send('Approve');
+const result = await approval.publish({ path: 'report.txt', text: 'Ready' });
+console.log(result.kind);
+```
+
+This model refuses `publish` before approval. During publication, competing operations cannot start. A rejected or throwing adapter selects the failure transition and preserves the original error. The [domain guide](docs/domain-code.md) describes bindings, result types, dependency capture, and supported protocols.
+
+Inspect the model with Pele:
 
 ```sh
-node dist/cli.js inspect --ir .runtime/order/automaton.json
+node dist/cli.js visualize --ir .runtime/approval-domain/automaton.json --out .runtime/approval-view
 ```
 
-Generate a Pele visualization for review:
+Open `.runtime/approval-view/index.html`. To verify existing generated output without rewriting it, repeat the build command with `--check`.
+
+TLC checks the configured finite model; Lean checks its operation protocol. These checks do not formally prove the TypeScript emitter or JavaScript runtime. Ownership is per live object, and adapter fulfillment does not establish physical-effect correctness, atomicity, or persistence.
+
+## Evaluate the Bend core
+
+The experimental Bend backend generates pure transition code, modeled snapshots, laws, and proofs. It has no private live owner or async DI driver. Its raw JavaScript export is not an input-validating application API.
+
+With Bend 2.0.39 and its matching BendTT kernel available, run:
 
 ```sh
-node dist/cli.js visualize --ir .runtime/order/automaton.json --out .runtime/order/visualization
+node scripts/evaluate-bend.mjs \
+  --project examples/approval/project.json \
+  --jar "$PWD/.runtime/tla2tools.jar" \
+  --bend /absolute/path/to/bend \
+  --kernel /absolute/path/to/bendtt \
+  --out .runtime/bend-approval
 ```
 
-Run the generated TypeScript checker against explicit source files:
+The evaluation runs `--verdict`, compares JavaScript and native execution with the model, and checks deliberate implementation mutations before publishing output. The [Bend guide](docs/bend-evaluation.md) covers tool setup, the separate Lean 4.34.0 kernel dependency, and the typed-input boundary. Bend remains a source-checkout experiment, separate from the normal `build` targets.
 
-```sh
-node .runtime/order/typescript/checker.mjs --root /absolute/application/root path/to/orders.ts
-```
+## Agent plugins
 
-If the checker cannot find its parser dependencies, install its emitted package dependencies:
+Independent Codex and Claude Code packages provide the modeling skill and local MCP tools. Follow the [plugin guide](docs/plugins.md) for installation, packaging, and updates.
 
-```sh
-npm install --prefix .runtime/order/typescript
-```
+The [v0.3.0-alpha.1 release](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.3.0-alpha.1) provides macOS arm64 plugin archives.
 
-The checker can also load that package from the application root or the current working directory.
+## Other TypeScript profiles
 
-Run the generated Rust checker:
+| Profile | Purpose |
+| --- | --- |
+| [Finite state owners](docs/finite-owned.md) | Preserve complete modeled state and enforce permitted transitions. |
+| [Retained operations](docs/retained-operation.md) | Return the original payload on ordinary success, failure, or refusal. |
+| [Symbolic inputs](docs/symbolic-owned.md) and [independent inputs](docs/product-inputs.md) | Generate equality/copy guards and preserve payload/provenance distinctions. |
+| [Source checks](docs/compiler.md) | Check declared transition edges and module dependencies. |
+| [Contract comparison](docs/structural-contracts.md) | Compare supported model contracts against a supplied baseline. |
 
-```sh
-cargo run --manifest-path .runtime/order/rust/Cargo.toml -- --root /absolute/application/root path/to/orders.rs
-```
+Source checks and generated owners have different guarantees; each guide defines its boundary.
 
-Cargo needs the generated crate's declared dependencies.
-The Rust checker parses application source separately from the application's build.
-Run native application builds and tests as well.
+Start from the application's responsibilities and affected model/code bindings. The [development method](docs/development-method.md) describes that workflow and how to keep unsupported requirements visible.
 
-To compile a previously exported graph, use `compile`:
-
-```sh
-node dist/cli.js compile \
-  --project examples/order/project.json \
-  --dot path/to/model.dot \
-  --out .runtime/imported-order
-```
-
-An imported DOT graph does not establish that TLC completed successfully.
-`compile` accepts only project v1 diagnostics; it rejects executable authority generation.
-The generated verification metadata records that distinction.
-Use `build` when the result must include this tool's TLC completion evidence.
-
-Each output directory has a `.sgd-generated.json` inventory of owned generated files.
-Use an empty directory for the first generation.
-The compiler refuses a nonempty directory without that inventory.
-Regeneration removes obsolete owned checker source when targets or profiles change, including a model-only rerun.
-Use `build --check` or `compile --check` to compare stable artifacts without updating them.
-TLC logs and run receipts are not compared byte for byte.
-Interrupted generation has [journaled process-termination recovery](docs/managed-output.md); `--check` does not repair incomplete outputs.
-
-For a real Codex CLI session with fresh MCP generation and native checks, use the [manual host verification guide](docs/codex-host-verification.md). It requires an existing login and leaves global configuration unchanged. Plugin discovery and permanent installation have separate acceptance checks.
-
-Compiler API support for mixed opaque/finite inputs and abstract resource checks is described in the [resource protocol reference](docs/resource-protocol.md). The native Rust helper also has a separate [closed source-scope mode](tools/rust-bindings/README.md#closed-source-scope-mode) for Cargo target discovery and resolved local function references. It refuses unsupported source and grants no storage authority.
-
-## Model architecture and behavior
-
-The intended method starts before lint integration:
-
-1. Translate the requested architecture and behavior into finite TLA+ models.
-2. Check invariants and inspect the reachable state graph.
-3. Select the supported profile and record the actual application state owner and code binding.
-4. Generate a full-state authority for behavior, or diagnostics for declared edges and dependencies.
-5. Integrate the generated owner and checks into the feature.
-6. Check a forbidden example, then run native tests and builds.
-7. Repeat the loop when a requirement changes.
-
-Use a dependency model for module boundaries.
-Use a behavior model for state changes.
-Separate projects can share the same development workflow without forcing both concerns into one state variable.
-The included [architecture model](examples/architecture/project.json) and [order model](examples/order/project.json) show the two bindings.
-The order project declares `Architecture.Service` as its parent.
-That link displays where the behavior model belongs without claiming formal refinement.
-
-Build the architecture model and visualize both levels together:
-
-```sh
-node dist/cli.js build --project examples/architecture/project.json --jar "$TLA2TOOLS_JAR" --out .runtime/architecture
-node dist/cli.js visualize --ir .runtime/architecture/automaton.json --ir .runtime/order/automaton.json --out .runtime/models
-```
-
-Open `.runtime/models/index.html` to select a model, zoom the graph, or filter transition rows.
-Dashed links show model containment.
-
-Read [the development method](docs/development-method.md) for modeling choices, change handling, and implementation freedom.
-
-## Use an agent plugin
-
-The public `v0.2.0-alpha.4` archives contain complete plugins for macOS arm64: [Codex TAR](https://github.com/KimSeogyu/specification-guided-development/releases/download/v0.2.0-alpha.4/specification-guided-development-codex-0.2.0-alpha.4-darwin-arm64.tar.gz), [Claude Code TAR](https://github.com/KimSeogyu/specification-guided-development/releases/download/v0.2.0-alpha.4/specification-guided-development-claude-code-0.2.0-alpha.4-darwin-arm64.tar.gz), and [Claude Code ZIP](https://github.com/KimSeogyu/specification-guided-development/releases/download/v0.2.0-alpha.4/specification-guided-development-claude-code-0.2.0-alpha.4-darwin-arm64.zip).
-For an extracted archive, use its standalone marketplace preparer as described in the [native plugin guide](docs/plugins.md#prepare-the-packages).
-The [Claude remote-feed instructions](docs/plugins.md#use-the-macos-arm64-release-feed) describe the live HTTPS ZIP catalogue and native auto-update opt-in. A published feed does not prove that a running session has loaded the new version or that background delivery occurred.
-Other platforms and architectures require source preparation on the target host.
-
-The repository contains independent native packages for Codex and Claude Code.
-Each package includes its own modeling skill and local MCP configuration.
-Packaging copies the compiled CLI and production dependencies into each plugin.
-The installed package does not need a neighboring source checkout.
-The runtime includes a native compiler binary and matches the host operating system and CPU architecture.
-Prepare the plugin on the host that will run it, or use an archive built for that host platform and architecture.
-
-Prepare both plugin directories after a build:
-
-```sh
-node plugins/package.mjs
-```
-
-For Codex, register this prepared checkout:
-
-```sh
-codex plugin marketplace add /absolute/path/to/specification-guided-development
-codex plugin add specification-guided-development@specification-guided-development-codex
-```
-
-The desktop plugin directory also exposes `specification-guided-development-codex` and `Specification Guided Development`.
-Restart the app if the new local marketplace does not appear.
-Invoke the `specification-guided-development` skill or ask the agent to use Specification Guided Development for modeling and development.
-
-For Claude Code, register the same prepared checkout with its native installer:
-
-```sh
-claude plugin marketplace add /absolute/path/to/specification-guided-development --scope local
-claude plugin install specification-guided-development@specification-guided-development-claude --scope local
-```
-
-Start a new session and invoke `/specification-guided-development:specification-guided-development`.
-
-These commands install only the package for the selected agent.
-No installer runs as part of the compiler or package preparation.
-A source checkout requires the preparation steps above before its MCP server can run.
-Cloning the Git marketplace alone does not create the runtime.
-For independent distribution, run `node plugins/package.mjs --archive-out .runtime/plugin-packages`.
-That command creates a complete archive for each native plugin, including its runtime.
-Each new archive includes `scripts/prepare-marketplace.mjs`, which creates a new host-specific marketplace and prints the native installation commands without installing anything.
-For an existing installation, follow [the local marketplace update steps](docs/plugins.md#update-an-existing-local-marketplace). The [native plugin guide](docs/plugins.md) also covers extracted-release setup and the separate native cached-upgrade verifier.
-Archive names end with the host platform and architecture, such as `-darwin-arm64.tar.gz`.
-The launcher checks `runtime/runtime-platform.json` and rejects a runtime for another host.
-An ordinary npm source package does not include these runtime dependencies.
-See [plugin setup](docs/plugins.md) for cache checks and troubleshooting.
-
-The [Parangsae native pilot record](docs/native-parangsae-pilot.md) separates installed payloads, fresh native calls, and the runtime serving an existing session. Public alpha4 availability does not by itself establish a pilot upgrade, automatic delivery, or a complete installed-agent development workflow.
-
-## Understand the guarantee
-
-TLC explores a configured finite model.
-Project v3 uses SANY to compile supported input guards and simultaneous equality/copy updates. A separate TLC oracle checks every configured reachable state/input pair, while grammar-scoped symbolic orbits check equality patterns. This is not unrestricted TLA+ compilation or automatic application payload binding.
-Project v4 applies that grammar to independent nominal domains. Its erasure checker preserves complete projected state, input admission, and action classification between supplied symbolic models. It does not attest application bindings or source provenance.
-Project v2 preserves all supported scalar variables and dispatches from the owner's exact concrete node.
-Its controlled build rejects unsupported reductions, overrides, compound state, and ambiguous executable choices.
-The state owner does not automatically bind live input or database values, protect unrelated application state, prevent creation of another owner, or make external effects atomic.
-
-Project v1 projects one nonempty TLA+ string variable from the reachable states.
-An emitted diagnostic edge means that at least one explored concrete transition permits that edge.
-Guards over discarded variables do not survive that projection.
-
-For example, observing an `Approve` edge while `balance >= amount` does not generate a checker for that numeric guard.
-The v1 application still needs the guard and tests for its behavior.
-No profile proves full application refinement, liveness, transaction atomicity, or arbitrary runtime call paths.
-
-Each profile rejects graph structures and values outside its documented subset.
-The generated checks reject unsupported syntax in constructs that their profiles inspect.
-Read the reported file and syntax scope before treating a passing run as evidence.
-
-## Develop Specification Guided Development
+## Development
 
 ```sh
 npm run check
 npm run build
 ```
 
-Run the complete example workflow with Java, the JAR, and Rust available:
+Set `TLA2TOOLS_JAR` for real TLC integration tests. Domain integration tests also need `SGD_LEAN_BINARY` pointing to Lean 4.35.0. See the [verification record](docs/verification.md) for additional checks and their scope.
 
-```sh
-npm run demo
-```
-
-The demo runs real TLC checks for both models, checks valid and forbidden TypeScript and Rust examples, and renders the combined graph.
-Open [the generated offline viewer](examples/visualization/index.html) to inspect both model levels.
-
-The [ingestion application example](examples/ingestion/contract.md) applies architecture and behavior checks to the same TypeScript 7 and Rust sources.
-It includes multi-variable TLA+ models, native application tests, and forbidden source and model variants.
-Run the complete workflow with `npm run verify:ingestion`.
-Read [the verification record](docs/verification.md) for the tested scope and remaining limits.
-
-The checks exercise valid and invalid source examples in both backends and plugin portability.
-When `TLA2TOOLS_JAR` is set, the integration test also runs TLC.
-Do not report an unavailable TLC run as a successful model check.
-
-Specification Guided Development is licensed under [MIT](LICENSE).
+[MIT license](LICENSE).

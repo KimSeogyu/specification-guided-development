@@ -49,12 +49,11 @@ test('real retained-operation MCP build exposes scoped summary, native artifacts
       applicationIntegration: 'not-established', persistence: 'not-established', externalEffects: 'not-established',
     });
     assert.ok(!('nodes' in summary.graph), 'default MCP response remains compact');
-    for (const name of ['typescript/operation.ts', 'rust/src/lib.rs', 'binding.json', 'verification.json', 'automaton.json']) {
+    for (const name of ['typescript/operation.ts', 'binding.json', 'verification.json', 'automaton.json']) {
       assert.ok(summary.output.artifacts.includes(name), `${name} must be published and listed`);
       await access(join(out, name));
     }
     assert.match(await readFile(join(out, 'typescript/operation.ts'), 'utf8'), /export function finalize/);
-    assert.match(await readFile(join(out, 'rust/src/lib.rs'), 'utf8'), /pub fn finalize/);
     const bound = z.object({ operation: z.object({ kind: z.literal('retained-operation'), failure: z.literal('ReportFailed') }) })
       .parse(JSON.parse(await readFile(join(out, 'binding.json'), 'utf8')));
     assert.equal(bound.operation.kind, 'retained-operation');

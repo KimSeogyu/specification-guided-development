@@ -4,6 +4,10 @@
   "name": "FactWriteEnvelope",
   "spec": "FactWriteEnvelope.tla",
   "config": "FactWriteEnvelope.cfg",
-  "targets": ["typescript", "rust"],
-  "binding": { "className": "FactEnvelopeMachine" }
+  "targets": [
+    "typescript"
+  ],
+  "binding": {
+    "className": "FactEnvelopeMachine"
+  }
 }

@@ -6,7 +6,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { fileURLToPath } from 'node:url';
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const usage = 'Usage: node scripts/demo-retained.mjs --jar PATH [--out NEW_DIRECTORY] [--offline]\nTLA2TOOLS_JAR can supply --jar. Build the SDK first with npm run build. No tools or JAR are downloaded.';
+const usage = 'Usage: node scripts/demo-retained.mjs --jar PATH [--out NEW_DIRECTORY]\nTLA2TOOLS_JAR can supply --jar. Build the SDK first with npm run build. No tools or JAR are downloaded.';
 const report = {
   schema: 'sgd-retained-demo-v1', status: 'running', startedAt: new Date().toISOString(),
   scope: { kind: 'synthetic-structural-custody-demo', originalApplicationReplay: false,
@@ -28,9 +28,8 @@ function parse(args) {
   if (args.length === 1 && args[0] === '--help') return null;
   for (let i = 0; i < args.length; i++) {
     const key = args[i];
-    if (!['--jar', '--out', '--offline'].includes(key) || Object.hasOwn(options, key)) throw new Error(`Unknown or repeated option: ${key}\n${usage}`);
-    if (key === '--offline') options[key] = true;
-    else {
+    if (!['--jar', '--out'].includes(key) || Object.hasOwn(options, key)) throw new Error(`Unknown or repeated option: ${key}\n${usage}`);
+    {
       const value = args[++i];
       if (!value || value.startsWith('--')) throw new Error(`Supply a value for ${key}\n${usage}`);
       options[key] = value;
@@ -38,7 +37,7 @@ function parse(args) {
   }
   const jar = options['--jar'] ?? process.env.TLA2TOOLS_JAR;
   if (!jar) throw new Error(`Supply --jar or TLA2TOOLS_JAR.\n${usage}`);
-  return { jar: resolve(jar), offline: options['--offline'] === true, out: options['--out'] };
+  return { jar: resolve(jar), out: options['--out'] };
 }
 
 async function save() {
@@ -83,7 +82,7 @@ async function command(name, program, args, cwd, expectedExit = 0) {
   let child;
   try {
     child = spawn(program, args, { cwd, detached: process.platform !== 'win32',
-      env: { ...process.env, CARGO_BUILD_JOBS: '1' }, stdio: ['ignore', stdout.fd, stderr.fd] });
+      env: { ...process.env }, stdio: ['ignore', stdout.fd, stderr.fd] });
     currentChild = child;
     const timer = setTimeout(() => { timedOut = true; stop(child, 'SIGTERM'); force = setTimeout(() => stop(child, 'SIGKILL'), 2000); }, 240_000);
     const result = await new Promise(done => {
@@ -182,32 +181,27 @@ async function main() {
     output = await mkdtemp(join(runtime, 'demo-retained-'));
   }
   report.paths = { output, source: 'source', logs: 'logs', readyView: 'ready/view/index.html', notReadyView: 'not-ready/view/index.html' };
-  report.offline = parsed.offline;
   await mkdir(join(output, 'logs'));
   await save();
   process.stdout.write(`Evidence: ${output}\n`);
   report.tools = {
     node: process.version, typescript: tsPackage.version,
-    cargo: (await command('cargo-version', 'cargo', ['--version'], output)).trim(),
-    rustfmt: (await command('rustfmt-version', 'rustfmt', ['--version'], output)).trim(),
   };
   await command('java-version', 'java', ['-version'], output);
   await cp(join(repository, 'examples/retained-operation'), join(output, 'source'), { recursive: true });
   const source = join(output, 'source');
   const originalTS = await readFile(join(source, 'consumers/typescript.ts'));
-  const originalRust = await readFile(join(source, 'consumers/rust.rs'));
   await writeFile(join(output, 'package.json'), '{"type":"module"}\n');
-  let lock;
   for (const [name, ready] of [['ready', true], ['not-ready', false]]) {
     stage = name;
-    process.stdout.write(`[${name}] Verify model, generate both languages, and run unchanged consumers.\n`);
+    process.stdout.write(`[${name}] Verify model, generate TypeScript, and run the unchanged consumer.\n`);
     const scenario = join(output, name);
     const model = join(scenario, 'model');
     const generated = join(scenario, 'generated');
     const consumer = join(scenario, 'consumer');
     const disposable = join(output, '.disposable', name);
     await mkdir(model, { recursive: true });
-    await mkdir(join(consumer, 'src'), { recursive: true });
+    await mkdir(consumer, { recursive: true });
     await mkdir(disposable, { recursive: true });
     for (const file of ['ReportCustody.tla', 'ReportCustody.cfg', 'NotReady.cfg']) await cp(join(source, file), join(model, file));
     const project = JSON.parse(await readFile(join(source, 'project.json'), 'utf8'));
@@ -216,50 +210,43 @@ async function main() {
     await command(`${name}-build`, process.execPath, [cli, 'build', '--project', join(model, 'project.json'), '--jar', jar, '--out', generated], output);
     await command(`${name}-view`, process.execPath, [cli, 'visualize', '--ir', join(generated, 'automaton.json'), '--out', join(scenario, 'view')], output);
     await writeFile(join(consumer, 'main.ts'), originalTS);
-    await writeFile(join(consumer, 'src/main.rs'), originalRust);
     assert.deepEqual(await readFile(join(consumer, 'main.ts')), originalTS);
-    assert.deepEqual(await readFile(join(consumer, 'src/main.rs')), originalRust);
     await writeFile(join(scenario, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
       target: 'ES2023', module: 'NodeNext', moduleResolution: 'NodeNext', strict: true,
       noUncheckedIndexedAccess: true, exactOptionalPropertyTypes: true, types: [], rootDir: '.', outDir: join(disposable, 'typescript'),
     }, files: ['consumer/main.ts'] }, null, 2));
     await command(`${name}-typescript-build`, process.execPath, [compiler, '-p', join(scenario, 'tsconfig.json')], scenario);
     const ts = traces(await command(`${name}-typescript-run`, process.execPath, [join(disposable, 'typescript/consumer/main.js')], scenario));
-    const packageName = /^name = "([a-z0-9-]+)"$/m.exec(await readFile(join(generated, 'rust/Cargo.toml'), 'utf8'))?.[1];
-    if (!packageName) throw new Error('Generated Rust package name is missing');
-    await writeFile(join(consumer, 'Cargo.toml'), `[package]\nname = "retained-demo-consumer"\nversion = "0.1.0"\nedition = "2021"\n[workspace]\n[dependencies]\nauthority = { package = "${packageName}", path = "../generated/rust" }\nserde_json = "=1.0.154"\n`);
-    const cargo = ['--jobs', '1', ...(parsed.offline ? ['--offline'] : []), '--manifest-path', join(consumer, 'Cargo.toml'), '--target-dir', join(disposable, 'cargo')];
-    if (lock) await writeFile(join(consumer, 'Cargo.lock'), lock);
-    await command(`${name}-rust-build`, 'cargo', ['build', '--quiet', ...(lock ? ['--locked'] : []), ...cargo], scenario);
-    if (!lock) lock = await readFile(join(consumer, 'Cargo.lock'));
-    const binary = join(disposable, 'cargo/debug', `retained-demo-consumer${process.platform === 'win32' ? '.exe' : ''}`);
-    const rust = traces(await command(`${name}-rust-run`, binary, [], scenario));
     assertPreserved(ts, ready);
-    assertPreserved(rust, ready);
-    assert.deepEqual(ts, rust);
-    report.observations[name] = { typescript: ts, rust, consumersUnchanged: true };
+    report.observations[name] = { typescript: ts, consumersUnchanged: true };
     await save();
     process.stdout.write(`[${name}] ${ready ? 'Success and report failure retain payload and original facts; callback runs once.' : 'Changed model refuses both attempts; callback runs zero times; payload remains.'}\n`);
     if (ready) {
       stage = 'negative-controls';
-      await mkdir(join(consumer, 'src/bin'));
-      await cp(join(source, 'consumers/error-only.rs'), join(consumer, 'src/bin/error-only.rs'));
-      await command('negative-error-only-build', 'cargo', ['build', '--quiet', '--locked', '--bin', 'error-only', ...cargo], scenario);
-      const loss = traces(await command('negative-error-only-run', join(disposable, 'cargo/debug', `error-only${process.platform === 'win32' ? '.exe' : ''}`), [], scenario));
-      const witnessLog = report.stages.at(-1).stderr;
-      const witnesses = (await readFile(join(output, witnessLog), 'utf8')).trim().split(/\r?\n/).map(line => JSON.parse(line));
-      assert.deepEqual(witnesses, ['ok', 'err'].map(mode => ({ event: 'payload-drop', mode, before: 0, after: 1 })), 'both ordinary legacy returns must actually destroy their owned evidence');
-      assert.ok(loss.every(row => row.payloadSame === false && row.rows === null && row.execution === null && row.ledger === null), 'negative must run the intended error-only boundary');
+      const negative = join(consumer, 'error-only.mjs');
+      await writeFile(negative, `
+function legacy(payload, writer) { return writer(payload); }
+for (const mode of ['ok', 'err']) {
+  const payload = { rows: ['earlier-complete', 'technical-prefix'], execution: 'original execution error', ledger: 'terminal uncertain' };
+  let calls = 0;
+  const result = legacy(payload, evidence => {
+    calls++;
+    if (evidence !== payload) throw new Error('unexpected payload substitution');
+    return mode === 'ok' ? { ok: true, value: 'reported' } : { ok: false, error: 'report write failed' };
+  });
+  const retained = Reflect.get(result, 'payload');
+  console.log(JSON.stringify({ mode, calls, payloadSame: retained === payload,
+    rows: retained?.rows ?? null, execution: retained?.execution ?? null, ledger: retained?.ledger ?? null,
+    observed: result.ok ? 'ok' : 'err', observedValue: result.ok ? result.value : result.error,
+    phase: result.ok ? 'Succeeded' : 'Failed', resident: true, revision: '2' }));
+}
+`);
+      const loss = traces(await command('negative-error-only-run', process.execPath, [negative], scenario));
+      assert.ok(loss.every(row => row.payloadSame === false && row.rows === null && row.execution === null && row.ledger === null), 'the legacy returned result must omit evidence');
       assert.throws(() => assertPreserved(loss, true), assert.AssertionError);
-      report.negativeControls.errorOnly = { kind: 'compiled-synthetic-loss-class', oracle: 'same-payload-and-original-facts', status: 'rejected-as-expected', observations: loss, lifetimeWitnesses: witnesses };
-      for (const [fixture, code] of [['payload-move', 'E0507'], ['payload-mutation', 'E0596']]) {
-        await cp(join(source, `consumers/${fixture}.rs`), join(consumer, `src/bin/${fixture}.rs`));
-        const raw = await command(`negative-${fixture}`, 'cargo', ['check', '--quiet', '--locked', '--bin', fixture, '--message-format=json', ...cargo], scenario, 101);
-        const diagnostics = raw.trim().split(/\r?\n/).map(line => JSON.parse(line)).filter(value => value.reason === 'compiler-message' && value.message.level === 'error');
-        assert.ok(diagnostics.some(value => value.message.code?.code === code && value.message.spans.some(span => span.is_primary && span.file_name.endsWith(`${fixture}.rs`))), `expected native ownership error ${code}`);
-        report.negativeControls[fixture] = { kind: 'native-compile-refusal', code, status: 'rejected-as-expected' };
-      }
-      process.stdout.write('[negative-controls] Executed error-only result fails the same preservation oracle; Rust rejects payload move and mutation.\n');
+      report.negativeControls.errorOnly = { kind: 'executed-synthetic-loss-class', oracle: 'same-payload-and-original-facts', status: 'rejected-as-expected', observations: loss,
+        scope: 'returned result loses access to payload; no garbage-collection or destruction claim' };
+      process.stdout.write('[negative-controls] Executed error-only result fails the same preservation oracle.\n');
       await save();
     }
   }

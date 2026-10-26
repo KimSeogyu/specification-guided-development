@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
-import { generateSymbolicRust } from '../src/backends/symbolic-rust.js';
 import { generateSymbolicTypeScript } from '../src/backends/symbolic-typescript.js';
 import { validateObservedResourceProtocol, type ResourceCoverage, type ResourceProtocolBindingV2 } from '../src/resource-protocol.js';
 import { parseSanyXml } from '../src/sany-xml.js';
@@ -103,91 +102,7 @@ function sequences(): Sequence[] {
   ];
 }
 
-function rustConsumer(eventMatch: string): string {
-  return `#![forbid(unsafe_code)]
-use authority::{ResourceOutcomeAuthority, ResourceOutcomeAuthorityInput1};
-use serde_json::{json, Value};
-use std::path::Path;
-
-fn event(value: &str) -> ResourceOutcomeAuthorityInput1 {
-    match value { ${eventMatch}, _ => panic!("event outside the controlled fixture") }
-}
-
-fn prepare_write(resource: &str) -> ResourceOutcomeAuthority {
-    let mut owner = ResourceOutcomeAuthority::new();
-    for name in ["select", "present", "preparewrite", "coversuccess", "attemptwrite"] {
-        owner.send(resource, event(name)).unwrap();
-    }
-    owner
-}
-
-// This test consumer supplies observations. It is not a generated filesystem
-// adapter, a source-coverage gate, or evidence of application storage authority.
-fn physical_observations(root: &Path) -> Value {
-    std::fs::create_dir_all(root).unwrap();
-    let selected = root.join("preinvoke.bin");
-    let resource = selected.to_str().unwrap();
-    std::fs::write(&selected, b"before").unwrap();
-    let before = std::fs::read(&selected).unwrap();
-    let mut owner = prepare_write(resource);
-    let preinvoke: Result<(), &str> = Err("deliberate validation failure before writer invocation");
-    assert!(preinvoke.is_err());
-    owner.send(resource, event("finishnotreplaced")).unwrap();
-    let stopped = owner.read();
-    assert!(owner.send(resource, event("attemptwrite")).is_err());
-    assert_eq!(owner.read(), stopped);
-    let preinvoke_after = std::fs::read(&selected).unwrap();
-    assert_eq!(preinvoke_after, before);
-
-    let replaced = root.join("postrename.bin");
-    let staging = root.join("postrename.partial");
-    let replaced_resource = replaced.to_str().unwrap();
-    std::fs::write(&replaced, b"before").unwrap();
-    let mut replaced_owner = prepare_write(replaced_resource);
-    std::fs::write(&staging, b"after").unwrap();
-    std::fs::rename(&staging, &replaced).unwrap();
-    let later_error = std::fs::read(root.join("missing-metadata")).unwrap_err();
-    assert_eq!(later_error.kind(), std::io::ErrorKind::NotFound);
-    replaced_owner.send(replaced_resource, event("finishposterror")).unwrap();
-    let replaced_state = replaced_owner.read();
-    assert!(replaced_owner.send(replaced_resource, event("attemptwrite")).is_err());
-    assert!(replaced_owner.send(replaced_resource, event("finishnotreplaced")).is_err());
-    assert_eq!(replaced_owner.read(), replaced_state);
-    let replaced_after = std::fs::read(&replaced).unwrap();
-    assert_eq!(replaced_after, b"after");
-    assert!(!staging.exists());
-    json!({
-        "preinvoke": { "before": before, "after": preinvoke_after, "state": stopped },
-        "postrename": { "before": b"before".to_vec(), "after": replaced_after,
-            "laterErrorKind": format!("{:?}", later_error.kind()), "stagingExists": staging.exists(),
-            "state": replaced_state }
-    })
-}
-
-fn main() {
-    let request = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/request.json")).unwrap();
-    let sequences: Vec<Vec<(String, String)>> = serde_json::from_str(&request).unwrap();
-    let mut traces = Vec::new();
-    for sequence in sequences {
-        let mut owner = ResourceOutcomeAuthority::new();
-        let mut trace = Vec::new();
-        for (resource, name) in sequence {
-            let (ok, mut receipt) = match owner.send(&resource, event(&name)) {
-                Ok(receipt) => (true, serde_json::to_value(receipt).unwrap()),
-                Err(error) => (false, serde_json::to_value(error).unwrap()),
-            };
-            receipt.as_object_mut().unwrap().insert("ok".into(), json!(ok));
-            trace.push(receipt);
-        }
-        traces.push(trace);
-    }
-    let physical = physical_observations(Path::new(&std::env::args().nth(1).unwrap()));
-    println!("{}", json!({ "traces": traces, "physical": physical }));
-}
-`;
-}
-
-test('real controlled observed-write models preserve complete TS7/Rust traces and distinguish post-rename failure from no replacement', { skip: !jar, timeout: 300_000 }, async () => {
+test('real controlled observed-write models preserve complete TypeScript traces and distinguish post-rename failure from no replacement', { skip: !jar, timeout: 300_000 }, async () => {
   assert.ok(jar);
   const root = await mkdtemp(join(tmpdir(), 'sgd-resource-outcome-backends-'));
   try {
@@ -206,40 +121,35 @@ test('real controlled observed-write models preserve complete TS7/Rust traces an
       assert.deepEqual(model.inputs.map(input => [input.kind, input.parameter]), [['opaque', 'r'], ['finite', 'event']]);
       const events = model.inputs[1];
       assert.ok(events?.kind === 'finite');
-      const eventMatch = events.values.map((value, index) => {
-        assert.equal(value.kind, 'string');
-        return `${JSON.stringify(value.value)} => ${authority}Input1::Choice${index}`;
-      }).join(', ');
-
       const directory = join(root, configuration.coverage);
       const typescript = join(directory, 'typescript');
-      const rust = join(directory, 'rust');
-      const consumer = join(directory, 'consumer');
-      const target = join(root, 'target');
       for (const file of generateSymbolicTypeScript({ model, className: authority })) await put(join(typescript, file.path), file.content);
-      const rustFiles = generateSymbolicRust({ model, className: authority });
-      for (const file of rustFiles) await put(join(rust, file.path), file.content);
-      const manifest = rustFiles.find(file => file.path === 'Cargo.toml');
-      assert.ok(manifest);
-      const packageName = /^name = "([a-z0-9-]+)"$/m.exec(manifest.content)?.[1];
-      assert.ok(packageName);
-      await put(join(consumer, 'Cargo.toml'), `[package]\nname = "resource-outcome-consumer"\nversion = "0.1.0"\nedition = "2021"\n\n[workspace]\n\n[dependencies]\nauthority = { package = "${packageName}", path = "../rust" }\nserde_json = "=1.0.154"\n`);
-      await put(join(consumer, 'src/main.rs'), rustConsumer(eventMatch));
-      await put(join(consumer, 'request.json'), JSON.stringify(inputSequences));
-      await put(join(typescript, 'traces.mjs'), `import {createResourceOutcomeAuthority} from './dist/machine.js';
+      await put(join(typescript, 'traces.mjs'), `import assert from 'node:assert/strict';
+import {mkdir,writeFile,readFile,rename,access} from 'node:fs/promises';
+import {join} from 'node:path';
+import {createResourceOutcomeAuthority} from './dist/machine.js';
 const sequences=${JSON.stringify(inputSequences)};
 const traces=sequences.map(sequence=>{const owner=createResourceOutcomeAuthority();return sequence.map(([resource,event])=>owner.send(resource,event));});
-process.stdout.write(JSON.stringify(traces));\n`);
+// The consumer supplies filesystem observations; no generated storage authority is claimed.
+const root=process.argv[2];await mkdir(root,{recursive:true});
+function prepare(resource){const owner=createResourceOutcomeAuthority();for(const event of ['select','present','preparewrite','coversuccess','attemptwrite'])assert.equal(owner.send(resource,event).ok,true);return owner;}
+const selected=join(root,'preinvoke.bin');await writeFile(selected,'before');const before=[...await readFile(selected)];
+const owner=prepare(selected);assert.equal(owner.send(selected,'finishnotreplaced').ok,true);const stopped=owner.read();
+assert.equal(owner.send(selected,'attemptwrite').ok,false);assert.deepEqual(owner.read(),stopped);const after=[...await readFile(selected)];assert.deepEqual(after,before);
+const replaced=join(root,'postrename.bin');const staging=join(root,'postrename.partial');await writeFile(replaced,'before');
+const replacement=prepare(replaced);await writeFile(staging,'after');await rename(staging,replaced);
+await assert.rejects(readFile(join(root,'missing-metadata')),{code:'ENOENT'});
+assert.equal(replacement.send(replaced,'finishposterror').ok,true);const replacedState=replacement.read();
+assert.equal(replacement.send(replaced,'attemptwrite').ok,false);assert.equal(replacement.send(replaced,'finishnotreplaced').ok,false);assert.deepEqual(replacement.read(),replacedState);
+const replacedAfter=[...await readFile(replaced)];assert.deepEqual(replacedAfter,[...Buffer.from('after')]);await assert.rejects(access(staging),{code:'ENOENT'});
+process.stdout.write(JSON.stringify({traces,physical:{preinvoke:{before,after,state:stopped},postrename:{before:[...Buffer.from('before')],after:replacedAfter,laterErrorKind:'ENOENT',stagingExists:false,state:replacedState}}}));\n`);
       await execute(process.execPath, [compiler, '-p', join(typescript, 'tsconfig.json')], { timeout: 30_000 });
-      await execute('cargo', ['fetch', '--quiet', '--manifest-path', join(consumer, 'Cargo.toml')], { timeout: 180_000 });
       const physicalRoot = join(directory, 'physical');
-      const ts = await execute(process.execPath, [join(typescript, 'traces.mjs')], { timeout: 30_000, maxBuffer: 8 * 1024 * 1024 });
-      const native = await execute('cargo', ['run', '--offline', '--locked', '--quiet', '--manifest-path', join(consumer, 'Cargo.toml'), '--target-dir', target, '--', physicalRoot], { timeout: 180_000, maxBuffer: 8 * 1024 * 1024 });
+      const ts = await execute(process.execPath, [join(typescript, 'traces.mjs'), physicalRoot], { timeout: 30_000, maxBuffer: 8 * 1024 * 1024 });
       const oracle = inputSequences.map(sequence => observe(model, sequence).trace);
       const observedTypeScript: unknown = JSON.parse(ts.stdout);
-      const observedRust: unknown = JSON.parse(native.stdout);
-      assert.deepEqual(observedTypeScript, oracle);
-      assert.deepEqual(observedRust, {
+
+      assert.deepEqual(observedTypeScript, {
         traces: oracle,
         physical: {
           preinvoke: {
@@ -247,7 +157,7 @@ process.stdout.write(JSON.stringify(traces));\n`);
             state: observe(model, [...prepareWrite(join(physicalRoot, 'preinvoke.bin')), [join(physicalRoot, 'preinvoke.bin'), 'finishnotreplaced']]).state,
           },
           postrename: {
-            before: [...Buffer.from('before')], after: [...Buffer.from('after')], laterErrorKind: 'NotFound', stagingExists: false,
+            before: [...Buffer.from('before')], after: [...Buffer.from('after')], laterErrorKind: 'ENOENT', stagingExists: false,
             state: observe(model, [...prepareWrite(join(physicalRoot, 'postrename.bin')), [join(physicalRoot, 'postrename.bin'), 'finishposterror']]).state,
           },
         },

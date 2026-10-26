@@ -12,7 +12,7 @@ import { contractDiagnostic } from './contract-diagnostics.js';
 
 const help = `sgd ${version}
 
-  build     --project FILE --jar FILE --out DIR [--check]
+  build     --project FILE --jar FILE --out DIR [--lean FILE] [--check]
   model     --project FILE --jar FILE --out DIR
   compile   --project FILE --dot FILE --out DIR [--check]
   inspect   --ir FILE
@@ -22,10 +22,10 @@ const help = `sgd ${version}
   update-status --host codex|claude-code --channel stable|alpha
   mcp
 
-build runs TLC before generation. Project v2 generates finite state authorities.
+build runs TLC before TypeScript generation. Project v2 generates finite state authorities.
+V2 binding.domain generates TypeScript domain code and injected async ports; --lean requires Lean 4.35.0.
 Project v3 symbolic-owned compiles supported SANY equality/copy actions with data input.
 Project v4 adds two or three inputs from disjoint nominal domains.
-Project v5 row-owned binds audited Rust source equality and complete owned rows.
 refine checks state, enabled-input decisions, and observable action erasure.
 check-contracts compares controlled models against supplied baseline sources and writes evidence.
 It does not establish independently selected acceptance or native application authority.
@@ -52,7 +52,7 @@ async function main(args: string[]): Promise<void> {
     flags.set(key, [...(flags.get(key) ?? []), value]);
   }
   const allowed: Record<string, string[]> = {
-    build: ['--project', '--jar', '--out'], model: ['--project', '--jar', '--out'],
+    build: ['--project', '--jar', '--out', '--lean'], model: ['--project', '--jar', '--out'],
     compile: ['--project', '--dot', '--out'], inspect: ['--ir'], visualize: ['--ir', '--out'],
     refine: ['--abstract', '--concrete', '--binding', '--out'],
     'check-contracts': ['--project', '--baseline', '--jar', '--out'],
@@ -73,7 +73,8 @@ async function main(args: string[]): Promise<void> {
     case 'update-status':
       result = await checkUpdateStatus(UpdateStatusInputSchema.parse({ host: one('--host'), channel: one('--channel') })); break;
     case 'model': case 'build':
-      result = await buildProject({ project: one('--project'), jar: one('--jar'), out: one('--out'), check, modelOnly: command === 'model' }); break;
+      result = await buildProject({ project: one('--project'), jar: one('--jar'), out: one('--out'),
+        ...(flags.has('--lean') ? { lean: one('--lean') } : {}), check, modelOnly: command === 'model' }); break;
     case 'compile':
       result = await compileProject({ project: one('--project'), dot: one('--dot'), out: one('--out'), check }); break;
     case 'check-contracts':

@@ -37,7 +37,7 @@ export type ${name}FiniteValue =
 export type ${name}Event = ${actions.map(literal).join(' | ')};
 export type ${name}NodeId = ${nodes.map(node => literal(node.id)).join(' | ')};
 export interface ${name}Values {
-${variables.map(variable => `  readonly [${literal(variable.name)}]: ${name}FiniteValue;`).join('\n')}
+${variables.map(variable => `  readonly [${literal(variable.name)}]: Extract<${name}FiniteValue, { readonly kind: ${literal(variable.kind)} }>;`).join('\n')}
 }
 export interface ${name}Snapshot {
   readonly model: ${literal(graph.name)};

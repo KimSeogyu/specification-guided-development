@@ -100,7 +100,7 @@ export function symbolicNext(model: SymbolicModel): string { return model.versio
 export const SymbolicProjectSchema = z.object({
   version: z.literal(3), profile: z.literal('symbolic-owned'), name: Identifier,
   spec: z.string().min(1), config: z.string().min(1),
-  targets: z.array(z.enum(['typescript', 'rust'])).min(1),
+  targets: z.array(z.literal('typescript')).min(1),
   binding: z.object({ className: z.string().regex(/^[A-Z][A-Za-z0-9]*$/) }).strict(),
 }).strict();
 export const ProductSymbolicProjectSchema = SymbolicProjectSchema.extend({ version: z.literal(4) }).strict();

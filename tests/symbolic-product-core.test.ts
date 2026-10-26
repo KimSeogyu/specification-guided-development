@@ -63,7 +63,7 @@ function smallProduct(): SymbolicModelV2 {
 }
 
 test('project and IR versions keep single-input artifacts separate from named product input', () => {
-  const project = { version: 4, profile: 'symbolic-owned', name: 'Envelope', spec: 'Envelope.tla', config: 'Envelope.cfg', targets: ['rust'], binding: { className: 'EnvelopeMachine' } };
+  const project = { version: 4, profile: 'symbolic-owned', name: 'Envelope', spec: 'Envelope.tla', config: 'Envelope.cfg', targets: ['typescript'], binding: { className: 'EnvelopeMachine' } };
   assert.equal(ProductSymbolicProjectSchema.safeParse(project).success, true);
   assert.equal(SymbolicProjectSchema.safeParse(project).success, false);
   const model = smallProduct();

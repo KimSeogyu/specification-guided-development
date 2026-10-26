@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
@@ -104,8 +104,8 @@ test('real v3 build preserves SANY, finite input oracle, symbolic program, stabl
     await writeFile(join(temp, 'typescript/machine.ts'), '// stale generated policy\n');
     await assert.rejects(buildProject({ ...input, check: true }), /TLC104: stale generated file typescript\/machine\.ts/);
     await buildProject({ ...input, modelOnly: true });
-    const nativeArtifacts = inventory.files.filter(path => path.startsWith('typescript/') || path.startsWith('rust/'));
-    assert.ok(nativeArtifacts.includes('typescript/machine.ts') && nativeArtifacts.includes('rust/src/lib.rs'));
+    const nativeArtifacts = inventory.files.filter(path => path.startsWith('typescript/'));
+    assert.ok(nativeArtifacts.includes('typescript/machine.ts'));
     for (const path of [...nativeArtifacts, 'input-verification.json', 'input-oracle.dot', 'orbit-proof.json']) await assert.rejects(access(join(temp, path)), { code: 'ENOENT' });
     assert.equal(JSON.parse(await readFile(join(temp, 'verification.json'), 'utf8')).generation, 'model-only');
     await access(join(temp, 'automaton.json'));
@@ -116,7 +116,6 @@ test('real v3 build preserves SANY, finite input oracle, symbolic program, stabl
 test('real ManifestWrite source selects native actions, retains latest conflict, distinguishes sentinels, and regenerates a conflict-resolution requirement', { skip: !jar, timeout: 240_000 }, async () => {
   assert.ok(jar);
   const temp = await mkdtemp(join(tmpdir(), 'sgd-symbolic-native-'));
-  const target = resolve('.runtime/symbolic-compiler-tests/target');
   try {
     const models = join(temp, 'model');
     await cp(example, models, { recursive: true });
@@ -139,40 +138,10 @@ const traces = JSON.parse(process.argv[2]).map(inputs => {
 });
 process.stdout.write(JSON.stringify(traces));
 `);
-    const consumer = join(temp, 'consumer');
-    await mkdir(join(consumer, 'src'), { recursive: true });
-    const manifest = await readFile(join(out, 'rust/Cargo.toml'), 'utf8');
-    const packageName = /^name = "([^"]+)"$/m.exec(manifest)?.[1];
-    assert.ok(packageName);
-    await writeFile(join(consumer, 'Cargo.toml'), `[package]\nname = "symbolic-integration-consumer"\nversion = "0.0.0"\nedition = "2021"\n[workspace]\n[dependencies]\nauthority = { package = ${JSON.stringify(packageName)}, path = "../out/rust" }\nserde_json = "=1.0.154"\n`);
-    await writeFile(join(consumer, 'src/main.rs'), `#![forbid(unsafe_code)]
-use authority::FactMachine;
-fn main() {
-    let sequences: Vec<Vec<String>> = serde_json::from_str(&std::env::args().nth(1).unwrap()).unwrap();
-    let traces: Vec<_> = sequences.iter().map(|inputs| {
-        let mut machine = FactMachine::new();
-        inputs.iter().map(|input| {
-            let before = machine.read();
-            let result = machine.send(input).expect("fact input is enabled");
-            assert_eq!(result.before, before);
-            assert_eq!(result.after, machine.read());
-            serde_json::json!({"input": input, "action": result.action, "before": result.before, "after": result.after, "updates": result.updates})
-        }).collect::<Vec<_>>()
-    }).collect();
-    print!("{}", serde_json::to_string(&traces).unwrap());
-}
-`);
-    const cargoOptions = { timeout: 120_000, env: { ...process.env, CARGO_TARGET_DIR: target, CARGO_BUILD_JOBS: '2' }, maxBuffer: 4 * 1024 * 1024 };
-    await execute('cargo', ['fetch', '--manifest-path', join(consumer, 'Cargo.toml')], cargoOptions);
     async function nativeTraces(): Promise<z.infer<typeof Traces>> {
       await execute(process.execPath, [tsc, '-p', join(out, 'typescript/tsconfig.json')], { timeout: 30_000 });
-      const [typescript, rust] = await Promise.all([
-        execute(process.execPath, [runner, JSON.stringify(sequences)], { timeout: 15_000 }),
-        execute('cargo', ['run', '--offline', '--quiet', '--manifest-path', join(consumer, 'Cargo.toml'), '--', JSON.stringify(sequences)], cargoOptions),
-      ]);
+      const typescript = await execute(process.execPath, [runner, JSON.stringify(sequences)], { timeout: 15_000 });
       const tsTrace = Traces.parse(JSON.parse(typescript.stdout));
-      const rustTrace = Traces.parse(JSON.parse(rust.stdout));
-      assert.deepEqual(tsTrace, rustTrace, 'native receipts must agree in complete snapshots, action choice, and assignment origins');
       const model = SymbolicModelSchema.parse(JSON.parse(await readFile(join(out, 'symbolic-model.json'), 'utf8')));
       assert.deepEqual(tsTrace, sequences.map(inputs => interpretedTrace(model, inputs)));
       return tsTrace;

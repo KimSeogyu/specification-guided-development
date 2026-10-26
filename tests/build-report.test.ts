@@ -7,7 +7,6 @@ import { buildProject, buildProjectReport, BuildSummarySchema, type BuildReport,
 import { summarizeBuild, summarizeGraph } from '../src/build-report.js';
 import { importDot } from '../src/dot.js';
 import { FiniteGraphSchema } from '../src/finite-types.js';
-import { RowBindingSchema } from '../src/row-binding-types.js';
 import { SymbolicWitnessSchema } from '../src/symbolic-witness.js';
 
 const jar = process.env.TLA2TOOLS_JAR ? resolve(process.env.TLA2TOOLS_JAR) : undefined;
@@ -48,7 +47,7 @@ test('graph summaries distinguish projected counts, complete finite state, and b
   const finite = FiniteGraphSchema.parse({ version: 1, kind: 'exact-finite', name: 'Finite', variables: [{ name: 'ready', kind: 'boolean' }],
     nodes: [{ id: 's0', values: { ready: { kind: 'boolean', value: false } } }], initial: ['s0'], actions: ['Wait'],
     edges: [{ from: 's0', event: 'Wait', to: 's0' }], source: { dotSha256: '0'.repeat(64), stateCount: 1, edgeCount: 1 } });
-  assert.deepEqual(summarizeGraph(finite, 'partition-control'), { kind: 'exact-finite', role: 'partition-control', name: 'Finite',
+  assert.deepEqual(summarizeGraph(finite, 'model'), { kind: 'exact-finite', role: 'model', name: 'Finite',
     variables: ['ready'], states: 1, edges: 1, initialStates: 1 });
   const witness = SymbolicWitnessSchema.parse({ version: 2, kind: 'symbolic-witness', name: 'Witness', variables: ['stored'],
     nodes: [{ id: 's0', values: { stored: { kind: 'string', value: 'none' } } }], initial: ['s0'], edges: [],
@@ -104,8 +103,8 @@ test('real finite reports retain current check facts, historical logs, and model
     const input = { project: resolve('examples/approval/project.json'), jar, out: join(root, 'generated') };
     const generated = await buildProjectReport(input);
     await assertPublishedReport(generated);
-    assert.ok(generated.summary.output.artifacts.includes('artifact-format.json'));
-    assert.ok(generated.summary.output.artifacts.includes('rust/rustfmt.toml'));
+    assert.ok(!generated.summary.output.artifacts.includes('artifact-format.json'));
+    assert.ok(generated.summary.output.artifacts.includes('typescript/machine.ts'));
     assert.deepEqual(generated.summary.verification.checks.map(check => check.kind), ['controlled-tlc', 'executable-graph']);
     const before = await managedBytes(generated.summary);
     const checked = await buildProjectReport({ ...input, check: true });
@@ -154,60 +153,5 @@ test('real single and product symbolic reports separate bounded, source, orbit, 
         await assert.rejects(access(join(input.out, path)), { code: 'ENOENT' });
       }
     }
-  } finally { await rm(root, { recursive: true, force: true }); }
-});
-
-test('real whole-row and partition reports retain audited source scope and nested control evidence', { skip: !jar, timeout: 180_000 }, async () => {
-  assert.ok(jar);
-  const root = await mkdtemp(join(tmpdir(), 'sgd-report-rows-'));
-  try {
-    const application = join(root, 'application'); const models = join(root, 'models');
-    await cp(resolve('tests/fixtures/rust-facts/parangsae'), application, { recursive: true });
-    await mkdir(models);
-    for (const name of ['FactWriteEnvelope.tla', 'FactWriteEnvelope.cfg']) await cp(resolve('examples/fact-envelope', name), join(models, name));
-    for (const name of ['model.tla', 'model.cfg']) await cp(resolve('examples/partition-control', name), join(models, name));
-    const binding = RowBindingSchema.parse(JSON.parse(await readFile(resolve('tests/fixtures/rust-facts/binding.json'), 'utf8')));
-    const row = { version: 5, profile: 'row-owned', name: 'FactWriteEnvelope', spec: 'FactWriteEnvelope.tla', config: 'FactWriteEnvelope.cfg',
-      application: '../application', targets: ['typescript'], binding: { className: 'FactAuthority', row: binding } };
-    const rowPath = join(models, 'row.json'); await writeFile(rowPath, JSON.stringify(row));
-    const input = { project: rowPath, jar, out: join(application, 'generated') };
-    const wholeRow = await buildProjectReport(input);
-    await assertPublishedReport(wholeRow);
-    const rowCheck = wholeRow.summary.verification.checks.find(check => check.kind === 'whole-row-binding');
-    assert.equal(rowCheck?.scope, 'production-library-and-audited-local-type-closure');
-    assert.equal(rowCheck?.boundary, 'per-live-object');
-    assert.equal(rowCheck?.facts, 4);
-    const modelOnly = await buildProjectReport({ ...input, modelOnly: true });
-    assert.deepEqual(modelOnly.summary.verification.checks.map(check => check.kind), ['controlled-tlc', 'symbolic-source']);
-    assert.ok(!modelOnly.summary.output.artifacts.includes('row-binding-plan.json'));
-    await writeFile(join(models, 'control.json'), JSON.stringify({ version: 2, profile: 'finite-owned', name: 'PartitionControl',
-      spec: 'model.tla', config: 'model.cfg', targets: ['typescript'], binding: { className: 'PartitionControl' } }));
-    const names: [string, string][] = [['KlineFact', 'open_time'], ['FundingFact', 'funding_time'], ['MetricsFact', 'create_time'], ['BookFact', 'timestamp']];
-    await writeFile(join(models, 'PartitionFamilies.tla'), `---- MODULE PartitionFamilies ----\nPartitionFamilies ==\n[version |-> 1, calendar |-> "utc-micros-nonnegative-day-v1", families |->\n[${names.map(([name, time]) => `${name} |-> [key |-> <<"${time}">>, symbol |-> "symbol", time |-> "${time}", datasets |-> {"${name.toLowerCase()}"}]`).join(',\n')}]]\n====\n`);
-    const project = join(models, 'partition.json');
-    await writeFile(project, JSON.stringify({ version: 6, profile: 'partition-fold', name: 'Partition', application: '../application',
-      targets: ['typescript'], models: { row: { project: 'row.json' }, control: { project: 'control.json' },
-        families: { spec: 'PartitionFamilies.tla', operator: 'PartitionFamilies' } }, binding: { className: 'PartitionMachine' } }));
-    const composed = await buildProjectReport({ ...input, project });
-    await assertPublishedReport(composed);
-    assert.equal(composed.summary.graph.kind, 'exact-finite');
-    if (composed.summary.graph.kind !== 'exact-finite') throw new Error('expected control graph');
-    assert.equal(composed.summary.graph.role, 'partition-control');
-    assert.ok(composed.summary.verification.checks.some(check => check.kind === 'whole-row-binding' && check.role === 'row'));
-    assert.ok(composed.summary.verification.checks.some(check => check.kind === 'controlled-tlc' && check.role === 'control'));
-    const composition = composed.summary.verification.checks.find(check => check.kind === 'partition-composition');
-    assert.equal(composition?.storageAuthority, false);
-    assert.equal(composition?.boundary, 'unbound-data-report');
-    assert.ok(!composed.summary.output.artifacts.includes('tlc.log'));
-    const physicalApplication = await realpath(application);
-    for (const path of ['models/row/tlc.log', 'models/control/tlc.log', 'models/families/tlc.log', 'verification.json']) {
-      assert.ok(composed.summary.evidence.some(item => item.path === join(physicalApplication, 'generated', path)));
-    }
-    const checked = await buildProjectReport({ ...input, project, check: true });
-    await assertPublishedReport(checked);
-    assert.ok(checked.summary.evidence.every(item => item.freshness === 'retained-output'));
-    const beforeRefusal = await managedBytes(checked.summary);
-    await assert.rejects(buildProjectReport({ ...input, project, modelOnly: true }), /TLC306: partition-fold requires build/);
-    assert.deepEqual(await managedBytes(checked.summary), beforeRefusal);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

@@ -1,10 +1,10 @@
 # Compile actions with data input
 
-Project v3 `symbolic-owned` compiles a supported TLA+ action relation into TypeScript 7 and Rust owners. Each owner receives an immutable Unicode string identity. Generated guards choose the model action and update the complete state simultaneously.
+Project v3 `symbolic-owned` compiles a supported TLA+ action relation into TypeScript 7 owners. Each owner receives an immutable Unicode string identity. Generated guards choose the model action and update the complete state simultaneously.
 
 Use this profile when a finite fixture must represent actual input values. Do not infer a generic update rule from a small DOT graph. The pinned TLC JAR emits action names without their arguments. A two-value graph also cannot distinguish every equality/copy rule: after storing A and rejecting B, a third value C distinguishes replacing the latest rejected value from keeping B.
 
-The compiler reads guards and assignments from pinned SANY semantic XML. TLC graphs remain independent finite verification evidence. This source milestone does not complete [the Parangsae production goal](production-goal.md).
+The compiler reads guards and assignments from pinned SANY semantic XML. TLC graphs remain independent finite verification evidence.
 
 ## Build the fact-merge example
 
@@ -26,7 +26,7 @@ The example preserves Parangsae's original `ManifestWrite.tla` contract. Its pro
   "name": "ManifestWrite",
   "spec": "ManifestWrite.tla",
   "config": "ManifestWrite.cfg",
-  "targets": ["typescript", "rust"],
+  "targets": ["typescript"],
   "binding": { "className": "FactMachine" }
 }
 ```
@@ -48,20 +48,7 @@ facts.send('A'); // Same; stored and rejected remain unchanged
 const snapshot = facts.read();
 ```
 
-The Rust output is a separate crate. Read its generated README for the exact Cargo package name and path-dependency alias:
-
-```rust
-#![forbid(unsafe_code)]
-use authority::FactMachine;
-
-let mut facts = FactMachine::new();
-assert_eq!(facts.send("A").unwrap().action, "Insert");
-assert_eq!(facts.send("B").unwrap().action, "Clash");
-assert_eq!(facts.send("C").unwrap().action, "Clash");
-let snapshot = facts.read();
-```
-
-The caller supplies data, not an action classification. `send("Same")` supplies the payload identity `Same`; generated guards still select Insert, Same, or Clash. Neither backend exposes a caller-selected action argument.
+The caller supplies data, not an action classification. `send("Same")` supplies the payload identity `Same`; generated guards still select Insert, Same, or Clash. The owner does not expose a caller-selected action argument.
 
 Values are tagged. A scalar model string `"none"` differs from a data atom whose identity is `none`:
 
@@ -72,9 +59,9 @@ Values are tagged. A scalar model string `"none"` differs from a data atom whose
 
 Snapshots contain `model`, `modelRevision`, a decimal-string `revision`, and copied `values`. A successful receipt contains `action`, `before`, `after`, and `updates`. The update expressions retain their origins: literal, input, or an old state variable. For example, Clash copies `stored` from the old state and `rejected` from the new input. This origin information matters when a later application adapter preserves metadata associated with a payload.
 
-TypeScript also returns `ok`; a rejection contains `reason` and an unchanged state. Rust uses `Result<Receipt, TransitionError>`. Both reject disabled or ambiguous dispatch and checked u64 revision exhaustion without changing state. TypeScript rejects non-string input and unpaired Unicode surrogates. Rust's `&str` already supplies valid UTF-8. A modeled no-change action still succeeds and increments revision.
+TypeScript also returns `ok`; a rejection contains `reason` and an unchanged state. The owner rejects disabled or ambiguous dispatch and checked u64 revision exhaustion without changing state. TypeScript rejects non-string input and unpaired Unicode surrogates. A modeled no-change action still succeeds and increments revision.
 
-The owner has no arbitrary-state construction, restore, mutable state reference, or caller callback during commit. TypeScript freezes its closure facade, methods, receipts, and copied snapshots and supplies `is<ClassName>()` for module-instance authentication. Rust keeps state private in a separate crate and forbids unsafe code in that crate. The trust boundary remains an unchanged generated module in a trusted JavaScript realm or safe Rust callers.
+The owner has no arbitrary-state construction, restore, mutable state reference, or caller callback during commit. TypeScript freezes its closure facade, methods, receipts, and copied snapshots and supplies `is<ClassName>()` for module-instance authentication. The trust boundary remains an unchanged generated module in a trusted JavaScript realm.
 
 ## Verification stages
 
@@ -82,7 +69,7 @@ The owner has no arbitrary-state construction, restore, mutable state reference,
 2. **Source lowering.** Resolve semantic symbol identities, expand supported first-order helpers, preserve the configured Spec/Init/Next selection and outer input domain, and lower guards plus complete simultaneous updates. Parameter names alone never identify a binding.
 3. **Equality/copy orbit check.** Canonicalize opaque atoms by their equality relation in each state. For the one-input grammar, test each existing atom and one fresh atom. Validate configured state invariants, square action properties, dispatch uniqueness, and deadlock freedom when requested. Stop at the profile limits rather than accepting partial exploration.
 4. **Independent finite input oracle.** Instrument a temporary module that calls the original TLA+ actions, retaining actual input and action as observer variables. Compare every configured reachable state and input atom with the lowered relation, including disabled decisions and every next variable. Match the oracle's action relation with the original completed DOT so an omitted source action cannot disappear unnoticed.
-5. **Native generation.** Render the same checked IR to TypeScript and Rust. Native tests compare dispatch, complete snapshots, and update origins, including a third payload beyond the original two-value fixture.
+5. **Native generation.** Render the same checked IR to TypeScript. Native tests compare dispatch, complete snapshots, and update origins, including a third payload beyond the original two-value fixture.
 
 The orbit argument relies on the accepted equality/copy grammar: opaque values are observed only through equality and domain membership, and updates copy existing values or input. Renaming opaque atoms therefore preserves guards and updates. Orbit atom labels are local to each state; an `a0` label can denote a different representative after canonical renaming. This argument does not apply to arbitrary TLA+, ordering, cardinality, object identity, custom equality, or externally mutable values. The implementation has independent review and differential tests; these are not a machine-checked proof of the compiler.
 
@@ -111,7 +98,7 @@ The orbit argument relies on the accepted equality/copy grammar: opaque values a
 | `orbit-proof.json` | Equality/copy states, input classes, accepted edges, and disabled cases |
 | `input-verification.json`, `input-oracle.dot` | Independent original-action finite state/input comparison |
 | `verification.json` | Source closure, project/configuration/tool identities, runtime domain, and validation mode |
-| `typescript/`, `rust/` | Native generated owner and target build instructions |
+| `typescript/` | Native generated owner and target build instructions |
 
 Use `build --check` to rerun verification and reject stale artifacts. Regeneration removes obsolete owned artifacts, including native code after a model-only run. Run logs vary; source, IR, code, oracle, and stable provenance remain checked.
 

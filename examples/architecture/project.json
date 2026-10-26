@@ -4,9 +4,21 @@
   "spec": "Architecture.tla",
   "config": "Architecture.cfg",
   "stateVariable": "layer",
-  "targets": ["typescript", "rust"],
+  "targets": [
+    "typescript"
+  ],
   "binding": {
     "kind": "dependency",
-    "modules": { "Handler": ["src/handler"], "Service": ["src/service"], "Gateway": ["src/gateway"] }
+    "modules": {
+      "Handler": [
+        "src/handler"
+      ],
+      "Service": [
+        "src/service"
+      ],
+      "Gateway": [
+        "src/gateway"
+      ]
+    }
   }
 }

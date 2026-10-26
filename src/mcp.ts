@@ -50,10 +50,10 @@ export function createServer(): McpServer {
     return detail === 'full' ? report.automaton : report.summary;
   }));
   server.registerTool('sgd_build', {
-    description: 'Run TLC and generate TypeScript and Rust artifacts. Return a summary with graph scope, completed checks, and evidence paths; detail full returns the complete IR. V6 partition-fold composes complete-row and finite-control models with audited family projections into a closed fold and consumed unbound data report; it grants no storage authority. V5 row-owned binds Rust equality and complete rows to payload/provenance state. V4 symbolic-owned accepts disjoint data domains; V3 accepts one. These compile SANY equality/copy actions with a finite original-action TLC oracle. V2 generates finite state owners. V1 generates diagnostics.',
-    inputSchema: { ...paths, check, detail }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-  }, ({ detail, ...args }) => guarded(async () => {
-    const report = await buildProjectReport(args);
+    description: 'Run TLC and generate TypeScript artifacts. Return a summary with graph scope, completed checks, and evidence paths; detail full returns the complete IR. V4 symbolic-owned accepts disjoint data domains; V3 accepts one. These compile SANY equality/copy actions with a finite original-action TLC oracle. V2 generates finite state owners. V1 generates diagnostics.',
+    inputSchema: { ...paths, lean: absolutePath.optional().describe('Lean 4.35.0 executable. Required for v2 binding.domain TypeScript domain generation.'), check, detail }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  }, ({ detail, lean, ...args }) => guarded(async () => {
+    const report = await buildProjectReport({ ...args, ...(lean === undefined ? {} : { lean }) });
     return detail === 'full' ? report.automaton : report.summary;
   }));
   server.registerTool('sgd_compile', {

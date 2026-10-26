@@ -76,7 +76,7 @@ test('public retained demo executes source-to-native preservation, loss control 
   assert.equal(compiled.status, 0, `${compiled.stdout}\n${compiled.stderr}`);
   const run = (args: string[]) => invoke(args, process.env, join(sdk, 'scripts/demo-retained.mjs'));
   const out = join(root, 'demo');
-  const result = run(['--jar', jar, '--out', out, '--offline']);
+  const result = run(['--jar', jar, '--out', out]);
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}\nEvidence: ${out}`);
   assert.match(result.stdout, /Success and report failure retain payload/);
   assert.match(result.stdout, /callback runs zero times/);
@@ -89,23 +89,26 @@ test('public retained demo executes source-to-native preservation, loss control 
   assert.ok(report.cleanup.logicalBytes > 0);
   for (const name of ['ready', 'not-ready']) {
     const observed = report.observations[name];
-    assert.deepEqual(observed.typescript, observed.rust);
+    assert.equal(observed.rust, undefined);
     assert.equal(observed.consumersUnchanged, true);
-    assert.ok(observed.rust.every((row: { calls: number; payloadSame: boolean }) => row.calls === (name === 'ready' ? 1 : 0) && row.payloadSame));
+    assert.ok(observed.typescript.every((row: { calls: number; payloadSame: boolean }) => row.calls === (name === 'ready' ? 1 : 0) && row.payloadSame));
     assert.ok((await readFile(join(out, name, 'view/index.html'), 'utf8')).includes('<html'));
     assert.ok((await readdir(join(out, name, 'generated'))).includes('verification.json'));
   }
-  for (const name of ['errorOnly', 'payload-move', 'payload-mutation']) assert.equal(report.negativeControls[name].status, 'rejected-as-expected');
+  assert.deepEqual(Object.keys(report.negativeControls), ['errorOnly']);
+  assert.equal(report.negativeControls.errorOnly.status, 'rejected-as-expected');
+  assert.equal(report.negativeControls.errorOnly.kind, 'executed-synthetic-loss-class');
+  assert.equal(report.negativeControls.errorOnly.lifetimeWitnesses, undefined);
   const before = await readFile(join(out, 'report.json'));
-  const reuse = run(['--jar', jar, '--out', out, '--offline']);
+  const reuse = run(['--jar', jar, '--out', out]);
   assert.equal(reuse.status, 1);
   assert.match(reuse.stderr, /EEXIST/);
   assert.deepEqual(await readFile(join(out, 'report.json')), before);
   const sourceOutput = join(sdk, 'examples/retained-operation/demo-must-not-exist');
-  const overlap = run(['--jar', jar, '--out', sourceOutput, '--offline']);
+  const overlap = run(['--jar', jar, '--out', sourceOutput]);
   assert.equal(overlap.status, 1);
   assert.match(overlap.stderr, /source, dependencies and dist are protected/);
-  const dotted = run(['--jar', jar, '--out', join(sdk, '..demo-must-not-exist'), '--offline']);
+  const dotted = run(['--jar', jar, '--out', join(sdk, '..demo-must-not-exist')]);
   assert.equal(dotted.status, 1);
   assert.match(dotted.stderr, /source, dependencies and dist are protected/);
   const existing = join(root, 'existing');
@@ -118,7 +121,7 @@ test('public retained demo executes source-to-native preservation, loss control 
   const wrongJar = join(root, 'wrong.jar');
   await writeFile(wrongJar, 'not the pinned TLC binary');
   const failedOut = join(root, 'failed-demo');
-  const failed = run(['--jar', wrongJar, '--out', failedOut, '--offline']);
+  const failed = run(['--jar', wrongJar, '--out', failedOut]);
   assert.equal(failed.status, 1);
   assert.match(failed.stderr, /FAIL \[ready\]/);
   assert.match(failed.stderr, /Failure report retained:/);

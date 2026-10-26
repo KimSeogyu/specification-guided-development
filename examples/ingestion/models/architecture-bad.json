@@ -5,27 +5,23 @@
   "config": "ArchitectureBad.cfg",
   "stateVariable": "module",
   "targets": [
-    "typescript",
-    "rust"
+    "typescript"
   ],
   "binding": {
     "kind": "dependency",
     "modules": {
       "Handler": [
-        "src/handler.ts",
-        "src/handler.rs"
+        "src/handler.ts"
       ],
       "Pipeline": [
         "src/pipeline.ts",
-        "src/pipeline.rs",
         "src/pipeline.test.ts"
       ],
       "Storage": [
-        "src/storage.ts",
-        "src/storage.rs"
+        "src/storage.ts"
       ],
       "Composition": [
-        "src/lib.rs"
+        "src/index.ts"
       ]
     }
   }

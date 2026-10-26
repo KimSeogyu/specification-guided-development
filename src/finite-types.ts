@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { RetainedOperationSchema } from './retained-operation-types.js';
+import { DomainBindingSchema } from './domain-types.js';
 import { recordSchema } from './schema-record.js';
 import { TlcFailureError } from './tlc-failure.js';
 
@@ -95,9 +96,12 @@ export const MachineProjectSchema = z.object({
   name: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]*$/),
   spec: z.string().min(1),
   config: z.string().min(1),
-  targets: z.array(z.enum(['typescript', 'rust'])).min(1),
-  binding: z.object({ className: z.string().regex(/^[A-Z][A-Za-z0-9]*$/), operation: RetainedOperationSchema.optional() }).strict(),
-}).strict();
+  targets: z.array(z.literal('typescript')).min(1),
+  binding: z.object({ className: z.string().regex(/^[A-Z][A-Za-z0-9]*$/), operation: RetainedOperationSchema.optional(), domain: DomainBindingSchema.optional() }).strict(),
+}).strict().superRefine((project, context) => {
+  if (project.binding.domain === undefined) return;
+  if (project.binding.operation !== undefined) context.addIssue({ code: 'custom', message: 'Domain and retained-operation bindings cannot be combined' });
+});
 export type MachineProject = z.infer<typeof MachineProjectSchema>;
 
 export interface OwnedBackendInput {

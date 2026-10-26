@@ -5,8 +5,7 @@
   "config": "IngestionBad.cfg",
   "stateVariable": "state",
   "targets": [
-    "typescript",
-    "rust"
+    "typescript"
   ],
   "parent": {
     "model": "architecture",

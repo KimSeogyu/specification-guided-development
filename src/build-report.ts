@@ -6,12 +6,12 @@ import type { SymbolicWitnessGraph } from './symbolic-witness.js';
 
 export type BuildAutomaton = Automaton | ExactFiniteAutomaton | SymbolicWitnessGraph;
 const Count = z.number().int().nonnegative();
-const ModelRole = z.enum(['model', 'row', 'control']);
+const ModelRole = z.literal('model');
 
 export const GraphSummarySchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('projected'), name: z.string(), stateVariable: z.string(),
     projectedStates: Count, projectedTransitions: Count, concreteSourceStates: Count, concreteSourceEdges: Count }).strict(),
-  z.object({ kind: z.literal('exact-finite'), role: z.enum(['model', 'partition-control']), name: z.string(),
+  z.object({ kind: z.literal('exact-finite'), role: z.literal('model'), name: z.string(),
     variables: z.array(z.string()), states: Count, edges: Count, initialStates: Count }).strict(),
   z.object({ kind: z.literal('symbolic-witness'), name: z.string(), states: Count, edges: Count,
     domains: z.array(z.object({ name: z.string(), atoms: Count }).strict()) }).strict(),
@@ -19,6 +19,10 @@ export const GraphSummarySchema = z.discriminatedUnion('kind', [
 export type GraphSummary = z.infer<typeof GraphSummarySchema>;
 
 export const VerificationCheckSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('domain-protocol'), role: ModelRole,
+    scope: z.literal('per-live-owner-serial-async-ports'), proof: z.literal('lean4-kernel'),
+    leanVersion: z.literal('4.35.0'), operations: z.array(z.string()),
+    nativeBackend: z.literal('not-formally-verified') }).strict(),
   z.object({ kind: z.literal('retained-operation'), role: ModelRole,
     scope: z.literal('one-borrowed-synchronous-callback'), payload: z.literal('retained-on-all-return-paths') }).strict(),
   z.object({ kind: z.literal('legacy-tlc'), role: z.literal('model'),
@@ -38,17 +42,7 @@ export const VerificationCheckSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('input-oracle'), role: ModelRole, profile: z.literal('tlc-finite-input-oracle'),
     scope: z.literal('configured-reachable-state-input-product'), states: Count,
     checkedCases: Count, acceptedCases: Count, disabledCases: Count }).strict(),
-  z.object({ kind: z.literal('whole-row-binding'), role: ModelRole, profile: z.literal('rust-whole-row-v1'),
-    scope: z.literal('production-library-and-audited-local-type-closure'), boundary: z.literal('per-live-object'),
-    facts: Count, sourceFiles: Count }).strict(),
-  z.object({ kind: z.literal('partition-control-source'), role: z.literal('control'),
-    scope: z.literal('admitted-finite-control-laws') }).strict(),
-  z.object({ kind: z.literal('partition-metadata'), role: z.literal('families'),
-    scope: z.literal('literal-TLA-family-metadata'), families: Count,
-    tlcScope: z.literal('synthetic-metadata-wrapper') }).strict(),
-  z.object({ kind: z.literal('partition-composition'), role: z.literal('composition'), profile: z.literal('unbound-partition-v1'),
-    scope: z.literal('complete-row-roles-and-finite-control-laws'), boundary: z.literal('unbound-data-report'),
-    families: Count, storageAuthority: z.literal(false) }).strict(),
+
 ]);
 export type VerificationCheck = z.infer<typeof VerificationCheckSchema>;
 
@@ -73,7 +67,7 @@ export type BuildReport = { automaton: BuildAutomaton; summary: BuildSummary };
 /** Collector metadata references the generated file registered at its creation site. */
 export type CollectedEvidence = { file: GeneratedFile; role: EvidenceArtifact['role'] };
 
-export function summarizeGraph(automaton: BuildAutomaton, role: 'model' | 'partition-control'): GraphSummary {
+export function summarizeGraph(automaton: BuildAutomaton, role: 'model'): GraphSummary {
   if (!('kind' in automaton)) return { kind: 'projected', name: automaton.name, stateVariable: automaton.stateVariable,
     projectedStates: automaton.states.length, projectedTransitions: automaton.transitions.length,
     concreteSourceStates: automaton.source.stateCount, concreteSourceEdges: automaton.source.edgeCount };

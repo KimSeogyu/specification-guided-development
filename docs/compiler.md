@@ -1,6 +1,6 @@
 # Compiler contract
 
-Specification Guided Development has separate executable and diagnostic profiles. Project v2 `finite-owned` preserves full scalar valuations. Project v3 compiles a [single opaque input](symbolic-owned.md), while v4 supports [independent inputs and model erasure](product-inputs.md). V5 binds [complete native rows](row-owned.md) to that relation. V6 composes a [closed partition data fold](partition-fold.md). Read each profile's contract before generating authority.
+Specification Guided Development has separate executable and diagnostic profiles. Project v2 `finite-owned` preserves full scalar valuations. Project v3 compiles a [single opaque input](symbolic-owned.md), while v4 supports [independent inputs and model erasure](product-inputs.md). Read each profile's contract before generating authority.
 
 The remainder of this document describes project v1, which consumes a projected TLC DOT state graph and emits declaration or import diagnostics. It also runs TLC when a project and a local TLA+ tools JAR are supplied. Those diagnostics do not own runtime state.
 
@@ -16,7 +16,7 @@ The following fields are required:
 | `spec` | The TLA+ module path, relative to the project JSON file |
 | `config` | The TLC configuration path, relative to the project JSON file |
 | `stateVariable` | The nonempty TLA+ string variable to project from each state |
-| `targets` | A nonempty array containing `typescript`, `rust`, or both |
+| `targets` | An array containing `typescript` |
 | `binding` | One supported mapping from model names to source constructs |
 
 An example transition project is:
@@ -28,7 +28,7 @@ An example transition project is:
   "spec": "Order.tla",
   "config": "Order.cfg",
   "stateVariable": "state",
-  "targets": ["typescript", "rust"],
+  "targets": ["typescript"],
   "binding": { "kind": "transition", "function": "transition" }
 }
 ```
@@ -104,11 +104,10 @@ The `model` command omits checker source.
 
 The TypeScript target writes `typescript/checker.mjs`.
 It also writes `typescript/package.json` with its parser dependencies.
-The Rust target writes a standalone checker crate with `rust/Cargo.toml` and `rust/src/main.rs`.
 The compiler emits checker source for the selected model.
 It does not emit application implementations.
 
-Both generated checker commands require `--root PROJECT_ROOT FILE [FILE ...]`.
+The generated checker requires `--root PROJECT_ROOT FILE [FILE ...]`.
 Relative input files resolve from `PROJECT_ROOT`.
 Input files must remain inside that root.
 The TypeScript checker needs the parser dependencies declared in its emitted `package.json`.
@@ -146,7 +145,7 @@ Read the [output recovery contract](managed-output.md) for manual-recovery cases
 
 ## Transition binding
 
-The configured `function` identifies a TypeScript function call and a Rust function call or macro.
+The configured `function` identifies a TypeScript function call.
 The construct has three string literals in the order `from`, `event`, `to`.
 For example:
 
@@ -154,12 +153,6 @@ For example:
 transition("Open", "Submit", "Submitted");
 ```
 
-```rust
-transition("Open", "Submit", "Submitted");
-```
-
-The Rust transition-only profile also accepts `transition!("Open", "Submit", "Submitted")`.
-Use function calls when the same Rust source must pass dependency checks, which reject opaque macros.
 The checker compares the declared triple with a projected automaton edge.
 It does not establish that the declaration controls runtime state or invokes the correct handler.
 Unsupported forms of the checked construct produce diagnostics.
@@ -181,14 +174,9 @@ Node builtins and external packages remain outside the internal module boundary.
 An unresolved bare package name also remains outside that boundary.
 This profile does not enforce external SDK ownership.
 
-The Rust profile checks supported `use` and `mod` declarations without full Rust name resolution.
-It rejects opaque macros and procedural attributes in checked files.
-Unresolved bare names remain external to its module boundary.
-Use explicit `crate`, `self`, or `super` qualification for local dependencies that the profile requires.
-
 ## Checker diagnostics
 
-Both backends write JSON diagnostics with `ruleId`, `file`, `line`, `column`, and `message`.
+The checker writes JSON diagnostics with `ruleId`, `file`, `line`, `column`, and `message`.
 The initial rules are:
 
 | Rule | Meaning |

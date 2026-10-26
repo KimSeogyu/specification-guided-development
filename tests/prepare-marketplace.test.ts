@@ -37,7 +37,7 @@ async function fixture(base: string, host: Host) {
   await json(join(plugin, 'runtime/package.json'), { name: `${name}-plugin-runtime`, version, type: 'module', dependencies: { 'runtime-probe': '1.0.0' } });
   await json(join(plugin, 'runtime/runtime-platform.json'), { version: 1, platform: process.platform, arch: process.arch });
   await json(join(plugin, 'runtime/node_modules/runtime-probe/package.json'), { name: 'runtime-probe', version: '1.0.0' });
-  for (const path of ['scripts/run.mjs', 'runtime/dist/cli.js', 'runtime/dist/mcp.js', 'skills/specification-guided-development/SKILL.md', `runtime/bin/sgd-rust-bindings${process.platform === 'win32' ? '.exe' : ''}`]) {
+  for (const path of ['scripts/run.mjs', 'runtime/dist/cli.js', 'runtime/dist/mcp.js', 'skills/specification-guided-development/SKILL.md']) {
     const file = join(plugin, path);
     await mkdir(dirname(file), { recursive: true });
     await writeFile(file, `fixture ${path}\n`, { mode: 0o755 });
@@ -281,7 +281,7 @@ for (const host of ['codex', 'claude-code'] satisfies Host[]) {
       assert.equal(command.status, 0, command.stderr);
       assert.equal(JSON.parse(command.stdout).marketplace.path, second);
       assert.equal(await readFile(join(second, 'plugins', host, 'LICENSE'), 'utf8'), 'license fixture\n');
-      if (process.platform !== 'win32') assert.ok(Number((await lstat(join(copied, 'runtime/bin/sgd-rust-bindings'))).mode) & 0o111);
+      if (process.platform !== 'win32') assert.ok(Number((await lstat(join(copied, 'scripts/run.mjs'))).mode) & 0o111);
     } finally { await rm(temporary, { recursive: true, force: true }); }
   });
 }
@@ -336,17 +336,11 @@ test('rejects stale versions, foreign platforms, incomplete dependencies, and la
   } finally { await rm(temporary, { recursive: true, force: true }); }
 });
 
-test('rejects missing native code, non-executable helpers, and bounded oversized files', async () => {
+test('rejects missing runtime code and bounded oversized files', async () => {
   const temporary = await scratch();
   try {
     const plugin = await fixture(temporary, 'codex');
     const out = join(temporary, 'out');
-    const binary = join(plugin, `runtime/bin/sgd-rust-bindings${process.platform === 'win32' ? '.exe' : ''}`);
-    if (process.platform !== 'win32') {
-      await chmod(binary, 0o644);
-      await assert.rejects(prepareMarketplace({ host: 'codex', plugin, out }), /must be executable/);
-      await chmod(binary, 0o755);
-    }
     await rm(join(plugin, 'runtime/dist/mcp.js'));
     await assert.rejects(prepareMarketplace({ host: 'codex', plugin, out }), /runtime\/dist\/mcp.js/);
     await writeFile(join(plugin, 'runtime/dist/mcp.js'), 'fixture');

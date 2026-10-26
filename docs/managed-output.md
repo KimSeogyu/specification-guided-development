@@ -24,7 +24,7 @@ The diagnostic contains the following fields:
 | --- | --- |
 | `differences` | Added or removed inventory entries, missing files, changed content, changed stable receipt fields, and malformed previous receipts. |
 | `sourceInventories` | Changed recorded application paths or model module names, grouped by generated artifact and JSON field. Known row plans and controlled receipts supply these inventories. Arbitrary path metadata is not treated as source evidence. |
-| `generatedSources` | Byte comparisons for generated Rust, TypeScript, and JavaScript source. Additions, removals, missing files, changes, and unchanged files remain separate. |
+| `generatedSources` | Byte comparisons for generated TypeScript and JavaScript source. Additions, removals, missing files, changes, and unchanged files remain separate. |
 | `nextAction` | Review the differences, then explicitly rerun generation without `--check`. The failed check updates no generated files. |
 
 For example, a collector implementation change can report `src/run.rs` in the affected row plans and verification receipts while generated source bytes remain `unchanged`. A malformed, duplicate, or missing previous inventory reports `previous-unavailable` instead of guessing which source changed. Model module names remain scoped to their receipt field because different referenced contracts can use the same name. The diagnostic does not include source content or digest values, and it never reads files through recorded source paths.

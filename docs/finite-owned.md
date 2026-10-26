@@ -1,12 +1,10 @@
 # Generate a finite state authority
 
-Use the `finite-owned` profile when the application must obtain its modeled state from generated code. This profile preserves every supported variable in the TLC graph. It generates a TypeScript 7 authority or a separate Rust authority crate. The older project v1 bindings generate declaration and import diagnostics; they do not own application state.
-
-This is a development milestone toward [sustainable Parangsae adoption](production-goal.md). It is available in the source checkout. The published v0.1.0 archives contain the earlier diagnostic prototype.
+Use the `finite-owned` profile when the application must obtain its modeled state from generated code. This profile preserves every supported variable in the TLC graph. It generates a TypeScript 7 authority. The older project v1 bindings generate declaration and import diagnostics; they do not own application state.
 
 ## Run the example
 
-Use Node.js 22 or later, Java 17, and Cargo for the Rust example. From the repository root:
+Use Node.js 22 or later and Java 17. From the repository root:
 
 ```sh
 npm ci
@@ -31,7 +29,7 @@ The project file selects the executable profile:
   "name": "Approval",
   "spec": "Approval.tla",
   "config": "Approval.cfg",
-  "targets": ["typescript", "rust"],
+  "targets": ["typescript"],
   "binding": { "className": "ApprovalMachine" }
 }
 ```
@@ -40,7 +38,9 @@ The project file selects the executable profile:
 
 ## Actual payload retention
 
-For a synchronous fallible operation that must return its original payload, use the optional [retained-operation binding](retained-operation.md). It generates a private payload boundary whose callback outcome selects the model transition. The ordinary named-event API below applies when this binding is absent.
+For a synchronous fallible operation that must return its original payload, use the optional [retained-operation binding](retained-operation.md). It generates a private payload boundary whose callback outcome selects the model transition. The ordinary named-event API below applies when neither an operation nor a domain binding is configured.
+
+For a TypeScript domain with injected asynchronous ports, use the [domain binding](domain-code.md). It generates named methods that admit a modeled start before calling a port and choose completion from actual fulfillment or rejection. This profile additionally requires Lean 4.35.0 to check the finite port protocol before publication. It cannot be combined with a retained-operation binding.
 
 ## TypeScript
 
@@ -73,25 +73,6 @@ The example's terminal `Wait` is an explicit public self-loop. It succeeds and i
 
 The boundary assumes a trusted JavaScript realm and unchanged generated module. Replacing platform intrinsics or editing the generated implementation is outside that boundary.
 
-## Rust
-
-Keep the generated crate as a separate dependency. Rust generation requires rustfmt and uses the common [artifact contract](artifact-contract.md) before freshness comparison or publication. The generated crate includes the declared formatter configuration. Its generated `README.md` gives the exact Cargo package name and a dependency alias. A consumer uses that alias:
-
-```rust
-#![forbid(unsafe_code)]
-use authority::{ApprovalMachine, Event};
-
-let mut machine = ApprovalMachine::new();
-assert!(machine.send(Event::Submit).is_err());
-machine.send(Event::Approve).unwrap();
-machine.send(Event::Submit).unwrap();
-let snapshot = machine.read();
-```
-
-The authority has private node and revision fields. It exposes no mutable state reference, raw-state constructor, `Clone`, `Deserialize`, or restore API. Snapshots are owned copies and may be edited without changing the authority. The generated crate forbids unsafe code. Its contract requires safe Rust callers; a crate attribute cannot forbid unsafe code in another crate. Project-wide caller validation remains future work.
-
-The event enum preserves each original model label through `Event::model_name()`. `Event::from_model_name` rejects unknown labels. Dispatch returns a success receipt or an error that includes an unchanged snapshot. Snapshot JSON has the same fields and tagged scalar values as the TypeScript output.
-
 ## Supported model and execution profile
 
 - All root state variables must have a stable scalar kind across reachable states: string, Boolean, or integer. Empty strings are allowed. Sets, sequences, records, functions, model values, and mixed variable kinds are rejected. Variable names must be ASCII TLA+ identifiers; `__proto__` is excluded. Strings must contain valid Unicode scalar values.
@@ -111,9 +92,9 @@ For each generated live owner, its initial node is the configured initial node. 
 
 This is a safety contract for one live object. It does not establish fairness or progress. The factory may create another object at Init. There is no persistent business identity, reset prevention, recovery, restore, transaction, or external-effect contract. No application callback runs during a state commit.
 
-Application binding is still required. Events take no data parameters, and Init is fixed. Model values do not automatically track live database values or input data. An application can maintain unrelated parallel state or call an effect outside the generated owner. This milestone does not discover all project files or prove that all application behavior uses the owner. The next milestone must connect Parangsae's actual authority and effect entry points, enforce source coverage, and define persistence and recovery where the selected boundary needs them. Dashed high-level/low-level visualization links remain structural links, not formal refinement proofs.
+Application binding is still required. Events take no data parameters, and Init is fixed. Model values do not automatically track live database values or input data. An application can maintain unrelated parallel state or call an effect outside the generated owner. This profile does not discover all project files or prove that all application behavior uses the owner. Dashed high-level/low-level visualization links remain structural links, not formal refinement proofs.
 
-## Verify the milestone
+## Verification
 
 Build errors use these stable categories:
 
@@ -126,13 +107,11 @@ Build errors use these stable categories:
 | `TLC205` | Invalid or unsupported full-state DOT |
 | `TLC206` | Unverified DOT cannot generate authority |
 
-Runtime rejections use `disabled` and `revision-exhausted` in both languages. TypeScript also reports `unknown-event`; Rust rejects unknown labels before constructing an event.
+Runtime rejections use `disabled`, `revision-exhausted`, and `unknown-event`.
 
 ```sh
 TLA2TOOLS_JAR="$PWD/.runtime/tla2tools.jar" npm run check
 npm run build
 ```
 
-The tests execute native TypeScript 7 and Cargo consumers, compare every reachable fixture state/action decision with the graph, reject direct state construction and writes, exercise runtime snapshot/reflection attempts, and check overflow rejection. A real TLC integration test compares TypeScript and Rust snapshot traces and changes the TLA+ submission requirement, then regenerates and verifies the changed native behavior. Runner tests exercise configuration rejection, dependency closure, source changes, failure, timeout, and temporary-snapshot cleanup.
-
-The current production goal remains incomplete until the Parangsae application and maintenance workflow meet its acceptance criteria.
+Native tests exercise generated TypeScript dispatch, snapshots, privacy, and revision exhaustion. Controlled TLC tests check source changes, configuration rejection, and regeneration.

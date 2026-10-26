@@ -1,17 +1,12 @@
 import { z } from 'zod';
 import { recordSchema } from './schema-record.js';
-import { RowBindingPlanSchema } from './row-binding-types.js';
 import type { GeneratedFile } from './types.js';
 
 const Names = z.array(z.string());
 const Change = z.enum(['added', 'removed', 'changed']);
 const InventoryStatus = z.enum(['compared', 'previous-unavailable']);
-const Origin = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('application-source'), artifact: z.string(), field: z.string(), status: InventoryStatus,
-    changes: z.array(z.object({ path: z.string(), change: Change }).strict()) }).strict(),
-  z.object({ kind: z.literal('model-module'), artifact: z.string(), field: z.string(), status: InventoryStatus,
-    changes: z.array(z.object({ name: z.string(), change: Change }).strict()) }).strict(),
-]);
+const Origin = z.object({ kind: z.literal('model-module'), artifact: z.string(), field: z.string(), status: InventoryStatus,
+  changes: z.array(z.object({ name: z.string(), change: Change }).strict()) }).strict();
 const Difference = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('inventory'), added: Names, removed: Names }).strict(),
   z.object({ kind: z.literal('missing'), path: z.string() }).strict(),
@@ -33,9 +28,6 @@ type OutputDifference = z.infer<typeof Difference>;
 type SourceInventory = z.infer<typeof Origin>;
 type CheckedFile = { file: GeneratedFile; current: Buffer | null };
 const Record = recordSchema(z.string(), z.unknown());
-const Sources = RowBindingPlanSchema.shape.sources.superRefine((sources, context) => {
-  if (new Set(sources.map(source => source.path)).size !== sources.length) context.addIssue({ code: 'custom', message: 'Duplicate source path' });
-});
 const Modules = z.array(z.object({ name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*\.tla$/), sha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict()).min(1)
   .superRefine((modules, context) => {
     if (new Set(modules.map(module => module.name)).size !== modules.length) context.addIssue({ code: 'custom', message: 'Duplicate module name' });
@@ -65,7 +57,7 @@ function changes(before: Map<string, string>, after: Map<string, string>): { ide
   });
 }
 
-/** Inspect only inventories emitted by known row plans and controlled receipts.
+/** Inspect only inventories emitted by controlled receipts.
  * These recorded paths are labels. Diagnostics never read files through them.
  */
 function origins({ file, current }: CheckedFile): SourceInventory[] {
@@ -74,16 +66,6 @@ function origins({ file, current }: CheckedFile): SourceInventory[] {
   const actual = current === null ? null : parseRecord(current);
   const result: SourceInventory[] = [];
   function selected(fields: string[]): boolean { return file.stableJsonKeys === undefined || (fields[0] !== undefined && file.stableJsonKeys.includes(fields[0])); }
-  function sources(fields: string[], previousEnvelopeValid: boolean): void {
-    if (!selected(fields)) return;
-    const next = Sources.safeParse(at(expected, fields));
-    if (!next.success) return;
-    const previous = Sources.safeParse(previousEnvelopeValid ? at(actual, fields) : undefined);
-    result.push({ kind: 'application-source', artifact: file.path, field: `/${fields.join('/')}`,
-      status: previous.success ? 'compared' : 'previous-unavailable',
-      changes: previous.success ? changes(new Map(previous.data.map(source => [source.path, source.sha256])), new Map(next.data.map(source => [source.path, source.sha256])))
-        .map(({ identifier, change }) => ({ path: identifier, change })) : [] });
-  }
   function modules(fields: string[], previousEnvelopeValid: boolean): void {
     if (!selected(fields)) return;
     const next = Modules.safeParse(at(expected, fields));
@@ -93,19 +75,6 @@ function origins({ file, current }: CheckedFile): SourceInventory[] {
       status: previous.success ? 'compared' : 'previous-unavailable',
       changes: previous.success ? changes(new Map(previous.data.map(module => [module.name, module.sha256])), new Map(next.data.map(module => [module.name, module.sha256])))
         .map(({ identifier, change }) => ({ name: identifier, change })) : [] });
-  }
-  if (RowBindingPlanSchema.safeParse(expected).success) {
-    sources(['sources'], RowBindingPlanSchema.safeParse(actual).success);
-  } else if (expected.kind === 'closed-partition-fold') {
-    const next = RowBindingPlanSchema.safeParse(at(expected, ['row', 'plan']));
-    if (next.success) sources(['row', 'plan', 'sources'], actual?.kind === expected.kind && RowBindingPlanSchema.safeParse(at(actual, ['row', 'plan'])).success);
-  } else if (expected.generation === 'whole-row-authority') {
-    sources(['rowBinding', 'sources'], actual?.kind === expected.kind && actual?.profile === expected.profile &&
-      actual?.generation === expected.generation && at(actual, ['rowBinding', 'profile']) === 'rust-whole-row-v1');
-  } else if (expected.kind === 'controlled-partition-fold') {
-    sources(['source'], actual?.kind === expected.kind);
-    modules(['control', 'moduleClosure'], actual?.kind === expected.kind);
-    modules(['metadata', 'moduleClosure'], actual?.kind === expected.kind);
   }
   if (expected.kind === 'tlc-finite-completed' || expected.kind === 'tlc-symbolic-completed') {
     modules(['moduleClosure'], actual?.kind === expected.kind && actual.profile === expected.profile);
@@ -126,9 +95,9 @@ export class StaleOutputError extends Error {
   readonly code = 'TLC104';
   constructor(readonly diagnostic: StaleOutputDiagnostic) {
     const first = diagnostic.differences[0];
-    const sourceChanges = diagnostic.sourceInventories.flatMap(origin => origin.kind === 'application-source' ? origin.changes.map(change => change.path) : []);
+    const sourceChanges = diagnostic.sourceInventories.flatMap(origin => origin.changes.map(change => change.name));
     super(`TLC104: ${first ? firstMessage(first) : 'generated output is stale'}.` +
-      (sourceChanges.length ? ` Recorded application sources changed: ${[...new Set(sourceChanges)].sort().join(', ')}.` : '') +
+      (sourceChanges.length ? ` Recorded model modules changed: ${[...new Set(sourceChanges)].sort().join(', ')}.` : '') +
       ` Generated source bytes: ${diagnostic.generatedSources.status}. ${diagnostic.nextAction}`);
     this.name = 'StaleOutputError';
   }

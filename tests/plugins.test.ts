@@ -60,6 +60,33 @@ async function createPackagingFixture(fixture: string) {
   await cp(join(root, 'plugins/package.mjs'), join(fixture, 'plugins/package.mjs'));
 }
 
+test('domain-capable plugin runtimes include their trusted Lean protocol source', async () => {
+  const fixture = await mkdtemp(join(tmpdir(), 'sgd-domain-package-'));
+  try {
+    await createPackagingFixture(fixture);
+    await writeFile(join(fixture, 'dist/domain-proof.js'), 'export {};\n');
+    await mkdir(join(fixture, 'proofs/domain'), { recursive: true });
+    const source = 'import Std\nnamespace DomainPackageFixture\nend DomainPackageFixture\n';
+    await writeFile(join(fixture, 'proofs/domain/DomainProtocol.lean'), source);
+    await packagePlugins(fixture);
+    for (const name of pluginNames) {
+      assert.equal(await readFile(join(fixture, 'plugins', name, 'runtime/proofs/domain/DomainProtocol.lean'), 'utf8'), source);
+    }
+  } finally { await rm(fixture, { recursive: true, force: true }); }
+});
+
+test('packaging refuses a domain runtime without its Lean protocol instead of publishing a broken runtime', async () => {
+  const fixture = await mkdtemp(join(tmpdir(), 'sgd-missing-domain-proof-'));
+  try {
+    await createPackagingFixture(fixture);
+    await writeFile(join(fixture, 'dist/domain-proof.js'), 'export {};\n');
+    await mkdir(join(fixture, 'plugins/codex/runtime'), { recursive: true });
+    await writeFile(join(fixture, 'plugins/codex/runtime/keep'), 'old runtime');
+    await assert.rejects(packagePlugins(fixture), /ENOENT/);
+    assert.equal(await readFile(join(fixture, 'plugins/codex/runtime/keep'), 'utf8'), 'old runtime');
+  } finally { await rm(fixture, { recursive: true, force: true }); }
+});
+
 test('native marketplaces expose only their own plugin package', async () => {
   const codex = JSON.parse(await readFile(join(root, '.agents/plugins/marketplace.json'), 'utf8'));
   const claude = JSON.parse(await readFile(join(root, '.claude-plugin/marketplace.json'), 'utf8'));
