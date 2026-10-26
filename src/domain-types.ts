@@ -18,4 +18,3 @@ export const DomainBindingSchema = z.object({
 }).strict();
 export type DomainOperation = z.infer<typeof DomainOperationSchema>;
 export type DomainBinding = z.infer<typeof DomainBindingSchema>;
-
