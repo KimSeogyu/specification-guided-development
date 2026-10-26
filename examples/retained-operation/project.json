@@ -4,7 +4,9 @@
   "name": "ReportCustody",
   "spec": "ReportCustody.tla",
   "config": "ReportCustody.cfg",
-  "targets": ["typescript", "rust"],
+  "targets": [
+    "typescript"
+  ],
   "binding": {
     "className": "ReportCustody",
     "operation": {

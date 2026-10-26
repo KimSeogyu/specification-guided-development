@@ -38,7 +38,7 @@ export const ProjectSchema = z.object({
   spec: z.string().min(1),
   config: z.string().min(1),
   stateVariable: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
-  targets: z.array(z.enum(['typescript', 'rust'])).min(1),
+  targets: z.array(z.literal('typescript')).min(1),
   parent: z.object({ model: z.string().min(1), state: z.string().min(1) }).strict().optional(),
   binding: BindingSchema,
 }).strict();

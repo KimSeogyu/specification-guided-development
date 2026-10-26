@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { buildProject, compileProject } from '../src/compiler.js';
@@ -55,7 +55,6 @@ test('real TLC build preserves typed IR, complete receipt, Pele view, stale dete
     assert.equal(model.variables.length, 2);
     assert.deepEqual(await loadAutomaton(join(temp, 'automaton.json')), model);
     await access(join(temp, 'typescript/machine.ts'));
-    await access(join(temp, 'rust/src/lib.rs'));
     const receipt = JSON.parse(await readFile(join(temp, 'verification.json'), 'utf8'));
     assert.equal(receipt.kind, 'tlc-finite-completed');
     assert.equal(receipt.profile, 'finite-owned-v1');
@@ -76,7 +75,6 @@ test('real TLC build preserves typed IR, complete receipt, Pele view, stale dete
     await assert.rejects(buildProject({ ...input, check: true }), /TLC104/);
     await buildProject({ ...input, modelOnly: true });
     await assert.rejects(access(join(temp, 'typescript/machine.ts')));
-    await assert.rejects(access(join(temp, 'rust/src/lib.rs')));
     await access(join(temp, 'automaton.json'));
     await buildProject({ ...input, project: resolve('examples/order/project.json') });
     await access(join(temp, 'typescript/checker.mjs'));
@@ -84,9 +82,8 @@ test('real TLC build preserves typed IR, complete receipt, Pele view, stale dete
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
 
-test('actual TLC-to-native TypeScript and Rust owners agree, and a requirement change regenerates their behavior', { skip: !jar, timeout: 180_000 }, async () => {
+test('actual TLC-to-native TypeScript owner follows the graph, and a requirement change regenerates their behavior', { skip: !jar, timeout: 180_000 }, async () => {
   const temp = await mkdtemp(join(tmpdir(), 'sgd-finite-native-'));
-  const target = resolve('.runtime/finite-compiler-tests/target');
   try {
     const models = join(temp, 'model');
     await cp(resolve('examples/approval'), models, { recursive: true });
@@ -104,45 +101,10 @@ for (const event of ['Submit', 'Approve', 'Submit', 'Approve', 'Wait']) {
 }
 process.stdout.write(JSON.stringify(trace));
 `);
-    const consumer = join(temp, 'consumer');
-    await mkdir(join(consumer, 'src'), { recursive: true });
-    const manifest = await readFile(join(out, 'rust/Cargo.toml'), 'utf8');
-    const packageName = /^name = "([^"]+)"$/m.exec(manifest)?.[1];
-    assert.ok(packageName);
-    await writeFile(join(consumer, 'Cargo.toml'), `[package]
-name = "finite-native-consumer"
-version = "0.0.0"
-edition = "2021"
-[workspace]
-[dependencies]
-authority = { package = ${JSON.stringify(packageName)}, path = "../out/rust" }
-serde_json = "=1.0.154"
-`);
-    await writeFile(join(consumer, 'src/main.rs'), `#![forbid(unsafe_code)]
-use authority::{ApprovalMachine, Event};
-fn main() {
-    let mut machine = ApprovalMachine::new();
-    let mut trace = Vec::new();
-    for event in ["Submit", "Approve", "Submit", "Approve", "Wait"] {
-        let before = machine.read();
-        let result = Event::from_model_name(event).map(|action| machine.send(action));
-        let accepted = matches!(result, Some(Ok(_)));
-        trace.push(serde_json::json!({"event": event, "accepted": accepted, "before": before, "after": machine.read()}));
-    }
-    print!("{}", serde_json::to_string(&trace).unwrap());
-}
-`);
     async function nativeTraces(): Promise<{ event: string; accepted: boolean }[]> {
       await execute(process.execPath, [tsc, '-p', join(out, 'typescript/tsconfig.json')], { timeout: 30_000 });
-      const [typescript, rust] = await Promise.all([
-        execute(process.execPath, [jsRunner], { timeout: 15_000 }),
-        execute('cargo', ['run', '--quiet', '--manifest-path', join(consumer, 'Cargo.toml')], {
-          timeout: 120_000, env: { ...process.env, CARGO_TARGET_DIR: target, CARGO_BUILD_JOBS: '2' }, maxBuffer: 4 * 1024 * 1024,
-        }),
-      ]);
+      const typescript = await execute(process.execPath, [jsRunner], { timeout: 15_000 });
       const tsTrace = JSON.parse(typescript.stdout);
-      const rustTrace = JSON.parse(rust.stdout);
-      assert.deepEqual(tsTrace, rustTrace);
       return tsTrace;
     }
     assert.deepEqual((await nativeTraces()).map(step => step.accepted), [false, true, true, false, true]);

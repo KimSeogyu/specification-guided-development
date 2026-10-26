@@ -33,21 +33,18 @@ function cli(command, ...args) {
   return [process.execPath, cliPath, command, ...args];
 }
 
-function sources(root, extension) {
+function sources(root) {
   function walk(directory) {
     return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
       const path = join(directory, entry.name);
-      return entry.isDirectory() ? walk(path) : path.endsWith(extension) ? [path] : [];
+      return entry.isDirectory() ? walk(path) : path.endsWith(".ts") ? [path] : [];
     });
   }
   return walk(join(root, "src")).sort();
 }
 
-function checker(model, language) {
-  const output = join(scratch, `${model}-checks`);
-  return language === "typescript"
-    ? [process.execPath, join(output, "typescript/checker.mjs")]
-    : [join(scratch, "targets", model, "debug/tlc-generated-checker")];
+function checker(model) {
+  return [process.execPath, join(scratch, `${model}-checks`, "typescript/checker.mjs")];
 }
 
 function verify() {
@@ -80,30 +77,21 @@ function verify() {
     run(`${model}: inspect`, cli("inspect", "--ir", join(scratch, `${model}-model/automaton.json`)));
     run(`${model}: compile`, cli("compile", "--project", join(project, `models/${model}.json`),
       "--dot", join(scratch, `${model}-model/model.dot`), "--out", output));
-    run(`${model}: Rust checker build`, ["cargo", "build", "--manifest-path",
-      join(output, "rust/Cargo.toml"), "--target-dir", join(scratch, "targets", model)]);
-    for (const [language, extension] of [["typescript", ".ts"], ["rust", ".rs"]]) {
-      run(`${model}: ${language} accepted`, [...checker(model, language), "--root", project,
-        ...sources(project, extension)], 0, [], true);
-    }
+    run(`${model}: TypeScript accepted`, [...checker(model), "--root", project,
+      ...sources(project)], 0, [], true);
   }
 
   const forbidden = join(scratch, "forbidden-import");
   cpSync(project, forbidden, { recursive: true });
-  const importCases = {
-    ts: '\nimport { Storage } from "./storage.js";\nexport const directStorage = new Storage();\n',
-    rs: "\nuse crate::storage::Storage;\npub fn direct_storage() -> Storage { Storage::default() }\n",
-  };
-  for (const [language, extension] of [["typescript", ".ts"], ["rust", ".rs"]]) {
-    run(`${language}: forbidden transition`, [...checker("ingestion", language), "--root", project,
-      join(project, `cases/forbidden-transition${extension}`)], 1, ["TLC001", "Received", "Persist", "Stored"]);
-    run(`${language}: nonliteral transition`, [...checker("ingestion", language), "--root", project,
-      join(project, `cases/nonliteral-transition${extension}`)], 1, ["TLC002"]);
-    const handler = join(forbidden, `src/handler${extension}`);
-    writeFileSync(handler, readFileSync(handler, "utf8") + importCases[extension.slice(1)]);
-    run(`${language}: forbidden import`, [...checker("architecture", language), "--root", forbidden,
-      ...sources(forbidden, extension)], 1, ["TLC003", "Handler", "Storage"]);
-  }
+  run("TypeScript: forbidden transition", [...checker("ingestion"), "--root", project,
+    join(project, "cases/forbidden-transition.ts")], 1, ["TLC001", "Received", "Persist", "Stored"]);
+  run("TypeScript: nonliteral transition", [...checker("ingestion"), "--root", project,
+    join(project, "cases/nonliteral-transition.ts")], 1, ["TLC002"]);
+  const handler = join(forbidden, "src/handler.ts");
+  writeFileSync(handler, readFileSync(handler, "utf8") +
+    '\nimport { Storage } from "./storage.js";\nexport const directStorage = new Storage();\n');
+  run("TypeScript: forbidden import", [...checker("architecture"), "--root", forbidden,
+    ...sources(forbidden)], 1, ["TLC003", "Handler", "Storage"]);
   for (const [model, invariant] of [["ingestion", "StoredRequiresValidation"], ["architecture", "NoHandlerStorageDependency"]]) {
     run(`${model}: bad model`, cli("model", "--project", join(project, `models/${model}-bad.json`),
       "--jar", jar, "--out", join(scratch, `${model}-bad`)), 2, ["TLC102", invariant, "violated"]);
@@ -113,8 +101,6 @@ function verify() {
 
   run("TypeScript: native build", [process.execPath, join(repo, "node_modules/typescript/bin/tsc"), "--project", join(project, "tsconfig.json")]);
   run("TypeScript: native tests", [process.execPath, join(project, "native-typescript/pipeline.test.js")], 0, ["runtime tests passed"]);
-  run("Rust: native tests", ["cargo", "test", "--manifest-path", join(project, "Cargo.toml"),
-    "--target-dir", join(scratch, "targets/application")], 0, ["2 passed; 0 failed"]);
   run("Pele: combined models", cli("visualize", "--ir", join(scratch, "architecture-model/automaton.json"),
     "--ir", join(scratch, "ingestion-model/automaton.json"), "--out", join(scratch, "pele")));
   console.log(`Results: ${join(scratch, "results.json")}\nPele: ${join(scratch, "pele/index.html")}`);

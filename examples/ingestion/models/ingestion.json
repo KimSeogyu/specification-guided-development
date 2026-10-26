@@ -4,7 +4,15 @@
   "spec": "Ingestion.tla",
   "config": "Ingestion.cfg",
   "stateVariable": "state",
-  "targets": ["typescript", "rust"],
-  "parent": { "model": "architecture", "state": "Pipeline" },
-  "binding": { "kind": "transition", "function": "transition" }
+  "targets": [
+    "typescript"
+  ],
+  "parent": {
+    "model": "architecture",
+    "state": "Pipeline"
+  },
+  "binding": {
+    "kind": "transition",
+    "function": "transition"
+  }
 }

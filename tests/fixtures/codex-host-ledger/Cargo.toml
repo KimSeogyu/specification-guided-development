@@ -1,7 +1,0 @@
-[package]
-name = "ledger-trial"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-sgd_fact_authority = { package = "sgd-symbolic-ledgerrow-52cb10d32d58", path = "generated/rust" }

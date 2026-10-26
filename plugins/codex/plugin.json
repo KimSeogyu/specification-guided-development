@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "specification-guided-development",
-  "version": "0.2.0-alpha.4",
-  "description": "Model architecture and behavior in TLA+, then compile TLC graphs into source checks.",
+  "version": "0.3.0-alpha.1",
+  "description": "Generate TypeScript domain code and source checks from TLA+ models with checked ownership and port contracts.",
   "author": {
     "name": "KimSeogyu"
   },

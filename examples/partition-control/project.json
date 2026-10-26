@@ -1,9 +1,0 @@
-{
-  "version": 2,
-  "profile": "finite-owned",
-  "name": "PartitionMergeControl",
-  "spec": "model.tla",
-  "config": "model.cfg",
-  "targets": ["typescript", "rust"],
-  "binding": { "className": "PartitionMergeMachine" }
-}

@@ -4,7 +4,6 @@ import { z } from 'zod';
 import { sha256 } from './dot.js';
 import { compareRequiredSymbolicProperties } from './contract-properties.js';
 import { lowerSymbolicModel } from './symbolic-lower.js';
-import { RowProjectSchema } from './row-binding-types.js';
 import type { SanyModule } from './sany-xml.js';
 import { verifySymbolicErasure } from './symbolic-refinement.js';
 import { inspectSymbolicOrbits } from './symbolic-semantics.js';
@@ -12,7 +11,7 @@ import { runSymbolicTlc } from './symbolic-tlc.js';
 import { ProductSymbolicProjectSchema, SymbolicProjectSchema, symbolicInputs } from './symbolic-types.js';
 import { importSymbolicDot, verifySymbolicWitness } from './symbolic-witness.js';
 
-const Project = z.discriminatedUnion('version', [SymbolicProjectSchema, ProductSymbolicProjectSchema, RowProjectSchema]);
+const Project = z.discriminatedUnion('version', [SymbolicProjectSchema, ProductSymbolicProjectSchema]);
 type ProjectInput = { project: string; jar: string };
 type SourceLocation = { path: string; physicalPath: string; device: bigint; inode: bigint };
 type SourceInputs = {
@@ -104,7 +103,7 @@ async function collectInputs(input: ProjectInput) {
   const projectInput = await original(project, true);
   const projectBytes = projectInput.bytes;
   const parsed = Project.safeParse(JSON.parse(projectBytes.toString('utf8')));
-  if (!parsed.success) throw new Error('TLC206: controlled symbolic capture requires a v3, v4, or v5 source project');
+  if (!parsed.success) throw new Error('TLC206: controlled symbolic capture requires a v3 or v4 source project');
   const configuration = parsed.data;
   const spec = resolve(dirname(project), configuration.spec);
   const config = resolve(dirname(project), configuration.config);
@@ -192,7 +191,6 @@ function summary(input: { configuration: z.infer<typeof Project>; source: Source
 }
 
 /** Only a controlled source run, orbit check, and original-action oracle can mint this token.
- * A v5 capture attests its symbolic model; it does not establish the native row binding.
  */
 export async function captureSymbolicProject(input: ProjectInput): Promise<CheckedSymbolicCapture> {
   const collected = await runProject(input);

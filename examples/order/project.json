@@ -4,7 +4,15 @@
   "spec": "Order.tla",
   "config": "Order.cfg",
   "stateVariable": "state",
-  "targets": ["typescript", "rust"],
-  "parent": { "model": "Architecture", "state": "Service" },
-  "binding": { "kind": "transition", "function": "transition" }
+  "targets": [
+    "typescript"
+  ],
+  "parent": {
+    "model": "Architecture",
+    "state": "Service"
+  },
+  "binding": {
+    "kind": "transition",
+    "function": "transition"
+  }
 }

@@ -101,7 +101,7 @@ New targets and reachable effects require independently discovered source closur
 
 Exercise these cases through the eventual public command and actual controlled model builds.
 Pure schema tests cannot establish the workflow.
-Retain TypeScript 7 and Rust consumer checks for any changed executable adapter.
+Retain TypeScript 7 consumer checks for any changed executable adapter.
 Native plugin trials must then exercise model authoring, generation, implementation, inspection, and requirement maintenance under this root.
 
 ## Current implementation boundary

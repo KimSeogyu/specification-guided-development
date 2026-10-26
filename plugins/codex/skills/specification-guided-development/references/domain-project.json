@@ -1,0 +1,24 @@
+{
+  "version": 2,
+  "profile": "finite-owned",
+  "name": "Approval",
+  "spec": "Approval.tla",
+  "config": "Approval.cfg",
+  "targets": [
+    "typescript"
+  ],
+  "binding": {
+    "className": "Approval",
+    "domain": {
+      "operations": [
+        {
+          "name": "publish",
+          "port": "publisher",
+          "start": "StartPublish",
+          "success": "PublishSucceeded",
+          "failure": "PublishFailed"
+        }
+      ]
+    }
+  }
+}

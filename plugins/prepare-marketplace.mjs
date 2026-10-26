@@ -183,8 +183,6 @@ async function validate(host, root, entries) {
     if (!keys(compatibilityMcp?.mcpServers, ['sgd']) || !keys(compatibilityServer, ['command', 'args', 'cwd']) || compatibilityServer.command !== 'node' || !Array.isArray(compatibilityServer.args) || compatibilityServer.args.length !== 2 || compatibilityServer.args[0] !== 'scripts/run.mjs' || compatibilityServer.args[1] !== 'mcp' || compatibilityServer.cwd !== '.') fail('The Codex compatibility .mcp.json must start scripts/run.mjs from the plugin root without unsupported fields.');
   }
   for (const path of ['scripts/run.mjs', 'scripts/prepare-marketplace.mjs', 'runtime/dist/cli.js', 'runtime/dist/mcp.js', 'skills/specification-guided-development/SKILL.md']) file(entries, path);
-  const native = file(entries, `runtime/bin/sgd-rust-bindings${process.platform === 'win32' ? '.exe' : ''}`);
-  if (process.platform !== 'win32' && !(native.mode & 0o111)) fail('The packaged Rust helper must be executable. Extract the archive preserving file permissions.');
   if (entries.get('runtime/node_modules')?.kind !== 'directory') fail('The complete prepared plugin must contain runtime/node_modules.');
   if (!object(runtime.dependencies)) fail('The runtime package must declare its production dependencies.');
   for (const name of Object.keys(runtime.dependencies)) {

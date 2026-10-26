@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
@@ -116,7 +116,7 @@ test('real v4 build retains all domains and provenance in source, witness, oracl
     await assert.rejects(buildProject({ ...input, check: true }), /TLC104: stale receipt field inputProfile/);
     await buildProject(input);
     await buildProject({ ...input, modelOnly: true });
-    for (const file of [...inventory.files.filter(path => path.startsWith('typescript/') || path.startsWith('rust/')), 'input-verification.json', 'input-oracle.dot', 'orbit-proof.json']) {
+    for (const file of [...inventory.files.filter(path => path.startsWith('typescript/')), 'input-verification.json', 'input-oracle.dot', 'orbit-proof.json']) {
       await assert.rejects(access(join(out, file)), { code: 'ENOENT' });
     }
     assert.equal(z.record(z.string(), z.unknown()).parse(JSON.parse(await readFile(join(out, 'verification.json'), 'utf8'))).generation, 'model-only');
@@ -131,7 +131,6 @@ test('real v4 build retains all domains and provenance in source, witness, oracl
 test('real v4 source drives matching native payload and provenance traces through repeated rejected inputs', { skip: !jar, timeout: 180_000 }, async () => {
   assert.ok(jar);
   const temp = await mkdtemp(join(tmpdir(), 'sgd-product-native-'));
-  const target = resolve('.runtime/product-compiler-tests/target');
   try {
     const out = join(temp, 'out');
     await buildProject({ project: join(example, 'project.json'), jar, out });
@@ -155,38 +154,8 @@ const traces = JSON.parse(process.argv[2]).map(inputs => {
 });
 process.stdout.write(JSON.stringify(traces));
 `);
-    const consumer = join(temp, 'consumer');
-    await mkdir(join(consumer, 'src'), { recursive: true });
-    const generatedManifest = await readFile(join(out, 'rust/Cargo.toml'), 'utf8');
-    const packageName = /^name = "([^"]+)"$/m.exec(generatedManifest)?.[1];
-    assert.ok(packageName);
-    await writeFile(join(consumer, 'Cargo.toml'), `[package]\nname = "product-integration-consumer"\nversion = "0.0.0"\nedition = "2021"\n[workspace]\n[dependencies]\nauthority = { package = ${JSON.stringify(packageName)}, path = "../out/rust" }\nserde_json = "=1.0.154"\n`);
-    await writeFile(join(consumer, 'src/main.rs'), `#![forbid(unsafe_code)]
-use authority::FactEnvelopeMachine;
-use std::collections::BTreeMap;
-fn main() {
-    let sequences: Vec<Vec<BTreeMap<String, String>>> = serde_json::from_str(&std::env::args().nth(1).unwrap()).unwrap();
-    let traces: Vec<_> = sequences.iter().map(|inputs| {
-        let mut machine = FactEnvelopeMachine::new();
-        inputs.iter().map(|input| {
-            let before = machine.read();
-            let result = machine.send(&input["v"], &input["provenance"]).expect("fact envelope input is enabled");
-            assert_eq!(result.before, before);
-            assert_eq!(result.after, machine.read());
-            serde_json::json!({"input": input, "action": result.action, "before": result.before, "after": result.after, "updates": result.updates})
-        }).collect::<Vec<_>>()
-    }).collect();
-    print!("{}", serde_json::to_string(&traces).unwrap());
-}
-`);
-    const cargoOptions = { timeout: 120_000, env: { ...process.env, CARGO_TARGET_DIR: target, CARGO_BUILD_JOBS: '2' }, maxBuffer: 4 * 1024 * 1024 };
-    await execute('cargo', ['fetch', '--manifest-path', join(consumer, 'Cargo.toml')], cargoOptions);
-    const [typescript, rust] = await Promise.all([
-      execute(process.execPath, [runner, JSON.stringify(sequences)], { timeout: 15_000 }),
-      execute('cargo', ['run', '--offline', '--quiet', '--manifest-path', join(consumer, 'Cargo.toml'), '--', JSON.stringify(sequences)], cargoOptions),
-    ]);
+    const typescript = await execute(process.execPath, [runner, JSON.stringify(sequences)], { timeout: 15_000 });
     const tsTraces = Traces.parse(JSON.parse(typescript.stdout));
-    assert.deepEqual(tsTraces, Traces.parse(JSON.parse(rust.stdout)), 'both native owners must agree in complete values and named input origins');
     assert.deepEqual(tsTraces, sequences.map(inputs => interpretedTrace(model, inputs)));
     const trace = tsTraces[0];
     assert.ok(trace);

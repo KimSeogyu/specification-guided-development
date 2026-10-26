@@ -40,7 +40,7 @@ test('real root comparison rejects a baseline selector that has no declared obli
   const data = await fixture();
   try {
     await writeFile(join(data.baseline, 'bindings.json'), JSON.stringify({ version: 1, bindings: {
-      Undeclared: { language: 'rust', file: 'src/store.rs', symbol: 'Store' },
+      Undeclared: { language: 'typescript', file: 'src/store.ts', symbol: 'Store' },
     } }));
     await assert.rejects(compareContractProjects({ ...data.args, jar }), error => error instanceof ContractComparisonError &&
       error.source === 'baseline' && error.findings.some(finding => finding.kind === 'extra-binding' && finding.id === 'Undeclared'));
@@ -57,7 +57,7 @@ test('real root comparison refuses required native authority even when both leaf
     await assert.rejects(compareContractProjects({ ...data.args, jar }), error => error instanceof ContractComparisonError &&
       error.findings.some(finding => finding.kind === 'missing-binding' && finding.id === 'Writer'));
     await writeFile(join(data.candidate, 'bindings.json'), JSON.stringify({ version: 1, bindings: {
-      Writer: { language: 'rust', file: 'src/store.rs', symbol: 'Store' },
+      Writer: { language: 'typescript', file: 'src/store.ts', symbol: 'Store' },
     } }));
     await assert.rejects(compareContractProjects({ ...data.args, jar }), error => error instanceof ContractComparisonError &&
       error.findings.some(finding => finding.kind === 'unsupported' && finding.id === 'Writer'));

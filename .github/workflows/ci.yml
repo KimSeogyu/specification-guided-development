@@ -15,16 +15,20 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
       - run: npm ci
       - run: node scripts/fetch-tlc.mjs
+      - name: Install pinned Lean for domain proof integration
+        shell: bash
+        run: |
+          curl --fail --location --retry 3 https://github.com/leanprover/lean4/releases/download/v4.35.0/lean-4.35.0-linux.tar.zst -o "$RUNNER_TEMP/lean.tar.zst"
+          echo "7289597a44543246c9227b8cae501767e095ce17f6d448b95fc4a8dc97268f6d  $RUNNER_TEMP/lean.tar.zst" | sha256sum --check
+          tar --zstd -xf "$RUNNER_TEMP/lean.tar.zst" -C "$RUNNER_TEMP"
+          echo "SGD_LEAN_BINARY=$RUNNER_TEMP/lean-4.35.0-linux/bin/lean" >> "$GITHUB_ENV"
       - run: npm run check
         env:
           TLA2TOOLS_JAR: .runtime/tla2tools.jar
       - run: npm run build
+      - run: npm run proofs:check
       - run: npm run verify:ingestion
-      - run: npm run verify:partition
       - run: npm run plugins:package
       - run: npm run plugins:verify

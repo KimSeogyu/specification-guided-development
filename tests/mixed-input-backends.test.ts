@@ -4,7 +4,6 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
-import { generateSymbolicRust } from '../src/backends/symbolic-rust.js';
 import { generateSymbolicTypeScript } from '../src/backends/symbolic-typescript.js';
 import type { FiniteValue } from '../src/finite-types.js';
 import { stepSymbolic, type SymbolicState } from '../src/symbolic-semantics.js';
@@ -70,61 +69,17 @@ function scalarProtocol(): SymbolicModelV3 {
 
 type Tuple = (string | FiniteValue)[];
 type Sequence = Tuple[];
-type Native = { root: string; typescript: string; rust: string; consumer: string; target: string };
+type Native = { root: string; typescript: string };
 async function put(path: string, content: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true }); await writeFile(path, content);
-}
-function finiteRustChoice(index: number, choice = 0): string { return `${authorityName}Input${index}::Choice${choice}`; }
-function firstArguments(model: SymbolicModelV3): string[] {
-  return model.inputs.map((item, index) => item.kind === 'opaque' ? '"identity"' : finiteRustChoice(index));
-}
-async function cargo(native: Native, args: string[], directory = native.consumer) {
-  return execute('cargo', [...args, '--offline', '--quiet', '--manifest-path', join(directory, 'Cargo.toml'), '--target-dir', native.target], { timeout: 180_000, maxBuffer: 8 * 1024 * 1024 });
 }
 async function withNatives(model: SymbolicModelV3, work: (native: Native) => Promise<void>): Promise<void> {
   await mkdir(runtime, { recursive: true });
   const root = await mkdtemp(join(runtime, 'suite-'));
-  const native = { root, typescript: join(root, 'typescript'), rust: join(root, 'rust'), consumer: join(root, 'consumer'), target: join(root, 'target') };
+  const native = { root, typescript: join(root, 'typescript') };
   try {
-    const rust = generateSymbolicRust({ model, className: authorityName });
     for (const file of generateSymbolicTypeScript({ model, className: authorityName })) await put(join(native.typescript, file.path), file.content);
-    for (const file of rust) await put(join(native.rust, file.path), file.content);
     await execute(process.execPath, [compiler, '-p', join(native.typescript, 'tsconfig.json')], { timeout: 30_000 });
-    const manifest = rust.find(file => file.path === 'Cargo.toml'); assert.ok(manifest);
-    const packageName = /^name = "([a-z0-9-]+)"$/m.exec(manifest.content)?.[1]; assert.ok(packageName);
-    await put(join(native.consumer, 'Cargo.toml'), `[package]\nname = "mixed-consumer"\nversion = "0.1.0"\nedition = "2021"\n\n[workspace]\n\n[dependencies]\nauthority = { package = "${packageName}", path = "../rust" }\nserde_json = "=1.0.154"\n`);
-    const enumImports = model.inputs.flatMap((item, index) => item.kind === 'finite' ? [`${authorityName}Input${index}`] : []);
-    await put(join(native.consumer, 'choices.json'), JSON.stringify(model.inputs.map(item => item.kind === 'finite' ? item.values : [])));
-    const argumentsFor = (tuple: string) => model.inputs.map((item, index) => item.kind === 'opaque' ? `${tuple}[${index}].as_str().expect("opaque string")`
-      : `match choices[${index}].iter().position(|value| value == &${tuple}[${index}]) { ${item.values.map((_value, choice) => `Some(${choice}) => ${finiteRustChoice(index, choice)}`).join(', ')}, _ => panic!("invalid test fixture") }`).join(', ');
-    await put(join(native.consumer, 'src/main.rs'), `#![forbid(unsafe_code)]
-use authority::{MixedAuthority, ${enumImports.join(', ')}};
-fn main() {
-    let request = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/request.json")).unwrap();
-    let sequences: Vec<Vec<Vec<serde_json::Value>>> = serde_json::from_str(&request).unwrap();
-    let choices = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/choices.json")).unwrap();
-    let choices: Vec<Vec<serde_json::Value>> = serde_json::from_str(&choices).unwrap();
-    let mut traces = Vec::new();
-    for sequence in sequences {
-        let mut owner = MixedAuthority::new();
-        let initial = owner.read();
-        let mut detached = initial.clone(); detached.values.clear(); assert_eq!(owner.read(), initial);
-        { let pending = owner.prepare(${firstArguments(model).join(', ')}); drop(pending); }
-        assert_eq!(owner.read(), initial);
-        let mut trace = Vec::new();
-        for tuple in sequence {
-            let (ok, mut receipt) = match owner.send(${argumentsFor('tuple')}) {
-                Ok(value) => (true, serde_json::to_value(value).unwrap()),
-                Err(value) => (false, serde_json::to_value(value).unwrap()),
-            };
-            receipt.as_object_mut().unwrap().insert("ok".into(), serde_json::json!(ok)); trace.push(receipt);
-        }
-        traces.push(trace);
-    }
-    println!("{}", serde_json::to_string(&traces).unwrap());
-}
-`);
-    await execute('cargo', ['fetch', '--quiet', '--manifest-path', join(native.consumer, 'Cargo.toml')], { timeout: 180_000 });
     await work(native);
   } finally { await rm(root, { recursive: true, force: true }); }
 }
@@ -142,17 +97,14 @@ function expected(model: SymbolicModelV3, sequence: Sequence): unknown[] {
   });
 }
 async function compareTraces(model: SymbolicModelV3, native: Native, sequences: Sequence[]): Promise<void> {
-  await put(join(native.consumer, 'request.json'), JSON.stringify(sequences));
   await put(join(native.typescript, 'traces.mjs'), `import { createMixedAuthority } from './dist/machine.js';
 const sequences = ${JSON.stringify(sequences)};
 const traces = sequences.map(sequence => { const owner=createMixedAuthority(); return sequence.map(tuple => owner.send(...tuple.map(value => typeof value==='string' ? value : value.kind==='integer' ? BigInt(value.value) : value.value))); });
 process.stdout.write(JSON.stringify(traces));\n`);
   const ts = await execute(process.execPath, [join(native.typescript, 'traces.mjs')], { timeout: 20_000, maxBuffer: 8 * 1024 * 1024 });
-  const rs = await cargo(native, ['run', '--bin', 'mixed-consumer']);
   const oracle = sequences.map(sequence => expected(model, sequence));
-  assert.deepEqual(JSON.parse(ts.stdout), oracle); assert.deepEqual(JSON.parse(rs.stdout), oracle);
-  await cargo(native, ['test'], native.rust);
-  await execute('cargo', ['clippy', '--offline', '--quiet', '--all-targets', '--manifest-path', join(native.rust, 'Cargo.toml'), '--target-dir', native.target, '--', '-D', 'warnings'], { timeout: 180_000, maxBuffer: 8 * 1024 * 1024 });
+  assert.deepEqual(JSON.parse(ts.stdout), oracle);
+
 }
 function allTuples(model: SymbolicModelV3): Tuple[] {
   let tuples: Tuple[] = [[]];
@@ -162,15 +114,7 @@ function allTuples(model: SymbolicModelV3): Tuple[] {
   }
   return tuples;
 }
-async function rejectRust(native: Native, name: string, source: string, code: string): Promise<void> {
-  await put(join(native.consumer, 'src/bin', `${name}.rs`), `#![forbid(unsafe_code)]\nuse authority::*;\nfn main() { ${source} }\n`);
-  await assert.rejects(cargo(native, ['check', '--bin', name]), error => {
-    if (!(error instanceof Error) || !('stderr' in error) || typeof error.stderr !== 'string') return false;
-    assert.match(error.stderr, new RegExp(`error\\[${code}\\]`)); assert.match(error.stderr, new RegExp(`src/bin/${name}\\.rs`)); return true;
-  });
-}
-
-test('mixed finite string choices preserve tagged identities, complete updates, Unicode and old-state copies in both native owners', async () => {
+test('mixed finite string choices preserve tagged identities, complete updates, Unicode and old-state copies in the TypeScript owner', async () => {
   const model = stringProtocol();
   await withNatives(model, async native => {
     const tuples = allTuples(model);
@@ -178,9 +122,6 @@ test('mixed finite string choices preserve tagged identities, complete updates, 
     await compareTraces(model, native, tuples.map(tuple => [tuple, ['first', text('capture'), 'first'], ['second', text('capture'), 'second'], ['third', swap, 'third']]));
     const source = await readFile(join(native.typescript, 'machine.ts'), 'utf8');
     assert.ok(source.includes(`input_1: ${commands.map(value => { assert.equal(value.kind, 'string'); return JSON.stringify(value.value); }).join(' | ')}`));
-    const rustReadme = await readFile(join(native.rust, 'README.md'), 'utf8');
-    const mappings = [...rustReadme.matchAll(/`Choice([0-9]+)` = `([^`]+)`/g)];
-    assert.deepEqual(mappings.map((mapping, index) => { assert.equal(mapping[1], String(index)); return JSON.parse(mapping[2] ?? 'null'); }), commands);
     await put(join(native.typescript, 'boundary.mjs'), `import assert from 'node:assert/strict';
 import {createMixedAuthority,isMixedAuthority} from './dist/machine.js';
 const owner=createMixedAuthority(); const saved=owner.read();
@@ -207,17 +148,10 @@ createMixedAuthority('raw');
       if (!(error instanceof Error) || !('stdout' in error) || typeof error.stdout !== 'string') return false;
       assert.match(error.stdout, /TS2345/); assert.match(error.stdout, /TS2339/); assert.match(error.stdout, /TS2540/); assert.match(error.stdout, /TS2554/); return true;
     });
-    const args = firstArguments(model).join(', ');
-    await rejectRust(native, 'raw_string', `let mut o=MixedAuthority::new();o.send("A","capture","r").unwrap();`, 'E0308');
-    await rejectRust(native, 'forged_choice', `let mut o=MixedAuthority::new();o.send("A",MixedAuthorityInput1::Choice99,"r").unwrap();`, 'E0599');
-    await rejectRust(native, 'forged_owner', `let _o=MixedAuthority { values: std::collections::BTreeMap::new(), revision: 0 };`, 'E0451');
-    await rejectRust(native, 'clone_owner', `let o=MixedAuthority::new();let _copy=o.clone();`, 'E0599');
-    await rejectRust(native, 'replay', `let mut o=MixedAuthority::new();let token=o.prepare(${args}).unwrap();token.commit();token.commit();`, 'E0382');
-    await rejectRust(native, 'overlap', `let mut o=MixedAuthority::new();let token=o.prepare(${args}).unwrap();let second=o.prepare(${args});drop(second);token.commit();`, 'E0499');
   });
 });
 
-test('mixed bigint and Boolean choices map every finite variant exactly and reject cross-input enum types', async () => {
+test('mixed bigint and Boolean choices map every finite variant exactly and reject invalid TypeScript inputs', async () => {
   const model = scalarProtocol();
   await withNatives(model, async native => {
     const tuples = allTuples(model);
@@ -229,8 +163,6 @@ test('mixed bigint and Boolean choices map every finite variant exactly and reje
 for(const tuple of [['A',0,true],['A','0',true],['A',1n,true],['A',0n,1],['A',0n,'true'],['A',Object(0n),true],['A',0n,new Boolean(true)]]){assert.equal(o.send(...tuple).reason,'invalid-input');assert.deepEqual(o.read(),before);}
 `);
     await execute(process.execPath, [join(native.typescript, 'boundary.mjs')], { timeout: 20_000 });
-    await rejectRust(native, 'wrong_enum', `let mut o=MixedAuthority::new();o.send("A",MixedAuthorityInput1::Choice0,MixedAuthorityInput1::Choice0).unwrap();`, 'E0308');
-    await rejectRust(native, 'raw_integer', `let mut o=MixedAuthority::new();o.send("A",0,MixedAuthorityInput2::Choice0).unwrap();`, 'E0308');
   });
 });
 

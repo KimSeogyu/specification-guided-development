@@ -17,7 +17,7 @@ const dot = `strict digraph DiskGraph { subgraph cluster_graph {
 2 -> 2 [label="Idle"];
 {rank=same;1;}
 }}`.replaceAll('\\"', '\\"');
-const project = ProjectSchema.parse({version:1,name:'Example',spec:'Example.tla',config:'Example.cfg',stateVariable:'state',targets:['typescript','rust'],binding:{kind:'transition',function:'transition'}});
+const project = ProjectSchema.parse({version:1,name:'Example',spec:'Example.tla',config:'Example.cfg',stateVariable:'state',targets:['typescript'],binding:{kind:'transition',function:'transition'}});
 
 test('imports nested real TLC shape and preserves repeated source-target action labels', () => {
   const input = dot.replace('1 -> 2 [label="Finish"];', '1 -> 2 [label="Finish"];1 -> 2 [label="Other"];');
@@ -42,7 +42,7 @@ test('generation is deterministic and contains actual language-specific source',
   const a=compile({dot,project});const b=compile({dot,project});
   assert.deepEqual(a,b);
   assert.ok(a.files.some(file=>file.path==='typescript/checker.mjs'));
-  assert.ok(a.files.some(file=>file.path==='rust/src/main.rs'));
+  assert.ok(a.files.every(file => !file.path.startsWith('rust/')));
 });
 
 test('imported DOT remains unverified and stale generation fails', async () => {
@@ -69,11 +69,7 @@ test('managed outputs remove obsolete checkers and reject unmanaged output reuse
     const projectPath=join(temp,'project.json');const graphPath=join(temp,'model.dot');const out=join(temp,'out');
     await writeFile(projectPath,JSON.stringify(project));await writeFile(graphPath,dot);
     await compileProject({project:projectPath,dot:graphPath,out});
-    await access(join(out,'rust/src/main.rs'));
-    await writeFile(projectPath,JSON.stringify({...project,targets:['typescript']}));
-    await assert.rejects(compileProject({project:projectPath,dot:graphPath,out,check:true}),/TLC104/);
-    await compileProject({project:projectPath,dot:graphPath,out});
-    await assert.rejects(access(join(out,'rust/src/main.rs')));
+    await access(join(out,'typescript/checker.mjs'));
     await writeGenerated({out,files:[{path:'automaton.json',content:'new-model'}]});
     await assert.rejects(access(join(out,'typescript/checker.mjs')));
     const unmanaged=join(temp,'unmanaged');
@@ -140,7 +136,7 @@ test('Pele renders architecture and behavior with a structural containment edge'
 });
 
 const jar=process.env.TLA2TOOLS_JAR;
-test('real TLC completes, drives both backend outputs, and supports a deterministic check', {skip:!jar}, async () => {
+test('real TLC completes, drives TypeScript output, and supports a deterministic check', {skip:!jar}, async () => {
   assert.ok(jar);
   const temp=await mkdtemp(join(tmpdir(),'sgd-e2e-'));
   try {

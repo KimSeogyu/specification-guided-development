@@ -4,8 +4,6 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
-import { z } from 'zod';
-import { generateSymbolicRust } from '../src/backends/symbolic-rust.js';
 import { generateSymbolicTypeScript } from '../src/backends/symbolic-typescript.js';
 import type { FiniteValue } from '../src/finite-types.js';
 import { stepSymbolic, type SymbolicState } from '../src/symbolic-semantics.js';
@@ -13,7 +11,6 @@ import { symbolicInputs, symbolicModel, type SymbolicExpression, type SymbolicGu
 
 const execute = promisify(execFile);
 const runtime = resolve('.runtime/product-input-backends-tests');
-const target = join(runtime, 'target');
 const compiler = resolve('node_modules/typescript/bin/tsc');
 const state = (variable: string): SymbolicExpression => ({ kind: 'state', variable });
 const scalar = (value: string): SymbolicExpression => ({ kind: 'literal', value: { kind: 'string', value } });
@@ -55,17 +52,11 @@ function tripleModel(): SymbolicModel {
 }
 
 type Sequence = string[][];
-type Native = { typescript: string; rust: string; consumer: string };
+type Native = { typescript: string };
 type Snapshot = { model: string; modelRevision: string; revision: string; values: SymbolicState };
 type TraceEntry =
   | { ok: true; action: string; before: Snapshot; after: Snapshot; updates: Readonly<Record<string, SymbolicExpression>> }
   | { ok: false; reason: string; state: Snapshot };
-const CompilerEvent = z.object({ reason: z.string() }).passthrough();
-const ErrorDiagnostic = z.object({ reason: z.literal('compiler-message'), message: z.object({
-  level: z.string(), code: z.object({ code: z.string() }).passthrough().nullable(),
-  spans: z.array(z.object({ file_name: z.string(), is_primary: z.boolean(), line_start: z.number() }).passthrough()),
-}).passthrough() }).passthrough();
-
 async function put(path: string, content: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true }); await writeFile(path, content);
 }
@@ -74,52 +65,10 @@ async function withNatives(model: SymbolicModel, work: (native: Native) => Promi
   await mkdir(runtime, { recursive: true });
   const root = await mkdtemp(join(runtime, 'suite-'));
   const typescript = join(root, 'typescript');
-  const rust = join(root, 'rust');
-  const consumer = join(root, 'consumer');
-  const parameters = symbolicInputs(model);
   try {
     for (const file of generateSymbolicTypeScript({ model, className: 'EnvelopeAuthority' })) await put(join(typescript, file.path), file.content);
-    for (const file of generateSymbolicRust({ model, className: 'EnvelopeAuthority' })) await put(join(rust, file.path), file.content);
     await execute(process.execPath, [compiler, '-p', join(typescript, 'tsconfig.json')], { timeout: 30_000 });
-    const manifest = await readFile(join(rust, 'Cargo.toml'), 'utf8');
-    const packageName = /^name = "([a-z0-9-]+)"$/m.exec(manifest)?.[1];
-    assert.ok(packageName);
-    await put(join(consumer, 'Cargo.toml'), `[package]\nname = "product-consumer"\nversion = "0.1.0"\nedition = "2021"\n\n[workspace]\n\n[dependencies]\nauthority = { package = "${packageName}", path = "../rust" }\nserde_json = "=1.0.154"\n`);
-    await put(join(consumer, 'src/main.rs'), `#![forbid(unsafe_code)]
-use authority::EnvelopeAuthority;
-fn main() {
-    let request = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/request.json")).unwrap();
-    let sequences: Vec<Vec<Vec<String>>> = serde_json::from_str(&request).unwrap();
-    let mut traces = Vec::new();
-    for sequence in sequences {
-        let mut owner = EnvelopeAuthority::new();
-        let original = owner.read();
-        let mut detached = original.clone();
-        detached.values.clear();
-        detached.revision = "forged".into();
-        assert_eq!(owner.read(), original);
-        let mut trace = Vec::new();
-        for mut input in sequence {
-            assert_eq!(input.len(), ${parameters.length});
-            let (ok, mut receipt) = match owner.send(${parameters.map((_parameter, index) => `&input[${index}]`).join(', ')}) {
-                Ok(value) => (true, serde_json::to_value(value).unwrap()),
-                Err(error) => (false, serde_json::to_value(error).unwrap()),
-            };
-            receipt.as_object_mut().unwrap().insert("ok".into(), serde_json::json!(ok));
-            trace.push(receipt);
-            let stable = owner.read();
-            for value in &mut input { value.clear(); }
-            let mut detached = owner.read();
-            detached.values.clear();
-            assert_eq!(owner.read(), stable);
-        }
-        traces.push(trace);
-    }
-    println!("{}", serde_json::to_string(&traces).unwrap());
-}
-`);
-    await execute('cargo', ['fetch', '--quiet', '--manifest-path', join(consumer, 'Cargo.toml')], { timeout: 180_000 });
-    await work({ typescript, rust, consumer });
+    await work({ typescript });
   } finally { await rm(root, { recursive: true, force: true }); }
 }
 
@@ -142,7 +91,6 @@ function expectedTrace(model: SymbolicModel, sequence: Sequence): TraceEntry[] {
 }
 
 async function nativeTraces(native: Native, sequences: Sequence[]) {
-  await put(join(native.consumer, 'request.json'), JSON.stringify(sequences));
   const script = join(native.typescript, 'trace.mjs');
   await put(script, `import assert from 'node:assert/strict';
 import {createEnvelopeAuthority} from './dist/machine.js';
@@ -152,10 +100,7 @@ const traces = ${JSON.stringify(sequences)}.map(sequence => {
 });
 process.stdout.write(JSON.stringify(traces));`);
   const ts = await execute(process.execPath, [script], { timeout: 20_000, maxBuffer: 8 * 1024 * 1024 });
-  const rs = await execute('cargo', ['run', '--offline', '--quiet', '--manifest-path', join(native.consumer, 'Cargo.toml'), '--target-dir', target], {
-    timeout: 180_000, maxBuffer: 8 * 1024 * 1024,
-  });
-  return { typescript: JSON.parse(ts.stdout), rust: JSON.parse(rs.stdout) };
+  return { typescript: JSON.parse(ts.stdout) };
 }
 
 test('two native inputs preserve payload equality and original/latest receipt provenance', async () => {
@@ -169,7 +114,7 @@ test('two native inputs preserve payload equality and original/latest receipt pr
     const traces = await nativeTraces(native, sequences);
     const expected = sequences.map(sequence => expectedTrace(model, sequence));
     assert.deepEqual(traces.typescript, expected);
-    assert.deepEqual(traces.rust, expected);
+
     const final = expected[0]?.at(-1);
     assert.ok(final?.ok && 'after' in final);
     assert.deepEqual(final.after.values.original, { kind: 'data', domain: 'Values', value: 'A' });
@@ -182,8 +127,6 @@ test('two native inputs preserve payload equality and original/latest receipt pr
     assert.deepEqual(first.updates.originalReceipt, { kind: 'input', parameter: 'receipt' });
     assert.deepEqual(clash.updates.rejectedReceipt, { kind: 'input', parameter: 'receipt' });
     assert.equal(expected[1]?.[0]?.ok, true, 'identical text in different domains cannot disable Insert');
-    const overflow = await execute('cargo', ['test', '--offline', '--quiet', '--lib', '--manifest-path', join(native.rust, 'Cargo.toml'), '--target-dir', target], { timeout: 180_000 });
-    assert.match(overflow.stdout, /1 passed/);
   });
 });
 
@@ -230,43 +173,13 @@ owner.restore({});
   });
 });
 
-test('Rust fixed arity, private state and method surface reject source bypasses', async () => {
-  await withNatives(envelopeModel(), async native => {
-    for (const [name, body, code] of [
-      ['missing', 'owner.send("A");', 'E0061'],
-      ['surplus', 'owner.send("A", "p1", "Same");', 'E0061'],
-      ['wrong-type', 'owner.send("A", 42);', 'E0308'],
-      ['write-state', 'owner.values.clear();', 'E0616'],
-      ['alias-write', 'let alias = &mut owner; alias.values.clear();', 'E0616'],
-      ['restore', 'owner.restore("A", "p1");', 'E0599'],
-      ['select-same', 'owner.same("A", "p1");', 'E0599'],
-      ['copy-owner', 'let _ = owner.clone();', 'E0599'],
-    ]) {
-      assert.ok(name && body && code);
-      const source = join(native.consumer, 'src/bin', `${name}.rs`);
-      await put(source, `use authority::EnvelopeAuthority;\nfn main() { let mut owner=EnvelopeAuthority::new(); ${body} }\n`);
-      await assert.rejects(execute('cargo', ['check', '--offline', '--quiet', '--bin', name, '--message-format=json', '--manifest-path', join(native.consumer, 'Cargo.toml'), '--target-dir', target], { timeout: 180_000 }), error => {
-        assert.ok(error instanceof Error && 'stdout' in error && typeof error.stdout === 'string');
-        const diagnostics = error.stdout.split(/\r?\n/).filter(Boolean).map(line => CompilerEvent.parse(JSON.parse(line))).filter(event => event.reason === 'compiler-message')
-          .map(event => ErrorDiagnostic.parse(event).message).filter(message => message.level === 'error');
-        assert.ok(diagnostics.length > 0);
-        for (const diagnostic of diagnostics) {
-          assert.equal(diagnostic.code?.code, code);
-          assert.ok(diagnostic.spans.some(span => span.is_primary && resolve(native.consumer, span.file_name) === source && span.line_start === 2));
-        }
-        return true;
-      });
-    }
-  });
-});
-
-test('three primitive inputs retain separate domains and parameter origins in both native backends', async () => {
+test('three primitive inputs retain separate domains and parameter origins in the TypeScript backend', async () => {
   const model = tripleModel();
   const sequences = [[['same', 'same', 'same'], ['a', 'b', 'c'], ['none', '', '한글 😀']]];
   await withNatives(model, async native => {
     const traces = await nativeTraces(native, sequences);
     const expected = sequences.map(sequence => expectedTrace(model, sequence));
-    assert.deepEqual(traces.typescript, expected); assert.deepEqual(traces.rust, expected);
+    assert.deepEqual(traces.typescript, expected);
     const first = expected[0]?.[0]; assert.ok(first?.ok && 'after' in first);
     assert.deepEqual(first.after.values, {
       first: { kind: 'data', domain: 'Firsts', value: 'same' },
@@ -277,14 +190,14 @@ test('three primitive inputs retain separate domains and parameter origins in bo
   });
 });
 
-test('a provenance requirement change regenerates both native owners instead of reusing policy', async () => {
+test('a provenance requirement change regenerates the TypeScript owner instead of reusing policy', async () => {
   const model = envelopeModel(true);
   assert.notEqual(model.source.semanticSha256, envelopeModel().source.semanticSha256);
   const sequences = [[['A', 'p1'], ['B', 'p2'], ['C', 'p3'], ['A', 'p4']]];
   await withNatives(model, async native => {
     const traces = await nativeTraces(native, sequences);
     const expected = sequences.map(sequence => expectedTrace(model, sequence));
-    assert.deepEqual(traces.typescript, expected); assert.deepEqual(traces.rust, expected);
+    assert.deepEqual(traces.typescript, expected);
     const final = expected[0]?.at(-1); assert.ok(final?.ok && 'after' in final);
     assert.deepEqual(final.after.values.originalReceipt, { kind: 'data', domain: 'Receipts', value: 'p1' });
     assert.deepEqual(final.after.values.rejectedReceipt, { kind: 'string', value: 'none' });

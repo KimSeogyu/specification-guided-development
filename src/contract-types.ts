@@ -51,7 +51,7 @@ export const ContractProjectSchema = z.object({
 export type ContractProject = z.infer<typeof ContractProjectSchema>;
 
 export const ContractNativeSelectorSchema = z.object({
-  language: z.enum(['typescript', 'rust']), file: Location, symbol: Location,
+  language: z.literal('typescript'), file: Location, symbol: Location,
 }).strict();
 export const ContractBindingsSchema = z.object({
   version: z.literal(1), bindings: recordSchema(Identifier, ContractNativeSelectorSchema),

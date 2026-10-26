@@ -2,7 +2,7 @@
 
 Project v4 `symbolic-owned` compiles actions with two or three independent opaque inputs. Each input belongs to a distinct named domain. The generated owner preserves all model variables, including payload-associated provenance.
 
-The [fact-envelope example](../examples/fact-envelope/README.md) stores the first payload with its first provenance. Conflicting writes replace the latest rejected payload and provenance together. Equal writes preserve both stored and rejected values. This source milestone adds compiler support. Actual Parangsae ownership, partition commits, source coverage, and maintenance validation remain required by [the production goal](production-goal.md).
+The [fact-envelope example](../examples/fact-envelope/README.md) stores the first payload with its first provenance. Conflicting writes replace the latest rejected payload and provenance together. Equal writes preserve both stored and rejected values.
 
 ## Project and source profile
 
@@ -15,7 +15,7 @@ The new project version selects the product-input profile explicitly:
 	"name": "FactWriteEnvelope",
 	"spec": "FactWriteEnvelope.tla",
 	"config": "FactWriteEnvelope.cfg",
-	"targets": ["typescript", "rust"],
+	"targets": ["typescript"],
 	"binding": { "className": "FactEnvelopeMachine" }
 }
 ```
@@ -53,21 +53,7 @@ facts.send('A', 'r4'); // Same; all model values remain unchanged
 const snapshot = facts.read();
 ```
 
-The Rust owner exposes the same argument order:
-
-```rust
-#![forbid(unsafe_code)]
-use authority::FactEnvelopeMachine;
-
-let mut facts = FactEnvelopeMachine::new();
-facts.send("A", "r1").unwrap();
-facts.send("B", "r2").unwrap();
-facts.send("B", "r3").unwrap();
-facts.send("A", "r4").unwrap();
-let snapshot = facts.read();
-```
-
-The final values retain `stored=A`, `storedProvenance=r1`, `rejected=B`, and `rejectedProvenance=r3`. Snapshots and receipts contain every model variable. Update origins distinguish `v` from `provenance`. Both owners use the same private-state, checked-revision, and immutable-snapshot contract as the single-input profile.
+The final values retain `stored=A`, `storedProvenance=r1`, `rejected=B`, and `rejectedProvenance=r3`. Snapshots and receipts contain every model variable. Update origins distinguish `v` from `provenance`. The owner uses the same private-state, checked-revision, and immutable-snapshot contract as the single-input profile.
 
 The reference interpreter and orbit artifacts represent an input tuple as a named record, for example `{"v":"A","provenance":"r1"}`. This record is an artifact representation. The native public API uses primitive arguments.
 
@@ -107,7 +93,5 @@ For every concrete orbit and representative input tuple, the checker compares en
 ## Application binding remains separate
 
 A provenance identity can encode receipt time and raw source schema. The model does not define that encoding or recover an application object from an arbitrary identity. A production adapter must preserve the application's payload equality relation and copy the associated owned values under the modeled updates.
-
-For Parangsae, the pending [Kline schema-equivalence change](https://github.com/KimSeogyu/parangsae/pull/5) treats only source schema 1 and 2 as equivalent payloads. It preserves the original stored receipt and raw schema. Other schemas remain distinct. A raw all-field encoding would break equal reingest. An encoding that drops raw provenance from storage would also break the contract.
 
 The existing fact-merge model excludes provenance. An explicit erasure check can establish a relation between the two supported models. It does not establish the adapter, the actual Fact equality binding, partition rollback, file transactions, restart behavior, or exclusive writers. Those claims require application evidence. This compiler example has no Parangsae data migration or application-code adoption.

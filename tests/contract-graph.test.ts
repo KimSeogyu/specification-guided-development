@@ -69,7 +69,7 @@ test('strict declarations and location bindings reject caller status, unknown ki
     { ...baseline, repairKind: 'implementation' },
   ]) assert.equal(ContractDeclarationsSchema.safeParse(candidate).success, false);
   assert.equal(ContractBindingsSchema.safeParse({ version: 1, bindings: { PartitionWriter: {} } }).success, false);
-  assert.equal(ContractBindingsSchema.safeParse({ version: 1, bindings: { PartitionWriter: { language: 'rust', file: 'src/store.rs', symbol: 'crate::store::write', checked: true } } }).success, false);
+  assert.equal(ContractBindingsSchema.safeParse({ version: 1, bindings: { PartitionWriter: { language: 'typescript', file: 'src/store.ts', symbol: 'write', checked: true } } }).success, false);
   assert.throws(() => closure(baseline, baseline, bindings, JSON.parse('{"__proto__":{"project":"payload.json"}}')), /TLC311/);
 });
 
@@ -152,7 +152,7 @@ test('deleting native requirements or changing owner/kind/role does not erase th
 
 test('supplied native selectors remain unsupported and invalid selectors fail parsing', () => {
   const accepted = { ...baseline, native: [writer] };
-  const selectors = { version: 1, bindings: { PartitionWriter: { language: 'rust', file: 'src/store.rs', symbol: 'crate::store::write' } } };
+  const selectors = { version: 1, bindings: { PartitionWriter: { language: 'typescript', file: 'src/store.ts', symbol: 'write' } } };
   const result = closure(accepted, accepted, selectors);
   assert.ok(result.findings.some(finding => finding.kind === 'unsupported' && finding.obligation === 'native' && finding.id === writer.id));
   assert.equal(result.findings.some(finding => finding.kind === 'missing-binding'), false);
@@ -168,7 +168,7 @@ test('all candidate additions become obligations and unclassified model/binding 
   assert.ok(closure().findings.length === 0);
   assert.ok(closure(baseline, baseline, bindings, { Payload: models.Payload }).findings.some(finding => finding.kind === 'missing-model-reference'));
   assert.ok(closure(baseline, baseline, bindings, { ...models, Extra: { project: 'extra.json' } }).findings.some(finding => finding.kind === 'extra-model-reference'));
-  assert.ok(closure(baseline, baseline, { version: 1, bindings: { Extra: { language: 'rust', file: 'src/extra.rs', symbol: 'extra' } } }).findings.some(finding => finding.kind === 'extra-binding'));
+  assert.ok(closure(baseline, baseline, { version: 1, bindings: { Extra: { language: 'typescript', file: 'src/extra.ts', symbol: 'extra' } } }).findings.some(finding => finding.kind === 'extra-binding'));
 });
 
 test('scope downgrade and application claims remain failing independently of native selectors', () => {
