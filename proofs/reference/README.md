@@ -20,8 +20,18 @@ SGD_LEAN_BINARY=/absolute/path/to/lean npm run proofs:check
 proves exact finite initial/state/edge compliance. `LanguageProfiles` and
 `ProfileComposition` connect a finite TypeScript-style language to that check.
 `CertifiedPipeline` binds admitted development to compiled sources and checked
-model safety. Reachable-only graph compilation has separate migration-domain
-obligations; it is not a proof for arbitrary live graph upgrades.
+model safety. `GraphDevelopment` adds reachable-graph migration: the new live
+state must be reachable in the new source and commute with the old state view.
+Adjacent source refinement remains a separate obligation.
+
+`CheckedTraces` and `GraphCheckedTraces` connect whole-runtime lint acceptance
+to source observations with unchanged actor and acceptance/rejection labels.
+`RustProfile` defines a separate finite match/Result and scoped-reborrow language.
+`MixedProfiles` proves operational lowering, whole-program checking, and full-query
+Rust authority installation. `MixedCheckedTraces` and `MixedGraphDevelopment`
+connect mixed execution to source observations and approved graph revisions.
+These modules do not restore a Rust product backend. The [scope audit](AUDIT.md)
+maps each requirement to its proof and states the native implementation limits.
 
 Counterexamples remain in the proof modules to show why omitted state,
 unclassified writes, unsafe resets, and misleading interpretations invalidate

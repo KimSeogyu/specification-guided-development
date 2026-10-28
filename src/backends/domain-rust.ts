@@ -1,0 +1,91 @@
+import { createHash } from 'node:crypto';
+import type { DomainBinding } from '../domain-types.js';
+import { validateDomainBinding } from '../domain-validation.js';
+import { validateExecutableGraph, type FiniteValue, type OwnedBackendInput } from '../finite-types.js';
+import type { GeneratedFile } from '../types.js';
+
+const rustKeywords = new Set(['as', 'break', 'const', 'continue', 'crate', 'else', 'enum', 'extern', 'false',
+  'fn', 'for', 'if', 'impl', 'in', 'let', 'loop', 'match', 'mod', 'move', 'mut', 'pub', 'ref', 'return',
+  'self', 'Self', 'static', 'struct', 'super', 'trait', 'true', 'type', 'unsafe', 'use', 'where', 'while',
+  'async', 'await', 'dyn', 'abstract', 'become', 'box', 'do', 'final', 'gen', 'macro', 'override', 'priv',
+  'typeof', 'unsized', 'virtual', 'yield', 'try', 'union', 'macro_rules', '_']);
+const compare = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
+
+function identifier(value: string, kind: string): string {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value) || rustKeywords.has(value)) {
+    throw new Error(`TLC208: ${kind} ${JSON.stringify(value)} is not a supported Rust identifier`);
+  }
+  return value;
+}
+
+function rustString(value: string): string {
+  let result = '"';
+  for (const character of value) {
+    const code = character.codePointAt(0);
+    if (code === undefined || (code >= 0xd800 && code <= 0xdfff)) throw new Error('TLC208: invalid Unicode scalar');
+    if (character === '"') result += '\\"';
+    else if (character === '\\') result += '\\\\';
+    else if (code < 32 || code === 127) result += `\\u{${code.toString(16)}}`;
+    else result += character;
+  }
+  return `${result}"`;
+}
+
+function valueExpression(value: FiniteValue): string {
+  switch (value.kind) {
+    case 'string': return `Value::String(${rustString(value.value)})`;
+    case 'boolean': return `Value::Boolean(${value.value})`;
+    case 'integer': return `Value::Integer(${rustString(value.value)})`;
+  }
+}
+
+/** Generate a private per-object Rust authority and captured asynchronous ports. */
+export function generateDomainRust(input: OwnedBackendInput & { domain: DomainBinding }): GeneratedFile[] {
+  const graph = validateExecutableGraph(input.automaton);
+  const plan = validateDomainBinding({ automaton: graph, domain: input.domain });
+  if (!/^[A-Z][A-Za-z0-9]*$/.test(input.className)) throw new Error('TLC208: invalid Rust domain className');
+  const className = `${input.className}Domain`;
+  for (const operation of plan.operations) {
+    identifier(operation.name, 'operation');
+    identifier(operation.port, 'port');
+    if (['new', 'read', 'send', 'transition', 'into', 'try_into'].includes(operation.name)) throw new Error(`TLC208: reserved Rust operation ${operation.name}`);
+  }
+  const nodes = [...graph.nodes].sort((a, b) => compare(a.id, b.id));
+  const events = [...graph.actions].sort(compare);
+  const ports = [...new Set(plan.operations.map(operation => operation.port))].sort(compare);
+  const associatedTypes = new Set(ports.flatMap((_, i) => [`Port${i}Input`, `Port${i}Output`, `Port${i}Error`]));
+  for (const port of ports) if (associatedTypes.has(port)) throw new Error(`TLC208: Rust port ${port} collides with a generated associated type`);
+  const nodeIndex = new Map(nodes.map((node, i) => [node.id, i]));
+  const eventIndex = new Map(events.map((event, i) => [event, i]));
+  const portIndex = new Map(ports.map((port, i) => [port, i]));
+  const index = (map: Map<string, number>, key: string): number => {
+    const found = map.get(key);
+    if (found === undefined) throw new Error(`TLC208: unknown Rust graph identity ${JSON.stringify(key)}`);
+    return found;
+  };
+  const initial = graph.initial[0];
+  if (initial === undefined) throw new Error('TLC208: Rust graph has no initial state');
+  const rawEdges = graph.edges.map(edge => [index(nodeIndex, edge.from), index(eventIndex, edge.event), index(nodeIndex, edge.to)] as const);
+  const edges = [...new Map(rawEdges.map(edge => [edge.join(','), edge])).values()]
+    .sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+  const roles = plan.operations.map(operation => [index(eventIndex, operation.start), index(eventIndex, operation.success), index(eventIndex, operation.failure)] as const);
+  const values = nodes.map((node, i) => `static VALUES_${i}: &[(&str, Value)] = &[\n${[...graph.variables].sort((a, b) => compare(a.name, b.name)).map(variable => {
+    const value = node.values[variable.name];
+    if (value === undefined) throw new Error(`TLC208: missing Rust graph value ${variable.name}`);
+    return `    (${rustString(variable.name)}, ${valueExpression(value)}),`;
+  }).join('\n')}\n];`).join('\n');
+  const portTraits = ports.map((port, i) => `    type Port${i}Input;\n    type Port${i}Output;\n    type Port${i}Error;\n    fn ${port}(&self, input: Self::Port${i}Input) -> impl Future<Output = Result<Self::Port${i}Output, Self::Port${i}Error>>;`).join('\n');
+  const methods = plan.operations.map((operation, i) => {
+    const p = index(portIndex, operation.port);
+    return `    pub async fn ${operation.name}(&mut self, input: P::Port${p}Input) -> OperationResult<P::Port${p}Output, P::Port${p}Error> {\n        if self.revision > u64::MAX - 2 { return OperationResult::Refused(TransitionError::RevisionExhausted); }\n        let start = match self.transition(OPERATION_ROLES[${i}].0) { Ok(receipt) => receipt, Err(error) => return OperationResult::Refused(error) };\n        let outcome = <P as Ports>::${operation.port}(&self.ports, input).await;\n        let completion_event = if outcome.is_ok() { OPERATION_ROLES[${i}].1 } else { OPERATION_ROLES[${i}].2 };\n        match self.transition(completion_event) {\n            Ok(completion) => OperationResult::Completed { outcome, start, completion },\n            Err(error) => OperationResult::CompletionRejected { outcome, start, error },\n        }\n    }`;
+  }).join('\n');
+  const publicEvents = plan.publicEvents.map(event => index(eventIndex, event));
+  const packageHash = createHash('sha256').update(graph.name).digest('hex').slice(0, 12);
+  const source = `// Generated from a checked finite model. Do not edit.\n#![forbid(unsafe_code)]\nuse std::future::Future;\n\nconst INITIAL_STATE: usize = ${index(nodeIndex, initial)};\nconst TRANSITIONS: &[(usize, usize, usize)] = &[\n${edges.map(edge => `    (${edge[0]}, ${edge[1]}, ${edge[2]}),`).join('\n')}\n];\nconst OPERATION_ROLES: &[(usize, usize, usize)] = &[\n${roles.map(role => `    (${role[0]}, ${role[1]}, ${role[2]}),`).join('\n')}\n];\n\n#[derive(Clone, Copy, Debug, Eq, PartialEq)]\npub enum Value { String(&'static str), Boolean(bool), Integer(&'static str) }\n${values}\n\n#[derive(Clone, Copy, Debug, Eq, PartialEq)]\npub struct Snapshot { pub node_id: &'static str, pub revision: u64, pub values: &'static [(&'static str, Value)] }\n#[derive(Clone, Copy, Debug, Eq, PartialEq)]\npub struct Receipt { pub before: Snapshot, pub after: Snapshot }\n#[derive(Clone, Copy, Debug, Eq, PartialEq)]\npub enum TransitionError { Disabled, RevisionExhausted }\n#[derive(Debug)]\npub enum OperationResult<T, E> { Refused(TransitionError), Completed { outcome: Result<T, E>, start: Receipt, completion: Receipt }, CompletionRejected { outcome: Result<T, E>, start: Receipt, error: TransitionError } }\n\n#[derive(Clone, Copy, Debug, Eq, PartialEq)]\npub enum PublicEvent { ${publicEvents.map(i => `Event${i}`).join(', ')} }\nimpl PublicEvent {\n    pub fn from_model_name(name: &str) -> Option<Self> { match name {\n${publicEvents.map(i => `        ${rustString(events[i] ?? '')} => Some(Self::Event${i}),`).join('\n')}\n        _ => None,\n    } }\n    fn index(self) -> usize { match self { ${publicEvents.map(i => `Self::Event${i} => ${i},`).join(' ')} } }\n}\n\n#[allow(async_fn_in_trait)]\npub trait Ports {\n${portTraits}\n}\n\npub struct ${className}<P: Ports> { state: usize, revision: u64, ports: P }\nimpl<P: Ports> ${className}<P> {\n    pub fn new(ports: P) -> Self { Self { state: INITIAL_STATE, revision: 0, ports } }\n    pub fn read(&self) -> Snapshot {\n        let (node_id, values) = match self.state {\n${nodes.map((node, i) => `            ${i} => (${rustString(node.id)}, VALUES_${i}),`).join('\n')}\n            _ => unreachable!("invalid private graph state"),\n        };\n        Snapshot { node_id, revision: self.revision, values }\n    }\n    fn transition(&mut self, event: usize) -> Result<Receipt, TransitionError> {\n        let next = TRANSITIONS.iter().find(|(state, action, _)| *state == self.state && *action == event).map(|(_, _, target)| *target).ok_or(TransitionError::Disabled)?;\n        let revision = self.revision.checked_add(1).ok_or(TransitionError::RevisionExhausted)?;\n        let before = self.read();\n        self.state = next;\n        self.revision = revision;\n        Ok(Receipt { before, after: self.read() })\n    }\n    pub fn send(&mut self, event: PublicEvent) -> Result<Receipt, TransitionError> { self.transition(event.index()) }\n${methods}\n}\n`;
+  const readme = `# Generated Rust domain\n\nThis dependency-free Rust 2021 crate owns one finite state per instance. Implement \`Ports\` and supply it to \`${className}::new\`. Port methods return futures whose \`Result\` selects the modeled completion. Public events exclude operation roles.\n\nDropping an operation future after it starts, or a panic, can leave the owner pending. This code does not establish cancellation, persistence, effect atomicity, eventual completion, application-wide coverage, or correctness of external effects. The graph is finite. The generated Rust and Rust compiler remain separate trust boundaries from the Lean graph proof.\n`;
+  return [
+    { path: 'Cargo.toml', content: `[package]\nname = "sgd-domain-${packageHash}"\nversion = "0.1.0"\nedition = "2021"\npublish = false\n` },
+    { path: 'src/lib.rs', content: source },
+    { path: 'README.md', content: readme },
+  ];
+}

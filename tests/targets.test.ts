@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { compile, readProject } from '../src/compiler.js';
 
-test('all four project versions accept TypeScript and reject removed Rust generation before running tools', async () => {
+test('Rust is supported only for finite domain bindings', async () => {
   const root = await mkdtemp(join(tmpdir(), 'sgd-target-profiles-'));
   try {
     const common = { name: 'Example', spec: 'Missing.tla', config: 'Missing.cfg', targets: ['typescript'] };
@@ -21,9 +21,15 @@ test('all four project versions accept TypeScript and reject removed Rust genera
       assert.deepEqual((await readProject(path)).targets, ['typescript']);
       for (const targets of [['rust'], ['typescript', 'rust']]) {
         await writeFile(path, JSON.stringify({ ...project, targets }));
-        await assert.rejects(readProject(path), /typescript/);
+        await assert.rejects(readProject(path), project.version === 2 ? /Rust generation requires a domain binding/ : /typescript/);
       }
     }
+    const rustDomain = { ...projects[1], targets: ['typescript', 'rust'], binding: {
+      className: 'Owner', domain: { operations: [{ name: 'publish', port: 'publisher', start: 'Start', success: 'Done', failure: 'Failed' }] },
+    } };
+    const rustPath = join(root, 'rust-domain.json');
+    await writeFile(rustPath, JSON.stringify(rustDomain));
+    assert.deepEqual((await readProject(rustPath)).targets, ['typescript', 'rust']);
     for (const version of [5, 6]) {
       const path = join(root, 'retired.json');
       await writeFile(path, JSON.stringify({ ...common, version }));

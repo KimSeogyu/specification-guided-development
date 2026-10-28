@@ -18,6 +18,8 @@ const maximumDiagnosticBytes = 8 * 1024 * 1024;
 const allowedAxioms = new Set(['propext', 'Quot.sound']);
 const protocolTheorems = [
   'SGD.DomainProtocol.valid_implies_contract',
+  'SGD.DomainProtocol.lookup_transition_sound',
+  'SGD.DomainProtocol.lookup_none_iff_no_transition',
   'SGD.DomainProtocol.pending_has_unique_outcomes',
   'SGD.DomainProtocol.pending_rejects_other_events',
   'SGD.DomainProtocol.pending_entry_is_owned',
@@ -26,6 +28,8 @@ const protocolTheorems = [
 const projectTheorems = [
   'SGD.GeneratedDomain.protocol_valid',
   'SGD.GeneratedDomain.protocol_contract',
+  'SGD.GeneratedDomain.lookup_is_transition',
+  'SGD.GeneratedDomain.lookup_refusal_exact',
   'SGD.GeneratedDomain.pending_outcomes',
   'SGD.GeneratedDomain.pending_events',
   'SGD.GeneratedDomain.pending_entries',
@@ -143,6 +147,14 @@ ${operations}]
 theorem protocol_valid : valid model = true := by decide
 
 theorem protocol_contract : Contract model := valid_implies_contract model protocol_valid
+
+theorem lookup_is_transition (source event target : Nat)
+    (found : lookupEdge model.edges source event = some target) :
+    Transition model source event target := lookup_transition_sound model source event target found
+
+theorem lookup_refusal_exact (source event : Nat) :
+    lookupEdge model.edges source event = none ↔ ¬ ∃ target, Transition model source event target :=
+  lookup_none_iff_no_transition model source event
 
 theorem pending_outcomes (operation : Operation) (member : operation ∈ model.operations)
     (state : Nat) (pending : Pending model operation state) :

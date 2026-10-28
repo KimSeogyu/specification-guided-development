@@ -1,6 +1,6 @@
 # Specification Guided Development
 
-Generate domain code from TLA+ state models. SGD runs TLC, checks the finite operation protocol with Lean, and emits a TypeScript domain object with injected ports for application effects.
+Generate domain code from TLA+ state models. SGD runs TLC, checks the finite operation protocol with Lean, and emits TypeScript or Rust domain code with injected ports for application effects.
 
 The generated object owns state, admits operations through model transitions, and selects completion from each port's actual fulfillment or rejection.
 
@@ -8,7 +8,7 @@ The generated object owns state, admits operations through model transitions, an
 TLA+ model and configuration
   → TLC full-state graph
   → Lean operation-protocol check
-  → TypeScript domain + injected ports
+  → TypeScript or Rust domain + injected ports
 ```
 
 ## Generate a TypeScript domain
@@ -59,6 +59,14 @@ Open `.runtime/approval-view/index.html`. To verify existing generated output wi
 
 TLC checks the configured finite model; Lean checks its operation protocol. These checks do not formally prove the TypeScript emitter or JavaScript runtime. Ownership is per live object, and adapter fulfillment does not establish physical-effect correctness, atomicity, or persistence.
 
+## Generate a Rust domain
+
+In a copy of the domain project, set `targets` to `["rust"]` or `["typescript", "rust"]`. Keep the copied TLA+ model and configuration beside the project file. Use the same `build` command with the copied project path. Rust generation requires a `binding.domain` and rejects unsupported Rust identifiers. It does not support the other Rust profiles.
+
+The output under `rust/` is a dependency-free Rust 2021 crate. Build it with `cargo build --manifest-path <output>/rust/Cargo.toml`. Implement its `Ports` trait and pass the implementation to `ApprovalDomain::new`. Call `send` for public events and the named async operation for its port. The [domain guide](docs/domain-code.md#rust) shows the API.
+
+The build checks the generated Rust artifact against the graph and Lean checks the finite protocol. The artifact checker, emitter, Rust compiler, and native execution remain trust boundaries; this is not a formal proof of Rust code or of the application. Dropping an operation future after it starts, or a panic, can leave the owner pending.
+
 ## Evaluate the Bend core
 
 The experimental Bend backend generates pure transition code, modeled snapshots, laws, and proofs. It has no private live owner or async DI driver. Its raw JavaScript export is not an input-validating application API.
@@ -80,7 +88,7 @@ The evaluation runs `--verdict`, compares JavaScript and native execution with t
 
 Independent Codex and Claude Code packages provide the modeling skill and local MCP tools. Follow the [plugin guide](docs/plugins.md) for installation, packaging, and updates.
 
-The [v0.3.0-alpha.1 release](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.3.0-alpha.1) provides macOS arm64 plugin archives.
+The [v0.3.0-alpha.2 release](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.3.0-alpha.2) provides macOS arm64 plugin archives.
 
 ## Other TypeScript profiles
 

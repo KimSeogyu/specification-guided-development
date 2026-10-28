@@ -1,4 +1,4 @@
-# TypeScript domain generation
+# Domain generation
 
 A domain binding turns finite TLA+ actions into methods on a private state owner.
 Injected ports perform application effects. The generated method selects the
@@ -79,6 +79,75 @@ Inputs, outputs, and errors are opaque application objects. SGD does not clone,
 freeze, or validate their business fields. `isApprovalDomain` authenticates
 objects created by that generated module, not their payload types.
 
+## Rust
+
+In a copy of the project file, set `targets` to `["rust"]` or
+`["typescript", "rust"]`. The project must have `binding.domain`; Rust
+generation is not available for the retained or symbolic profiles. Keep the
+model and configuration beside the copied project file. Run the same `build`
+command with the copied project path, then build the generated crate:
+
+```sh
+cargo build --manifest-path generated/rust/Cargo.toml
+```
+
+The generated crate has no dependencies and uses Rust 2021. The Rust toolchain
+must support return-position `impl Trait` in traits, available since Rust 1.75.
+Add it to an application under a local dependency name, using the package name
+from the generated `rust/Cargo.toml`. For the unchanged Approval example:
+
+```toml
+[dependencies]
+approval-domain = { package = "sgd-domain-147fb813a251", path = "../generated/rust" }
+```
+
+Implement the generated `Ports` trait and supply it to the domain owner. The
+associated type number corresponds to the port's position in sorted port-name
+order. A port shared by several operations has one set of associated types.
+
+```rust
+use approval_domain::{ApprovalDomain, OperationResult, Ports, PublicEvent};
+use std::future::Future;
+
+struct Publisher;
+
+impl Ports for Publisher {
+    type Port0Input = String;
+    type Port0Output = usize;
+    type Port0Error = String;
+
+    fn publisher(&self, input: String) -> impl Future<Output = Result<usize, String>> {
+        async move { Ok(input.len()) }
+    }
+}
+
+async fn publish() {
+    let mut approval = ApprovalDomain::new(Publisher);
+    let approve = PublicEvent::from_model_name("Approve").unwrap();
+    approval.send(approve).unwrap();
+    match approval.publish("report".to_owned()).await {
+        OperationResult::Completed { outcome, .. } => println!("{outcome:?}"),
+        OperationResult::Refused(error) => println!("{error:?}"),
+        OperationResult::CompletionRejected { outcome, error, .. } => {
+            println!("{outcome:?}: {error:?}");
+        }
+    }
+}
+```
+
+`Completed` retains the port's original `Result`. The owner sends the start
+before invoking the port and selects success or failure from that result.
+`Refused` does not call the port. `CompletionRejected` retains the observed
+result if the internal completion is rejected. `PublicEvent::from_model_name`
+does not return operation start or completion events. Snapshots expose copied
+state through immutable static values; they cannot change the owner.
+
+Rust operation and port names must be valid supported Rust identifiers. Rust
+keywords and collisions with generated names are rejected. Each operation
+borrows the owner mutably while its future runs. If that future is dropped after
+the start transition, or the port panics, the owner can remain pending. This
+profile does not provide cancellation recovery or eventual completion.
+
 ## Verification scope
 
 The build runs TLC and Lean before publishing output. `proof/` contains the
@@ -87,8 +156,10 @@ protocol module, generated project proof, diagnostics, and verification metadata
 previous output intact.
 
 TLC checks the configured finite model. Lean proves the serial operation
-contract for its numeric graph. Native tests exercise the generated TypeScript;
-the emitter and JavaScript runtime are not formally proved. Injected adapters,
+contract for its numeric graph. For Rust, the build also checks the emitted
+artifact against the graph and binding. Native tests exercise the generated
+TypeScript and Rust; the artifact checker, emitters, Rust compiler, and language
+runtimes are not formally proved. Injected adapters,
 external effects, and the adequacy of the application's model remain separate
 verification obligations.
 

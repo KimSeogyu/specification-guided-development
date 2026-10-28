@@ -10,7 +10,9 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const modules = ['Method', 'WholeProgram', 'DevelopmentRefinement', 'AdmittedDevelopment',
   'BoundaryCounterexamples', 'CompilerPipeline', 'SemanticConstraints', 'CompilerLintBridge',
   'GraphLintBridge', 'ModelValidation', 'StructuralLint', 'LanguageProfiles',
-  'FiniteConfigurations', 'ProfileComposition', 'LintedDevelopment', 'CertifiedPipeline'];
+  'FiniteConfigurations', 'ProfileComposition', 'LintedDevelopment', 'CertifiedPipeline',
+  'RustProfile', 'CheckedTraces', 'GraphDevelopment', 'GraphCheckedTraces',
+  'MixedProfiles', 'MixedCheckedTraces', 'MixedGraphDevelopment'];
 const directory = await mkdtemp(join(tmpdir(), 'sgd-reference-proofs-'));
 let cleanupSafe = true;
 try {

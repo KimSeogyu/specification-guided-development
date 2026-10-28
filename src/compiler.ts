@@ -1,6 +1,8 @@
 import { generateRetainedTypeScript } from './backends/retained-typescript.js';
 import { validateRetainedOperation } from './retained-operation.js';
 import { generateDomainTypeScript } from './backends/domain-typescript.js';
+import { generateDomainRust } from './backends/domain-rust.js';
+import { checkRustDomainArtifact } from './rust-domain-artifact.js';
 import { validateDomainBinding } from './domain-validation.js';
 import { verifyDomainProof } from './domain-proof.js';
 import { lstat, readFile, realpath } from 'node:fs/promises';
@@ -213,9 +215,17 @@ async function collectArtifacts(input: BuildInput): Promise<CollectedArtifacts> 
         const backendInput = { automaton, className: project.binding.className };
         const operation = project.binding.operation;
         const domain = project.binding.domain;
-        const generated = domain !== undefined ? generateDomainTypeScript({ ...backendInput, domain })
-          : operation === undefined ? ownedBackends[target](backendInput)
+        const generated = target === 'rust'
+          ? domain === undefined ? (() => { throw new Error('TLC208: Rust generation requires a domain binding'); })()
+            : generateDomainRust({ ...backendInput, domain })
+          : domain !== undefined ? generateDomainTypeScript({ ...backendInput, domain })
+          : operation === undefined ? ownedBackends.typescript(backendInput)
           : generateRetainedTypeScript({ ...backendInput, operation });
+        if (target === 'rust' && domain !== undefined) {
+          const source = generated.find(file => file.path === 'src/lib.rs');
+          if (source === undefined || typeof source.content !== 'string') throw new Error('TLC208: generated Rust source is missing');
+          checkRustDomainArtifact({ source: source.content, automaton, domain, className: project.binding.className });
+        }
         files.push(...generated.map(file => compilerFile({ ...file, path: `${target}/${file.path}` })));
       }
     }
