@@ -1,7 +1,7 @@
 {
   "name": "specification-guided-development",
   "version": "0.3.0-alpha.2",
-  "description": "Generate TypeScript and Rust domains and source checks from TLA+ models.",
+  "description": "Generate TypeScript and Rust domains and TypeScript source checks from TLA+ models.",
   "type": "module",
   "license": "MIT",
   "engines": {

@@ -2,7 +2,7 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "specification-guided-development",
   "version": "0.3.0-alpha.2",
-  "description": "Generate TypeScript and Rust domains and source checks from TLA+ models.",
+  "description": "Generate TypeScript and Rust domains and TypeScript source checks from TLA+ models.",
   "author": {
     "name": "KimSeogyu"
   },

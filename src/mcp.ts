@@ -50,7 +50,7 @@ export function createServer(): McpServer {
     return detail === 'full' ? report.automaton : report.summary;
   }));
   server.registerTool('sgd_build', {
-    description: 'Run TLC and generate code or checks. V2 domains support TypeScript and Rust; Rust generation requires the pinned Rust formatter. V3 and V4 compile supported equality/copy inputs to TypeScript. V1 generates diagnostics. The default response summarizes graph scope and checks; detail full includes the complete IR.',
+    description: 'Run TLC and generate code or checks. V2 domains support TypeScript and Rust; Rust generation requires the pinned Rust formatter. V3 and V4 compile supported equality/copy inputs to TypeScript. V1 generates TypeScript source checks. The default response summarizes graph scope and checks; detail full includes the complete IR.',
     inputSchema: { ...paths, lean: absolutePath.optional().describe('Lean 4.35.0 executable. Required for v2 domain generation.'), check, detail }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   }, ({ detail, lean, ...args }) => guarded(async () => {
     const report = await buildProjectReport({ ...args, ...(lean === undefined ? {} : { lean }) });

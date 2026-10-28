@@ -61,7 +61,7 @@ test('summary projection distinguishes this invocation from retained check evide
   const log = { path: 'models/control/tlc.log', content: 'current run', volatile: true };
   const receipt = { path: 'verification.json', content: 'receipt' };
   const input = { operation: 'build' as const, out: '/never-created-report-output', graph, files: [log, receipt],
-    checks: [{ kind: 'legacy-tlc' as const, role: 'model' as const, scope: 'observed-possible-transitions' as const }],
+    checks: [{ kind: 'projected-tlc' as const, role: 'model' as const, scope: 'observed-possible-transitions' as const }],
     evidence: [{ file: log, role: 'log' as const }, { file: receipt, role: 'verification' as const }] };
   const generated = summarizeBuild({ ...input, check: false });
   const checked = summarizeBuild({ ...input, check: true });
@@ -91,7 +91,7 @@ test('real v1 report preserves projection scope and the physical published outpu
     if (report.summary.graph.kind !== 'projected') throw new Error('expected projection');
     assert.equal(report.summary.graph.projectedStates, 2);
     assert.equal(report.summary.graph.concreteSourceStates, 3);
-    assert.deepEqual(report.summary.verification.checks, [{ kind: 'legacy-tlc', role: 'model', scope: 'observed-possible-transitions' }]);
+    assert.deepEqual(report.summary.verification.checks, [{ kind: 'projected-tlc', role: 'model', scope: 'observed-possible-transitions' }]);
     assert.deepEqual(await buildProject({ project, jar, out: join(alias, 'generated'), check: true }), report.automaton);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

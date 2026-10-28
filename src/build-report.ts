@@ -25,7 +25,7 @@ export const VerificationCheckSchema = z.discriminatedUnion('kind', [
     nativeBackend: z.literal('not-formally-verified') }).strict(),
   z.object({ kind: z.literal('retained-operation'), role: ModelRole,
     scope: z.literal('one-borrowed-synchronous-callback'), payload: z.literal('retained-on-all-return-paths') }).strict(),
-  z.object({ kind: z.literal('legacy-tlc'), role: z.literal('model'),
+  z.object({ kind: z.literal('projected-tlc'), role: z.literal('model'),
     scope: z.literal('observed-possible-transitions') }).strict(),
   z.object({ kind: z.literal('controlled-tlc'), role: ModelRole,
     profile: z.enum(['finite-owned-v1', 'symbolic-owned-v1']),
