@@ -1,0 +1,114 @@
+name: Package release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact package version to release
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    if: github.repository == 'KimSeogyu/specification-guided-development' && github.ref == 'refs/heads/main'
+    runs-on: macos-14
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Build packages
+        shell: bash
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(node -p "require('./package.json').version")" = "$EXPECTED_VERSION"
+          node -e "if (process.platform !== 'darwin' || process.arch !== 'arm64') process.exit(1)"
+          npm ci
+          npm run build
+          mkdir -p "$RUNNER_TEMP/release"
+          node plugins/package.mjs --archive-out "$RUNNER_TEMP/release" --archive-format tar.gz
+          node plugins/package.mjs --archive-out "$RUNNER_TEMP/release" --archive-format zip
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/release"
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git ls-files --others --exclude-standard)"
+      - name: Verify packages and write manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re, stat, subprocess, tempfile
+          root = pathlib.Path.cwd()
+          version = json.loads((root / 'package.json').read_text())['version']
+          assert re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+', version)
+          output = pathlib.Path(os.environ['RUNNER_TEMP']) / 'release'
+          def inventory(directory):
+              result = {}
+              for path in directory.rglob('*'):
+                  relative = path.relative_to(directory).as_posix()
+                  if path.name == '.DS_Store' or path.name.startswith('.runtime-'):
+                      continue
+                  mode = path.lstat().st_mode
+                  if path.is_symlink():
+                      result[relative] = ('link', os.readlink(path))
+                  elif path.is_file():
+                      result[relative] = ('file', stat.S_IMODE(mode), hashlib.sha256(path.read_bytes()).hexdigest())
+                  elif path.is_dir():
+                      result[relative] = ('directory', stat.S_IMODE(mode))
+                  else:
+                      raise ValueError(f'Unsupported packaged file: {relative}')
+              return result
+          assets = []
+          for host in ('claude-code', 'codex'):
+              for fmt in ('tar.gz', 'zip'):
+                  name = f'specification-guided-development-{host}-{version}-darwin-arm64.{fmt}'
+                  path = output / name
+                  with tempfile.TemporaryDirectory() as directory:
+                      if fmt == 'tar.gz':
+                          subprocess.run(['tar', '-xzf', str(path), '-C', directory], check=True)
+                      else:
+                          subprocess.run(['unzip', '-q', str(path), '-d', directory], check=True)
+                      assert inventory(pathlib.Path(directory)) == inventory(root / 'plugins' / host)
+                      result = subprocess.run(['node', f'{directory}/scripts/run.mjs', '--version'], capture_output=True, text=True, check=True)
+                      assert result.stdout.strip() == version
+                  assets.append({'name': name, 'host': host, 'bytes': path.stat().st_size,
+                      'sha256': hashlib.sha256(path.read_bytes()).hexdigest(), 'platform': 'darwin',
+                      'architecture': 'arm64', 'format': fmt})
+          sdk = output / f'specification-guided-development-{version}.tgz'
+          manifest = {'schema': 'sgd-plugin-release-v1', 'version': version, 'tag': 'v' + version,
+              'channel': 'alpha', 'source': {'repository': 'KimSeogyu/specification-guided-development',
+              'commit': os.environ['GITHUB_SHA']}, 'build': {'platform': 'darwin', 'architecture': 'arm64'},
+              'assets': assets, 'sdk': {'name': sdk.name, 'bytes': sdk.stat().st_size,
+              'sha256': hashlib.sha256(sdk.read_bytes()).hexdigest()}}
+          (output / 'release-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+          PY
+      - name: Upload draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          test "$version" = "$EXPECTED_VERSION"
+          set +e
+          git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null
+          tag_status=$?
+          set -e
+          test "$tag_status" = 2
+          gh release create "v$version" "$RUNNER_TEMP"/release/* --target "$GITHUB_SHA" \
+            --draft --prerelease --title "$version" \
+            --notes 'Generate TypeScript and Rust domains and TypeScript source checks from TLA+ models. Lean checks finite protocols; native compilers and external effects remain trust boundaries.'
+          test "$(gh release view "v$version" --json targetCommitish --jq .targetCommitish)" = "$GITHUB_SHA"
+          test "$(gh release view "v$version" --json isDraft --jq .isDraft)" = true
