@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { generateDomainRust } from '../src/backends/domain-rust.js';
+import { formatRustSource } from '../src/rust-format.js';
 import { checkRustDomainArtifact } from '../src/rust-domain-artifact.js';
 import type { ExactFiniteAutomaton } from '../src/finite-types.js';
 
@@ -188,13 +189,70 @@ test('Rust generation refuses a mismatched rustfmt version', { skip: process.pla
   });
   const rustc = join(root, 'rustc');
   const rustfmt = join(root, 'rustfmt');
+  const rustup = join(root, 'rustup');
   writeFileSync(rustc, '#!/bin/sh\nprintf "rustc 1.92.0 (ded5c06cf 2025-12-08)\\n"\n');
   writeFileSync(rustfmt, '#!/bin/sh\nprintf "rustfmt unexpected\\n"\n');
+  writeFileSync(rustup, '#!/bin/sh\nexit 1\n');
   chmodSync(rustc, 0o755);
   chmodSync(rustfmt, 0o755);
+  chmodSync(rustup, 0o755);
   process.env.PATH = `${root}:${oldPath ?? ''}`;
   assert.throws(() => generateDomainRust({ automaton: graph, domain, className: 'Delivery' }),
-    /TLC208: Rust generation requires rustfmt 1\.8\.0-stable/);
+    /TLC208: Rust generation requires rustc 1\.92\.0.*rustfmt 1\.8\.0-stable/);
+});
+
+test('formatter selects pinned rustup tools when the inherited toolchain is absent', { skip: process.platform === 'win32' }, t => {
+  const root = mkdtempSync(join(tmpdir(), 'sgd-rustup-fallback-'));
+  const oldPath = process.env.PATH;
+  const oldToolchain = process.env.RUSTUP_TOOLCHAIN;
+  const oldTrace = process.env.SGD_TEST_RUSTUP_TRACE;
+  t.after(() => {
+    if (oldPath === undefined) delete process.env.PATH; else process.env.PATH = oldPath;
+    if (oldToolchain === undefined) delete process.env.RUSTUP_TOOLCHAIN; else process.env.RUSTUP_TOOLCHAIN = oldToolchain;
+    if (oldTrace === undefined) delete process.env.SGD_TEST_RUSTUP_TRACE; else process.env.SGD_TEST_RUSTUP_TRACE = oldTrace;
+    rmSync(root, { recursive: true, force: true });
+  });
+  const rustc = join(root, 'rustc');
+  const rustfmt = join(root, 'rustfmt');
+  const rustup = join(root, 'rustup');
+  writeFileSync(rustc, '#!/bin/sh\nprintf "rustc unexpected\\n"\n');
+  writeFileSync(rustfmt, '#!/bin/sh\nprintf "rustfmt unexpected\\n"\n');
+  writeFileSync(rustup, `#!/bin/sh
+printf '%s\\n' "$*" >> "$SGD_TEST_RUSTUP_TRACE"
+if [ "$1" != run ] || [ "$2" != 1.92 ]; then exit 1; fi
+if [ "$3" = rustc ] && [ "$4" = --version ]; then printf 'rustc 1.92.0 (ded5c06cf 2025-12-08)\\n'; exit 0; fi
+if [ "$3" = rustfmt ] && [ "$4" = --version ]; then printf 'rustfmt 1.8.0-stable (ded5c06cf2 2025-12-08)\\n'; exit 0; fi
+if [ "$3" = rustfmt ]; then /bin/cat; exit $?; fi
+exit 1
+`);
+  for (const file of [rustc, rustfmt, rustup]) chmodSync(file, 0o755);
+  process.env.PATH = `${root}:${oldPath ?? ''}`;
+  process.env.SGD_TEST_RUSTUP_TRACE = join(root, 'trace');
+  delete process.env.RUSTUP_TOOLCHAIN;
+  assert.equal(formatRustSource('fn main() {}\n'), 'fn main() {}\n');
+  const trace = readFileSync(join(root, 'trace'), 'utf8');
+  assert.match(trace, /run 1\.92\.0 rustc --version/);
+  assert.match(trace, /run 1\.92 rustc --version/);
+  assert.match(trace, /run 1\.92 rustfmt --version/);
+  assert.match(trace, /run 1\.92 rustfmt --edition 2021 --emit stdout --config-path/);
+});
+
+test('formatter accepts directly pinned tools without rustup', { skip: process.platform === 'win32' }, t => {
+  const root = mkdtempSync(join(tmpdir(), 'sgd-direct-rust-'));
+  const oldPath = process.env.PATH;
+  t.after(() => {
+    if (oldPath === undefined) delete process.env.PATH; else process.env.PATH = oldPath;
+    rmSync(root, { recursive: true, force: true });
+  });
+  const rustc = join(root, 'rustc');
+  const rustfmt = join(root, 'rustfmt');
+  const rustup = join(root, 'rustup');
+  writeFileSync(rustc, '#!/bin/sh\nprintf "rustc 1.92.0 (ded5c06cf 2025-12-08)\\n"\n');
+  writeFileSync(rustfmt, '#!/bin/sh\nif [ "$1" = --version ]; then printf "rustfmt 1.8.0-stable (ded5c06cf2 2025-12-08)\\n"; else /bin/cat; fi\n');
+  writeFileSync(rustup, '#!/bin/sh\nexit 1\n');
+  for (const file of [rustc, rustfmt, rustup]) chmodSync(file, 0o755);
+  process.env.PATH = `${root}:${oldPath ?? ''}`;
+  assert.equal(formatRustSource('fn main() {}\n'), 'fn main() {}\n');
 });
 
 test('cargo fmt preserves generated Rust bytes and verified artifact facts', { timeout: 60_000 }, t => {
