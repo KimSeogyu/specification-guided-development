@@ -430,7 +430,9 @@ async function verifyDomain({ client, plugin, name }) {
   const out = join(temporary, name, 'domain');
   await mkdir(model, { recursive: true });
   for (const file of ['Approval.tla', 'Approval.cfg']) await cp(join(references, file), join(model, file));
-  await cp(join(references, 'domain-project.json'), join(model, 'project.json'));
+  const project = JSON.parse(await readFile(join(references, 'domain-project.json'), 'utf8'));
+  project.targets = ['typescript', 'rust'];
+  await writeFile(join(model, 'project.json'), JSON.stringify(project));
   const packagedProof = await readFile(join(plugin, 'runtime/proofs/domain/DomainProtocol.lean'), 'utf8');
   const summary = toolValue(await client.callTool({ name: 'sgd_build', arguments: {
     project: join(model, 'project.json'), jar, lean: resolve(lean), out,
@@ -440,6 +442,8 @@ async function verifyDomain({ client, plugin, name }) {
   const proof = JSON.parse(await readFile(join(out, 'proof/verification.json'), 'utf8'));
   const compiler = join(plugin, 'runtime/node_modules/typescript/bin/tsc');
   execFileSync(process.execPath, [compiler, '-p', join(out, 'typescript/tsconfig.json')], { cwd: temporary, encoding: 'utf8', timeout: 30_000 });
+  execFileSync('cargo', ['test', '--offline', '--manifest-path', join(out, 'rust/Cargo.toml')],
+    { cwd: temporary, encoding: 'utf8', timeout: 60_000, stdio: 'pipe' });
   const runner = join(temporary, name, 'verify-domain.mjs');
   await writeFile(runner, `import assert from 'node:assert/strict';
 const {createApprovalDomain,isApprovalDomain} = await import(process.argv[2]);
@@ -458,7 +462,21 @@ const cause={message:'real port error'};const failed=createApprovalDomain({publi
 process.stdout.write(JSON.stringify({approval:'required before effect',hiddenEvents:'refused unchanged',pending:'exclusive until actual settlement',success:'actual value retained',failure:'actual cause retained'}));
 `);
   const behavior = JSON.parse(execFileSync(process.execPath, [runner, pathToFileURL(join(out, 'typescript/dist/domain.js')).href], { cwd: temporary, encoding: 'utf8', timeout: 30_000 }));
-  return { status: 'passed', model: 'packaged Approval template', proof: 'packaged trusted module and real Lean kernel', proofScope: proof.scope, nativeTypeScript: 'packaged 7.0.2', ...behavior };
+  const retainedModel = join(temporary, name, 'retained-domain-model');
+  const retainedOut = join(temporary, name, 'retained-domain');
+  await mkdir(retainedModel, { recursive: true });
+  for (const file of ['ReportCustody.tla', 'ReportCustody.cfg', 'retained-rust-project.json']) {
+    await cp(join(references, file), join(retainedModel, file));
+  }
+  const retainedSummary = toolValue(await client.callTool({ name: 'sgd_build', arguments: {
+    project: join(retainedModel, 'retained-rust-project.json'), jar, lean: resolve(lean), out: retainedOut,
+  } }));
+  assert.equal(retainedSummary.verification.checks.find(check => check.kind === 'domain-protocol')?.proof, 'lean4-kernel');
+  const retainedProof = JSON.parse(await readFile(join(retainedOut, 'proof/verification.json'), 'utf8'));
+  assert.equal(retainedProof.retainedProof?.scope, 'abstract-owner-token-and-graph-residency');
+  execFileSync('cargo', ['test', '--offline', '--manifest-path', join(retainedOut, 'rust/Cargo.toml')],
+    { cwd: temporary, encoding: 'utf8', timeout: 60_000, stdio: 'pipe', env: { ...process.env, RUSTFLAGS: '-Dwarnings' } });
+  return { status: 'passed', model: 'packaged Approval and ReportCustody templates', proof: 'packaged trusted modules and real Lean kernel', proofScope: proof.scope, nativeTypeScript: 'packaged 7.0.2', rust: 'generated crates compile with cargo', ...behavior };
 }
 
 try {

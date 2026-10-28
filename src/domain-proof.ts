@@ -13,11 +13,14 @@ const leanVersion = '4.35.0';
 // This is an execution cap, not a claim about resident or peak process memory.
 const leanMemoryMiB = 1024;
 const protocolFile = fileURLToPath(new URL('../proofs/domain/DomainProtocol.lean', import.meta.url));
+const retainedFile = fileURLToPath(new URL('../proofs/domain/RetainedProtocol.lean', import.meta.url));
 const maximumSourceBytes = 8 * 1024 * 1024;
 const maximumDiagnosticBytes = 8 * 1024 * 1024;
 const allowedAxioms = new Set(['propext', 'Quot.sound']);
 const protocolTheorems = [
   'SGD.DomainProtocol.valid_implies_contract',
+  'SGD.DomainProtocol.lookup_transition_sound',
+  'SGD.DomainProtocol.lookup_none_iff_no_transition',
   'SGD.DomainProtocol.pending_has_unique_outcomes',
   'SGD.DomainProtocol.pending_rejects_other_events',
   'SGD.DomainProtocol.pending_entry_is_owned',
@@ -26,13 +29,32 @@ const protocolTheorems = [
 const projectTheorems = [
   'SGD.GeneratedDomain.protocol_valid',
   'SGD.GeneratedDomain.protocol_contract',
+  'SGD.GeneratedDomain.lookup_is_transition',
+  'SGD.GeneratedDomain.lookup_refusal_exact',
   'SGD.GeneratedDomain.pending_outcomes',
   'SGD.GeneratedDomain.pending_events',
   'SGD.GeneratedDomain.pending_entries',
   'SGD.GeneratedDomain.completion_targets',
 ];
+const retainedTheorems = [
+  'SGD.RetainedProtocol.ordinary_return_retains_owner_payload',
+  'SGD.RetainedProtocol.refusal_is_before_port',
+  'SGD.RetainedProtocol.refused_result_does_not_depend_on_port',
+  'SGD.RetainedProtocol.observed_completion_uses_actual_port_result',
+  'SGD.RetainedProtocol.invoke_preserves_graph_reachability',
+  'SGD.RetainedProtocol.owner_step_preserves_payload',
+  'SGD.RetainedProtocol.owner_step_preserves_graph_reachability',
+  'SGD.RetainedProtocol.owner_history_preserves_payload_until_extraction',
+  'SGD.RetainedProtocol.owner_history_preserves_model_and_payload',
+  'SGD.RetainedProtocol.examples_exercise_success_failure_refusal_and_completion_rejection',
+];
+const projectRetainedTheorems = [
+  'SGD.GeneratedDomain.resident_initial',
+  'SGD.GeneratedDomain.resident_edge_target',
+  'SGD.GeneratedDomain.retained_owner_preserves_residency_and_payload',
+];
 
-type ProofStage = 'version' | 'protocol' | 'project';
+type ProofStage = 'version' | 'protocol' | 'retained' | 'project';
 export interface DomainProofDiagnostic {
   stage: ProofStage;
   exitCode: string | number;
@@ -65,6 +87,7 @@ export interface DomainProofVerification {
   bindingSha256: string;
   protocolDataSha256: string;
   trustedModuleSha256: string;
+  retainedProof?: { variable: string; trustedModuleSha256: string; scope: 'abstract-owner-token-and-graph-residency' };
   projectProofSha256: string;
   axioms: string[];
   limits: { threads: 1; memoryMiB: 1024; compilationTimeoutMs: 90000 };
@@ -120,10 +143,30 @@ function numericProtocol(graph: ExactFiniteAutomaton, domain: DomainBinding) {
 }
 
 /** Only internally produced natural-number literals enter Lean source. Names and ports stay JSON data. */
-function projectSource(data: NumericProtocol): string {
+function projectSource(data: NumericProtocol, retained: boolean): string {
   const edges = data.edges.map(edge => `    ⟨${edge.source}, ${edge.event}, ${edge.target}⟩`).join(',\n');
   const operations = data.operations.map(operation => `    ⟨${operation.start}, ${operation.success}, ${operation.failure}⟩`).join(',\n');
+  const retainedSection = retained ? `
+def resident (state : Nat) : Prop := state ∈ [${Array.from({ length: data.stateCount }, (_, index) => index).join(', ')}]
+instance (state : Nat) : Decidable (resident state) := by unfold resident; infer_instance
+
+theorem resident_initial : resident model.initial := by decide
+
+theorem resident_edge_target (source event target : Nat) (edge : Transition model source event target) : resident target := by
+  have all : model.edges.all (fun entry => decide (resident entry.target)) = true := by decide
+  have targetChecked := (List.all_eq_true.mp all) ⟨source, event, target⟩ edge
+  exact of_decide_eq_true targetChecked
+
+theorem retained_owner_preserves_residency_and_payload {Payload E O : Type}
+    (payload : Payload) {owner : SGD.RetainedProtocol.Owner Payload}
+    (history : SGD.RetainedProtocol.OwnerReach (E := E) (O := O) model
+      (SGD.RetainedProtocol.create model payload) owner) :
+    resident owner.state ∧ (SGD.RetainedProtocol.extract owner).1 = payload :=
+  SGD.RetainedProtocol.owner_history_preserves_model_and_payload model payload resident resident_initial
+    (fun source event target _ edge => resident_edge_target source event target edge) history
+` : '';
   return `import DomainProtocol
+${retained ? 'import RetainedProtocol\n' : ''}
 
 set_option maxRecDepth 65536
 set_option maxHeartbeats 2000000
@@ -143,6 +186,14 @@ ${operations}]
 theorem protocol_valid : valid model = true := by decide
 
 theorem protocol_contract : Contract model := valid_implies_contract model protocol_valid
+
+theorem lookup_is_transition (source event target : Nat)
+    (found : lookupEdge model.edges source event = some target) :
+    Transition model source event target := lookup_transition_sound model source event target found
+
+theorem lookup_refusal_exact (source event : Nat) :
+    lookupEdge model.edges source event = none ↔ ¬ ∃ target, Transition model source event target :=
+  lookup_none_iff_no_transition model source event
 
 theorem pending_outcomes (operation : Operation) (member : operation ∈ model.operations)
     (state : Nat) (pending : Pending model operation state) :
@@ -168,9 +219,10 @@ theorem completion_targets (operation : Operation) (member : operation ∈ model
     (outcome : event = operation.success ∨ event = operation.failure) :
     Pending model operation source ∧ ¬ AnyPending model target :=
   completion_cannot_leave_pending model protocol_valid operation member source event target edge outcome
+${retainedSection}
 
 end SGD.GeneratedDomain
-${projectTheorems.map(theorem => `#print axioms ${theorem}`).join('\n')}
+${[...projectTheorems, ...(retained ? projectRetainedTheorems : [])].map(theorem => `#print axioms ${theorem}`).join('\n')}
 `;
 }
 
@@ -214,6 +266,7 @@ export async function verifyDomainProof(input: {
   automaton: ExactFiniteAutomaton;
   domain: DomainBinding;
   lean: string;
+  retainedVariable?: string;
 }): Promise<{ files: GeneratedFile[]; verification: DomainProofVerification }> {
   const diagnostics: DomainProofDiagnostic[] = [];
   let directory: string | undefined;
@@ -225,8 +278,17 @@ export async function verifyDomainProof(input: {
     const executable = await realpath(input.lean);
     if (!(await lstat(executable)).isFile()) fail('the supplied Lean executable must be a regular file');
     const trustedSource = await readFile(protocolFile, 'utf8');
+    const retainedVariable = input.retainedVariable;
+    if (retainedVariable !== undefined) {
+      const variable = graph.variables.find(item => item.name === retainedVariable);
+      if (variable?.kind !== 'boolean' || graph.nodes.some(node => {
+        const value = node.values[retainedVariable];
+        return value?.kind !== 'boolean' || value.value !== true;
+      })) fail('retained variable must be a Boolean true in every finite graph state');
+    }
+    const retainedSource = retainedVariable === undefined ? undefined : await readFile(retainedFile, 'utf8');
     const protocol = numericProtocol(graph, domain);
-    const generatedSource = projectSource(protocol.data);
+    const generatedSource = projectSource(protocol.data, retainedSource !== undefined);
     if (Buffer.byteLength(generatedSource) > maximumSourceBytes) fail('domain proof source exceeds the supported 8 MiB bound');
     directory = await realpath(await mkdtemp(join(tmpdir(), 'sgd-domain-proof-')));
     const workspace = directory;
@@ -264,15 +326,28 @@ export async function verifyDomainProof(input: {
     const moduleResult = await run('protocol', ['--threads=1', `--memory=${leanMemoryMiB}`, '--root=.',
       '-o', join(modules, 'DomainProtocol.olean'), 'DomainProtocol.lean'], 90_000);
     const moduleAxioms = checkDiagnostics(moduleResult, protocolTheorems);
+    let retainedAxioms: string[] = [];
+    if (retainedSource !== undefined) {
+      await writeFile(join(sources, 'RetainedProtocol.lean'), retainedSource, { mode: 0o400 });
+      const retainedResult = await run('retained', ['--threads=1', `--memory=${leanMemoryMiB}`, '--root=.',
+        '-o', join(modules, 'RetainedProtocol.olean'), 'RetainedProtocol.lean'], 90_000);
+      retainedAxioms = checkDiagnostics(retainedResult, retainedTheorems);
+    }
     const projectResult = await run('project', ['--threads=1', `--memory=${leanMemoryMiB}`, '--root=.',
       '-o', join(modules, 'DomainProof.olean'), 'DomainProof.lean'], 90_000);
-    const projectAxioms = checkDiagnostics(projectResult, projectTheorems);
+    const projectAxioms = checkDiagnostics(projectResult, [...projectTheorems, ...(retainedSource === undefined ? [] : projectRetainedTheorems)]);
     if (trustedSource !== await readFile(protocolFile, 'utf8')) fail('trusted domain proof module changed during verification', diagnostics);
+    if (retainedSource !== undefined && retainedSource !== await readFile(retainedFile, 'utf8')) {
+      fail('trusted retained proof module changed during verification', diagnostics);
+    }
     const verification: DomainProofVerification = {
       schema: 'sgd-domain-proof-v1', profile: 'serial-port-outcomes-v1', leanVersion,
       graphSha256: sha256(JSON.stringify(graph)), bindingSha256: sha256(JSON.stringify(domain)),
       protocolDataSha256: sha256(JSON.stringify(protocol.data)), trustedModuleSha256: sha256(trustedSource),
-      projectProofSha256: sha256(generatedSource), axioms: [...new Set([...moduleAxioms, ...projectAxioms])].sort(compare),
+      ...(retainedSource === undefined || retainedVariable === undefined ? {} : {
+        retainedProof: { variable: retainedVariable, trustedModuleSha256: sha256(retainedSource), scope: 'abstract-owner-token-and-graph-residency' as const },
+      }),
+      projectProofSha256: sha256(generatedSource), axioms: [...new Set([...moduleAxioms, ...retainedAxioms, ...projectAxioms])].sort(compare),
       limits: { threads: 1, memoryMiB: leanMemoryMiB, compilationTimeoutMs: 90000 },
       states: protocol.states, events: protocol.events, operations: protocol.operations,
       scope: { input: 'exact-finite-graph', graphProvenance: 'controlled-TLC-required-by-build-caller',
@@ -281,6 +356,7 @@ export async function verifyDomainProof(input: {
     };
     return { verification, files: [
       { path: 'proof/DomainProtocol.lean', content: trustedSource },
+      ...(retainedSource === undefined ? [] : [{ path: 'proof/RetainedProtocol.lean', content: retainedSource }]),
       { path: 'proof/DomainProof.lean', content: generatedSource },
       { path: 'proof/lean.log', content: diagnostics.map(entry => JSON.stringify(entry)).join('\n') + '\n', volatile: true },
       { path: 'proof/verification.json', content: JSON.stringify(verification, null, 2) + '\n' },

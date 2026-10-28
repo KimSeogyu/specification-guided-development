@@ -112,7 +112,7 @@ test('controlled TLC domain build requires a real Lean proof and preserves publi
   } }));
   await assert.rejects(buildProjectReport(input), /TLC208/);
   assert.deepEqual(await contents(out), published);
-  await writeFile(project, JSON.stringify({ ...configuration, targets: ['rust'] }));
+  await writeFile(project, JSON.stringify({ ...configuration, targets: ['unsupported'] }));
   await assert.rejects(buildProjectReport(input), /TypeScript|typescript|TLC208/);
   assert.deepEqual(await contents(out), published);
 });

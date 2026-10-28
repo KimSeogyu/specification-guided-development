@@ -1,6 +1,8 @@
 import { generateRetainedTypeScript } from './backends/retained-typescript.js';
 import { validateRetainedOperation } from './retained-operation.js';
 import { generateDomainTypeScript } from './backends/domain-typescript.js';
+import { generateDomainRust } from './backends/domain-rust.js';
+import { checkRustDomainArtifact } from './rust-domain-artifact.js';
 import { validateDomainBinding } from './domain-validation.js';
 import { verifyDomainProof } from './domain-proof.js';
 import { lstat, readFile, realpath } from 'node:fs/promises';
@@ -200,12 +202,18 @@ async function collectArtifacts(input: BuildInput): Promise<CollectedArtifacts> 
       if (project.binding.domain !== undefined) {
         if (!input.lean) throw new Error('TLC208: domain generation requires --lean pointing to Lean 4.35.0');
         validateDomainBinding({ automaton, domain: project.binding.domain });
-        const proof = await verifyDomainProof({ automaton, domain: project.binding.domain, lean: input.lean });
+        const retained = project.binding.rust?.retainedVariable;
+        if (retained !== undefined && (automaton.variables.find(variable => variable.name === retained)?.kind !== 'boolean' ||
+            automaton.nodes.some(node => node.values[retained]?.kind !== 'boolean' || node.values[retained]?.value !== true))) {
+          throw new Error('TLC208: Rust payload residency requires a Boolean variable that remains true in every reachable state');
+        }
+        const proof = await verifyDomainProof({ automaton, domain: project.binding.domain, lean: input.lean,
+          ...(retained === undefined ? {} : { retainedVariable: retained }) });
         for (const file of proof.files) {
           const artifact = compilerFile({ ...file, ...(file.path.endsWith('.log') ? { volatile: true } : {}) });
           files.push(evidenceFile(artifact, file.path.endsWith('.log') ? 'log' : 'verification'));
         }
-        checks.push({ kind: 'domain-protocol', role, scope: 'per-live-owner-serial-async-ports',
+        checks.push({ kind: 'domain-protocol', role, scope: project.targets.includes('rust') ? 'per-live-owner-serial-ports' : 'per-live-owner-serial-async-ports',
           proof: 'lean4-kernel', leanVersion: '4.35.0', operations: project.binding.domain.operations.map(operation => operation.name),
           nativeBackend: 'not-formally-verified' });
       }
@@ -213,9 +221,18 @@ async function collectArtifacts(input: BuildInput): Promise<CollectedArtifacts> 
         const backendInput = { automaton, className: project.binding.className };
         const operation = project.binding.operation;
         const domain = project.binding.domain;
-        const generated = domain !== undefined ? generateDomainTypeScript({ ...backendInput, domain })
-          : operation === undefined ? ownedBackends[target](backendInput)
+        const generated = target === 'rust'
+          ? domain === undefined ? (() => { throw new Error('TLC208: Rust generation requires a domain binding'); })()
+            : generateDomainRust({ ...backendInput, domain, ...(project.binding.rust === undefined ? {} : { retainedVariable: project.binding.rust.retainedVariable }) })
+          : domain !== undefined ? generateDomainTypeScript({ ...backendInput, domain })
+          : operation === undefined ? ownedBackends.typescript(backendInput)
           : generateRetainedTypeScript({ ...backendInput, operation });
+        if (target === 'rust' && domain !== undefined) {
+          const source = generated.find(file => file.path === 'src/lib.rs');
+          if (source === undefined || typeof source.content !== 'string') throw new Error('TLC208: generated Rust source is missing');
+          checkRustDomainArtifact({ source: source.content, automaton, domain, className: project.binding.className,
+            ...(project.binding.rust === undefined ? {} : { retainedVariable: project.binding.rust.retainedVariable }) });
+        }
         files.push(...generated.map(file => compilerFile({ ...file, path: `${target}/${file.path}` })));
       }
     }

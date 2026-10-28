@@ -30,6 +30,73 @@ structure Model where
 def Transition (model : Model) (source event target : Nat) : Prop :=
   Edge.mk source event target ∈ model.edges
 
+def lookupEdge (edges : List Edge) (source event : Nat) : Option Nat :=
+  match edges with
+  | [] => none
+  | edge :: rest =>
+      if edge.source = source ∧ edge.event = event then some edge.target
+      else lookupEdge rest source event
+
+theorem lookup_edge_sound (edges : List Edge) (source event target : Nat)
+    (found : lookupEdge edges source event = some target) :
+    Edge.mk source event target ∈ edges := by
+  induction edges with
+  | nil => simp [lookupEdge] at found
+  | cons edge rest ih =>
+      simp only [lookupEdge] at found
+      split at found
+      · rename_i same
+        cases edge with
+        | mk s e t =>
+          simp only at same found
+          obtain ⟨rfl, rfl⟩ := same
+          cases found
+          exact List.Mem.head _
+      · exact List.Mem.tail _ (ih found)
+
+theorem lookup_transition_sound (model : Model) (source event target : Nat)
+    (found : lookupEdge model.edges source event = some target) :
+    Transition model source event target := lookup_edge_sound model.edges source event target found
+
+theorem lookup_none_iff_no_transition (model : Model) (source event : Nat) :
+    lookupEdge model.edges source event = none ↔ ¬ ∃ target, Transition model source event target := by
+  have complete (edges : List Edge) : lookupEdge edges source event = none ↔
+      ¬ ∃ target, Edge.mk source event target ∈ edges := by
+    induction edges with
+    | nil => simp [lookupEdge]
+    | cons edge rest ih =>
+      cases edge with
+      | mk s e t =>
+        simp only [lookupEdge]
+        split
+        · rename_i same
+          obtain ⟨rfl, rfl⟩ := same
+          simp
+        · rename_i different
+          simp only [ih, List.mem_cons, not_exists, not_or]
+          constructor
+          · intro absent target
+            exact ⟨by intro equal; cases equal; exact different ⟨rfl, rfl⟩, absent target⟩
+          · intro absent target
+            exact (absent target).2
+  exact complete model.edges
+
+/- This is reachability in the input graph, independently of generated code.
+   Connecting a native implementation to this relation is a separate obligation. -/
+inductive Reachable (model : Model) : Nat → Prop
+  | initial : Reachable model model.initial
+  | step {source event target : Nat} : Reachable model source →
+      Transition model source event target → Reachable model target
+
+theorem reachable_preserves_invariant (model : Model) (invariant : Nat → Prop)
+    (initial : invariant model.initial)
+    (closed : ∀ source event target, invariant source →
+      Transition model source event target → invariant target)
+    {state : Nat} (reachable : Reachable model state) : invariant state := by
+  induction reachable with
+  | initial => exact initial
+  | step prior edge ih => exact closed _ _ _ ih edge
+
 def Enabled (model : Model) (source event : Nat) : Prop :=
   ∃ target, Transition model source event target
 
@@ -252,6 +319,8 @@ theorem completion_cannot_leave_pending (model : Model) (checked : valid model =
 end SGD.DomainProtocol
 
 #print axioms SGD.DomainProtocol.valid_implies_contract
+#print axioms SGD.DomainProtocol.lookup_transition_sound
+#print axioms SGD.DomainProtocol.lookup_none_iff_no_transition
 #print axioms SGD.DomainProtocol.pending_has_unique_outcomes
 #print axioms SGD.DomainProtocol.pending_rejects_other_events
 #print axioms SGD.DomainProtocol.pending_entry_is_owned

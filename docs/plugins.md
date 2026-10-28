@@ -3,7 +3,7 @@
 Codex and Claude Code have independent packages, manifests, skills, and MCP
 configuration. Install only the package for the host you use.
 
-The [0.3.0-alpha.1 release](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.3.0-alpha.1)
+The [0.3.0-alpha.2 release](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.3.0-alpha.2)
 provides macOS arm64 packages. The bundled TypeScript 7.0.2 compiler is native.
 The launcher checks `runtime-platform.json` and refuses a different operating
 system or CPU architecture. Build on another host to prepare its matching package.
@@ -106,7 +106,7 @@ Keep the existing marketplace name and qualified plugin ID.
 
 1. Extract and validate the new package. Keep the previous package unchanged.
 2. Put the complete new payload under a new version directory in the existing
-   marketplace, such as `releases/0.3.0-alpha.1/plugin`.
+   marketplace, such as `releases/0.3.0-alpha.2/plugin`.
 3. Update only that plugin's catalogue entry. Codex uses
    `.agents/plugins/marketplace.json` and `source.path`. Claude uses
    `.claude-plugin/marketplace.json`, `source`, and `version`. Save the old

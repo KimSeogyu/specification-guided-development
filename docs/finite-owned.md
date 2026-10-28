@@ -1,6 +1,6 @@
 # Generate a finite state authority
 
-Use the `finite-owned` profile when the application must obtain its modeled state from generated code. This profile preserves every supported variable in the TLC graph. It generates a TypeScript 7 authority. The older project v1 bindings generate declaration and import diagnostics; they do not own application state.
+Use the `finite-owned` profile when the application must obtain its modeled state from generated code. This profile preserves every supported variable in the TLC graph. It generates a TypeScript 7 authority; a domain binding can also generate Rust. The older project v1 bindings generate declaration and import diagnostics; they do not own application state.
 
 ## Run the example
 
