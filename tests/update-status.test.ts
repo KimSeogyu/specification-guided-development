@@ -206,9 +206,9 @@ test('a running runtime newer than the selected channel retains ahead status', a
   });
 });
 
-test('a superseded legacy release flag cannot poison the newest valid release metadata', async () => {
-  const legacy = fixture('0.0.0'); legacy.release.prerelease = true;
-  await withCatalog([legacy, fixture()], async () => {
+test('an inconsistent prerelease flag in the catalog cannot poison valid release metadata', async () => {
+  const inconsistent = fixture('0.0.0'); inconsistent.release.prerelease = true;
+  await withCatalog([inconsistent, fixture()], async () => {
     assert.equal((await checkUpdateStatus(input)).kind, 'current');
   });
 });

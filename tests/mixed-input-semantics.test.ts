@@ -177,7 +177,7 @@ test('mixed erasure preserves full literal vocabularies, renamed parameters and 
   }
 });
 
-test('mixed-to-v1 erasure checks every erased finite event without changing legacy input shape', () => {
+test('mixed-to-v1 erasure checks every erased finite event and the single-input shape', () => {
   const high = symbolicModel({
     version: 1, kind: 'symbolic-owned', name: 'Abstract', checkDeadlock: true, variables: ['payload'],
     input: { parameter: 'value', domain: 'Values', next: 'Next' }, initial: { payload: literal('none') },

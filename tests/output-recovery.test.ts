@@ -193,7 +193,7 @@ test('an unrelated file added inside a dead lock is preserved instead of recursi
 test('empty locks and unverifiable owner identities fail closed without changing user files', async t => {
   const fixture = await mkdtemp(join(tmpdir(), 'sgd-output-unverifiable-'));
   t.after(async () => { await rm(fixture, { recursive: true, force: true }); });
-  const out = join(fixture, 'legacy');
+  const out = join(fixture, 'empty-lock');
   await mkdir(out);
   await writeFile(join(out, '.sgd-output.lock'), '');
   await writeFile(join(out, 'user.txt'), 'keep');
