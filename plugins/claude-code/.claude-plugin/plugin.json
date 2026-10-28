@@ -1,6 +1,6 @@
 {
   "name": "specification-guided-development",
-  "version": "0.3.0-alpha.2",
+  "version": "0.3.0-alpha.3",
   "description": "Generate TypeScript and Rust domains and TypeScript source checks from TLA+ models.",
   "author": {
     "name": "KimSeogyu"

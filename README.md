@@ -88,7 +88,7 @@ The evaluation runs `--verdict`, compares JavaScript and native execution with t
 
 Independent Codex and Claude Code packages provide the modeling skill and local MCP tools. Follow the [plugin guide](docs/plugins.md) for installation, packaging, and updates.
 
-The [v0.3.0-alpha.2 release](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.3.0-alpha.2) provides macOS arm64 plugin archives.
+The [v0.3.0-alpha.3 release](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.3.0-alpha.3) provides macOS arm64 plugin archives.
 
 ## Other TypeScript profiles
 
