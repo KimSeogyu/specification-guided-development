@@ -92,8 +92,9 @@ cargo build --manifest-path generated/rust/Cargo.toml
 ```
 
 The generated crate has no dependencies and uses Rust 2021. Generation and
-`build --check` require Rust 1.92.0 and its matching rustfmt on `PATH`. The
-build rejects a missing tool or a different version. The generated
+`build --check` require Rust 1.92.0 and its matching rustfmt. The tools can be
+available directly or through `rustup`. The build rejects an unavailable
+matching toolchain. The generated
 `rustfmt.toml` fixes formatting settings so `cargo fmt` preserves the generated
 Rust bytes when it uses the same toolchain.
 Add it to an application under a local dependency name, using the package name

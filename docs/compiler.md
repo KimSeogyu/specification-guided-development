@@ -80,7 +80,7 @@ The `visualize` command accepts repeated `--ir` options to show several models t
 
 The MCP server exposes `sgd_model`, `sgd_build`, `sgd_compile`, `sgd_inspect`, `sgd_visualize`, `sgd_refine`, `sgd_check_contracts`, and `sgd_update_status`.
 Model and build calls accept `project`, `jar`, and `out` paths.
-Both return `sgd-build-summary-v1` by default. The summary reports graph scope and counts, completed checks, prepared artifact paths, and evidence freshness. Its artifact list includes files added during [canonical artifact preparation](artifact-contract.md).
+Both return `sgd-build-summary-v2` by default. The summary reports graph scope and counts, completed checks, prepared artifact paths, and evidence freshness. Its artifact list includes files added during [canonical artifact preparation](artifact-contract.md).
 Set `detail: "full"` to return the complete automaton IR. `sgd_inspect`, CLI `model` and `build` commands, and the JavaScript `buildProject()` API retain their complete IR responses. The additive `buildProjectReport()` API returns both `automaton` and `summary` from one build execution.
 Build and compile calls also accept `check: true` to compare managed output without updating it.
 For a successful build check, summary checks describe the current invocation, but evidence paths refer to retained output files. `freshInvocationLogRetained: false` states that the check kept no new invocation log. Model-only summaries omit executable, orbit, oracle, and row-binding checks that the model command does not run.

@@ -96,7 +96,7 @@ test('real v1 report preserves projection scope and the physical published outpu
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('real finite reports retain current check facts, historical logs, and model-only choices', { skip: !jar }, async () => {
+test('real finite reports retain current check facts, existing logs, and model-only choices', { skip: !jar }, async () => {
   assert.ok(jar);
   const root = await mkdtemp(join(tmpdir(), 'sgd-report-v2-'));
   try {

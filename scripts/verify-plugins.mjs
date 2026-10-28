@@ -127,7 +127,7 @@ async function verifyRetainedOperation({ client, plugin, name }) {
     } },
   }));
   const summary = toolValue(await client.callTool({ name: 'sgd_build', arguments: { project, jar, out } }));
-  assert.equal(summary.schema, 'sgd-build-summary-v1');
+  assert.equal(summary.schema, 'sgd-build-summary-v2');
   assert.equal(summary.operation, 'build');
   assert.deepEqual(summary.verification.checks.find(check => check.kind === 'retained-operation'), {
     kind: 'retained-operation', role: 'model', scope: 'one-borrowed-synchronous-callback', payload: 'retained-on-all-return-paths',
