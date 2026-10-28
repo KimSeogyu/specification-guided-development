@@ -80,7 +80,7 @@ The `visualize` command accepts repeated `--ir` options to show several models t
 
 The MCP server exposes `sgd_model`, `sgd_build`, `sgd_compile`, `sgd_inspect`, `sgd_visualize`, `sgd_refine`, `sgd_check_contracts`, and `sgd_update_status`.
 Model and build calls accept `project`, `jar`, and `out` paths.
-Both return `sgd-build-summary-v1` by default. The summary reports graph scope and counts, completed checks, prepared artifact paths, and evidence freshness. Its artifact list includes files added during [canonical artifact preparation](artifact-contract.md).
+Both return `sgd-build-summary-v2` by default. The summary reports graph scope and counts, completed checks, prepared artifact paths, and evidence freshness. Its artifact list includes files added during [canonical artifact preparation](artifact-contract.md).
 Set `detail: "full"` to return the complete automaton IR. `sgd_inspect`, CLI `model` and `build` commands, and the JavaScript `buildProject()` API retain their complete IR responses. The additive `buildProjectReport()` API returns both `automaton` and `summary` from one build execution.
 Build and compile calls also accept `check: true` to compare managed output without updating it.
 For a successful build check, summary checks describe the current invocation, but evidence paths refer to retained output files. `freshInvocationLogRetained: false` states that the check kept no new invocation log. Model-only summaries omit executable, orbit, oracle, and row-binding checks that the model command does not run.
@@ -118,7 +118,6 @@ Its npm scripts invoke `node node_modules/typescript/bin/tsc` explicitly.
 The generated checker uses that same native compiler through `typescript/unstable/sync` and `typescript/unstable/ast`.
 The native API provides the AST and resolved module symbols used by the supported source checks.
 These entry points are unstable, so the emitted package pins `typescript` to exactly `7.0.2`.
-The [TypeScript 7.0 announcement](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/#running-side-by-side-with-typescript-60) distinguishes the unavailable stable legacy API.
 The generated checker does not claim that its native API is stable or that source checks replace application type checking.
 The native API terminates its child process on close and can write `context canceled` to stderr during shutdown.
 Read the checker's JSON diagnostics and exit status to determine the result.

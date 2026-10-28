@@ -103,7 +103,7 @@ export function renderDomainRust(input: OwnedBackendInput & { domain: DomainBind
   return [
     { path: 'Cargo.toml', content: `[package]\nname = "sgd-domain-${packageHash}"\nversion = "0.1.0"\nedition = "2021"\npublish = false\n` },
     { path: 'src/lib.rs', content: source },
-    { path: 'README.md', content: readme },
+    { path: 'README.md', content: readme.replace(/[ \t]+$/gm, '') },
   ];
 }
 

@@ -25,7 +25,7 @@ export const VerificationCheckSchema = z.discriminatedUnion('kind', [
     nativeBackend: z.literal('not-formally-verified') }).strict(),
   z.object({ kind: z.literal('retained-operation'), role: ModelRole,
     scope: z.literal('one-borrowed-synchronous-callback'), payload: z.literal('retained-on-all-return-paths') }).strict(),
-  z.object({ kind: z.literal('legacy-tlc'), role: z.literal('model'),
+  z.object({ kind: z.literal('projected-tlc'), role: z.literal('model'),
     scope: z.literal('observed-possible-transitions') }).strict(),
   z.object({ kind: z.literal('controlled-tlc'), role: ModelRole,
     profile: z.enum(['finite-owned-v1', 'symbolic-owned-v1']),
@@ -52,7 +52,7 @@ export const EvidenceArtifactSchema = z.object({ path: z.string(), role: Evidenc
 export type EvidenceArtifact = z.infer<typeof EvidenceArtifactSchema>;
 
 export const BuildSummarySchema = z.object({
-  schema: z.literal('sgd-build-summary-v1'), operation: z.enum(['model', 'build']),
+  schema: z.literal('sgd-build-summary-v2'), operation: z.enum(['model', 'build']),
   output: z.object({ directory: z.string(), artifacts: z.array(z.string()) }).strict(),
   graph: GraphSummarySchema,
   verification: z.object({ invocation: z.literal('completed'), output: z.enum(['generated', 'checked']),
@@ -89,7 +89,7 @@ export function summarizeBuild(input: {
   files: readonly GeneratedFile[]; checks: VerificationCheck[]; evidence: CollectedEvidence[];
 }): BuildSummary {
   return BuildSummarySchema.parse({
-    schema: 'sgd-build-summary-v1', operation: input.operation,
+    schema: 'sgd-build-summary-v2', operation: input.operation,
     output: { directory: input.out, artifacts: input.files.map(file => file.path) }, graph: input.graph,
     verification: { invocation: 'completed', output: input.check ? 'checked' : 'generated',
       freshInvocationLogRetained: !input.check && input.evidence.some(item => item.role === 'log'), checks: input.checks },

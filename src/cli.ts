@@ -22,8 +22,8 @@ const help = `sgd ${version}
   update-status --host codex|claude-code --channel stable|alpha
   mcp
 
-build runs TLC before TypeScript generation. Project v2 generates finite state authorities.
-V2 binding.domain generates TypeScript domain code and injected async ports; --lean requires Lean 4.35.0.
+build runs TLC before code generation. Project v2 generates finite state authorities.
+V2 binding.domain generates TypeScript or Rust domain code with injected ports; --lean requires Lean 4.35.0.
 Project v3 symbolic-owned compiles supported SANY equality/copy actions with data input.
 Project v4 adds two or three inputs from disjoint nominal domains.
 refine checks state, enabled-input decisions, and observable action erasure.

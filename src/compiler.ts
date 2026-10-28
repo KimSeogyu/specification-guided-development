@@ -249,7 +249,7 @@ async function collectArtifacts(input: BuildInput): Promise<CollectedArtifacts> 
     return { automaton, files, recheck, checks, evidence, graph: summarizeGraph(automaton, 'model') };
   }
   const model = await runTlc({ spec: resolve(dirname(projectPath), project.spec), config: resolve(dirname(projectPath), project.config), jar: input.jar });
-  checks.push({ kind: 'legacy-tlc', role: 'model', scope: 'observed-possible-transitions' });
+  checks.push({ kind: 'projected-tlc', role: 'model', scope: 'observed-possible-transitions' });
   const compiled = compile({ dot: model.dot, project });
   const files = (input.modelOnly ? compiled.files.filter(file => file.path === 'automaton.json' || file.path === 'binding.json') : compiled.files).map(compilerFile);
   files.push(

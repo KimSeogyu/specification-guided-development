@@ -11,21 +11,21 @@ function nativeFiniteValue(value: FiniteValue): string {
     case 'integer': return `${value.value}n`;
   }
 }
-function expression(value: SymbolicExpression, inputs: ReadonlyMap<string, string>, legacyInput: string | undefined): string {
+function expression(value: SymbolicExpression, inputs: ReadonlyMap<string, string>, singleInput: string | undefined): string {
   switch (value.kind) {
     case 'literal': return `Object.freeze(${JSON.stringify(value.value)})`;
     case 'state': return `state[${literal(value.variable)}]`;
     case 'input': {
-      const name = 'parameter' in value ? inputs.get(value.parameter) : legacyInput;
+      const name = 'parameter' in value ? inputs.get(value.parameter) : singleInput;
       if (name === undefined) throw new Error('TLC301: unknown symbolic input parameter');
       return name;
     }
     case 'next-state': throw new Error('TLC301: primed expressions cannot execute in guards or assignment values');
   }
 }
-function predicate(guard: SymbolicGuard, inputs: ReadonlyMap<string, string>, legacyInput: string | undefined): string {
-  const render = (value: SymbolicExpression): string => expression(value, inputs, legacyInput);
-  const nested = (value: SymbolicGuard): string => predicate(value, inputs, legacyInput);
+function predicate(guard: SymbolicGuard, inputs: ReadonlyMap<string, string>, singleInput: string | undefined): string {
+  const render = (value: SymbolicExpression): string => expression(value, inputs, singleInput);
+  const nested = (value: SymbolicGuard): string => predicate(value, inputs, singleInput);
   switch (guard.kind) {
     case 'boolean': return String(guard.value);
     case 'equal': return `same(${render(guard.left)}, ${render(guard.right)})`;
@@ -46,8 +46,8 @@ export function generateSymbolicTypeScript(input: SymbolicBackendInput): Generat
   const parameters = symbolicInputs(model);
   const definitions = symbolicInputDefinitions(model);
   const inputNames = new Map(parameters.map((parameter, index) => [parameter.parameter, model.version === 1 ? 'inputValue' : `inputValue${index}`]));
-  const legacyInput = model.version === 1 ? 'inputValue' : undefined;
-  const render = (value: SymbolicExpression): string => expression(value, inputNames, legacyInput);
+  const singleInput = model.version === 1 ? 'inputValue' : undefined;
+  const render = (value: SymbolicExpression): string => expression(value, inputNames, singleInput);
   const argumentNames = parameters.map((_parameter, index) => model.version === 1 ? 'input' : `input_${index}`);
   const signature = argumentNames.map((name, index) => {
     const definition = definitions[index];
@@ -91,7 +91,7 @@ export function generateSymbolicTypeScript(input: SymbolicBackendInput): Generat
     if (!value) throw new Error('TLC301: incomplete symbolic Init');
     return `Object.freeze(${JSON.stringify(value)})`;
   });
-  const choices = model.branches.map((branch, index) => `    if (${predicate(branch.guard, inputNames, legacyInput)}) {
+  const choices = model.branches.map((branch, index) => `    if (${predicate(branch.guard, inputNames, singleInput)}) {
       if (selected !== -1) return reject('ambiguous');
       selected = ${index};
     }`).join('\n');

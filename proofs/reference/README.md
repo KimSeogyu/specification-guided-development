@@ -30,10 +30,8 @@ to source observations with unchanged actor and acceptance/rejection labels.
 `MixedProfiles` proves operational lowering, whole-program checking, and full-query
 Rust authority installation. `MixedCheckedTraces` and `MixedGraphDevelopment`
 connect mixed execution to source observations and approved graph revisions.
-These modules do not restore a Rust product backend. The [scope audit](AUDIT.md)
+These proofs do not verify the production Rust backend. The [scope audit](AUDIT.md)
 maps each requirement to its proof and states the native implementation limits.
 
-Counterexamples remain in the proof modules to show why omitted state,
-unclassified writes, unsafe resets, and misleading interpretations invalidate
-broader claims. Deprecated lifecycle experiments and chronological status
-records are not part of this reference library.
+Counterexamples show why omitted state, unclassified writes, unsafe resets,
+and misleading interpretations invalidate broader claims.

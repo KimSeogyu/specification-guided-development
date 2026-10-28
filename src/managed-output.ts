@@ -130,7 +130,7 @@ async function readOwner(directory: string): Promise<LeaseOwner> {
     if (!stat.isFile() || stat.isSymbolicLink()) fail('output lock has unverifiable owner metadata. Inspect the lock before manual recovery; it will not be expired by age.');
     return Owner.parse(JSON.parse(await readFile(ownerPath, 'utf8')));
   } catch (error) {
-    fail('output directory is locked by an unverifiable owner. Legacy empty locks and incomplete owner metadata require manual inspection; no generated file was adopted or removed.');
+    fail('output directory is locked by an unverifiable owner. Empty locks and incomplete owner metadata require manual inspection; no generated file was adopted or removed.');
   }
 }
 
@@ -178,7 +178,7 @@ async function acquire(root: string, check: boolean, owner: LeaseOwner, identity
   const ancestors: string[] = [];
   for (;;) {
     const stat = await lstat(directory);
-    if (!stat.isDirectory() || stat.isSymbolicLink()) fail('output directory is locked by an unverifiable legacy lock. Inspect the lock before manual recovery.');
+    if (!stat.isDirectory() || stat.isSymbolicLink()) fail('output directory is locked by an unverifiable lock. Inspect the lock before manual recovery.');
     const previous = await readOwner(directory);
     ancestors.push(previous.id);
     const next = join(directory, 'next');

@@ -303,8 +303,8 @@ async function artifact(root, host) {
   const duplicate = path.join(directory, '.codex-plugin/plugin.json');
   if (host === 'codex') {
     try {
-      const legacy = await json(duplicate);
-      requireThat(legacy.name === manifest.name && legacy.version === manifest.version, 'ARTIFACT_DUPLICATE_MANIFEST', 'Native and legacy plugin manifests disagree.');
+      const duplicateManifest = await json(duplicate);
+      requireThat(duplicateManifest.name === manifest.name && duplicateManifest.version === manifest.version, 'ARTIFACT_DUPLICATE_MANIFEST', 'Plugin manifests disagree.');
     } catch (error) { if (error.code !== 'ENOENT') throw error; }
   }
   return { directory, manifestPath, version: manifest.version, files, receipt: { version: manifest.version, platform: platform.platform, arch: platform.arch, fileCount: files.length, logicalBytes: files.reduce((sum, file) => sum + file.size, 0), inventorySha256: digestInventory(files), skillSha256: files.find(file => file.path === 'skills/specification-guided-development/SKILL.md').sha256, runtimeSha256: digestInventory(files.filter(file => file.path.startsWith('runtime/'))) } };

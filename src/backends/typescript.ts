@@ -26,7 +26,7 @@ export function generateTypeScript(input: BackendInput): GeneratedFile[] {
 
 const runtime = String.raw`
 // Uses the native TypeScript 7.0.2 API, pinned because its API entry points are unstable.
-// Native project snapshots provide the AST and module semantics without a legacy compiler.
+// Native project snapshots provide syntax and module resolution.
 // Transition profile: bare configured function calls declare explicit static edges.
 // It does not prove runtime state, guards, or the behavior of another function.
 // Only explicit input files are checked; runtime code generation is not analyzed.

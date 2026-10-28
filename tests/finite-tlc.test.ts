@@ -321,7 +321,7 @@ Spec == Init /\ [][Next]_count
   } finally { await files.dispose(); }
 });
 
-test('legacy PrintT output cannot enter the pinned controlled classifier or bypass source admission', { skip: !jar }, async () => {
+test('uncontrolled PrintT output cannot enter the pinned classifier or bypass source admission', { skip: !jar }, async () => {
   assert.ok(jar);
   const files = await fixture();
   try {

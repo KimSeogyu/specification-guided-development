@@ -95,3 +95,18 @@ For every concrete orbit and representative input tuple, the checker compares en
 A provenance identity can encode receipt time and raw source schema. The model does not define that encoding or recover an application object from an arbitrary identity. A production adapter must preserve the application's payload equality relation and copy the associated owned values under the modeled updates.
 
 The existing fact-merge model excludes provenance. An explicit erasure check can establish a relation between the two supported models. It does not establish the adapter, the actual Fact equality binding, partition rollback, file transactions, restart behavior, or exclusive writers. Those claims require application evidence. This compiler example has no Parangsae data migration or application-code adoption.
+
+## Mixed opaque and finite inputs
+
+The library supports symbolic IR version 3 through `lowerSymbolicModel` with
+`profile: 'protocol'`. It accepts two or three named inputs, including at least
+one opaque identity and one finite scalar input. The source binds distinct
+configured domains and passes parameters to actions in binder order. Finite
+domains contain 1–64 distinct values of one scalar kind. Repeated domains,
+mixed scalar kinds, missing input origins, and unsupported expressions are
+rejected.
+
+The interpreter keeps finite values and opaque identities distinct, even when
+their text matches. Orbit checking and erasure compare the supported input
+classes and complete successors. This library profile is not a project accepted
+by `sgd build`; using it does not establish native file or resource authority.

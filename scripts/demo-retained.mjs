@@ -225,11 +225,11 @@ async function main() {
       stage = 'negative-controls';
       const negative = join(consumer, 'error-only.mjs');
       await writeFile(negative, `
-function legacy(payload, writer) { return writer(payload); }
+function errorOnly(payload, writer) { return writer(payload); }
 for (const mode of ['ok', 'err']) {
   const payload = { rows: ['earlier-complete', 'technical-prefix'], execution: 'original execution error', ledger: 'terminal uncertain' };
   let calls = 0;
-  const result = legacy(payload, evidence => {
+  const result = errorOnly(payload, evidence => {
     calls++;
     if (evidence !== payload) throw new Error('unexpected payload substitution');
     return mode === 'ok' ? { ok: true, value: 'reported' } : { ok: false, error: 'report write failed' };
@@ -242,7 +242,7 @@ for (const mode of ['ok', 'err']) {
 }
 `);
       const loss = traces(await command('negative-error-only-run', process.execPath, [negative], scenario));
-      assert.ok(loss.every(row => row.payloadSame === false && row.rows === null && row.execution === null && row.ledger === null), 'the legacy returned result must omit evidence');
+      assert.ok(loss.every(row => row.payloadSame === false && row.rows === null && row.execution === null && row.ledger === null), 'the error-only result must omit evidence');
       assert.throws(() => assertPreserved(loss, true), assert.AssertionError);
       report.negativeControls.errorOnly = { kind: 'executed-synthetic-loss-class', oracle: 'same-payload-and-original-facts', status: 'rejected-as-expected', observations: loss,
         scope: 'returned result loses access to payload; no garbage-collection or destruction claim' };

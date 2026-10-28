@@ -63,7 +63,7 @@ TLC checks the configured finite model; Lean checks its operation protocol. Thes
 
 In a copy of the domain project, set `targets` to `["rust"]` or `["typescript", "rust"]`. Keep the copied TLA+ model and configuration beside the project file. Use the same `build` command with the copied project path. Rust generation requires a `binding.domain` and rejects unsupported Rust identifiers. It does not support the other Rust profiles.
 
-Rust generation requires Rust 1.92.0 and its matching rustfmt on `PATH`. The output under `rust/` is a dependency-free Rust 2021 crate with a local formatting configuration. Build it with `cargo build --manifest-path <output>/rust/Cargo.toml`. Implement `Ports` for an async owner or `SyncPorts` for a synchronous owner that owns a payload from construction. Call `send` for public events and the named operation for its port. The [domain guide](docs/domain-code.md#rust) shows both APIs.
+Rust generation requires Rust 1.92.0 and its matching rustfmt, available directly or through `rustup`. The output under `rust/` is a dependency-free Rust 2021 crate with a local formatting configuration. Build it with `cargo build --manifest-path <output>/rust/Cargo.toml`. Implement `Ports` for an async owner or `SyncPorts` for a synchronous owner that owns a payload from construction. Call `send` for public events and the named operation for its port. The [domain guide](docs/domain-code.md#rust) shows both APIs.
 
 The build checks the generated Rust artifact against the graph and Lean checks the finite protocol. Set `binding.rust.retainedVariable` only when a modeled Boolean is true in every reachable state and represents the sync owner's live payload. That option exposes only the payload-owning sync owner. The artifact checker, emitter, rustfmt, Rust compiler, and native execution remain trust boundaries; this is not a formal proof of Rust code or of the application. Dropping an async operation future after it starts, or a panic, can leave the owner pending.
 
@@ -88,7 +88,7 @@ The evaluation runs `--verdict`, compares JavaScript and native execution with t
 
 Independent Codex and Claude Code packages provide the modeling skill and local MCP tools. Follow the [plugin guide](docs/plugins.md) for installation, packaging, and updates.
 
-The [v0.3.0-alpha.2 release](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.3.0-alpha.2) provides macOS arm64 plugin archives.
+The [v0.3.0-alpha.3 release](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.3.0-alpha.3) provides macOS arm64 plugin archives.
 
 ## Other TypeScript profiles
 

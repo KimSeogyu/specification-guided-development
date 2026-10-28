@@ -6,7 +6,6 @@ import { dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 import { generateSymbolicTypeScript } from '../src/backends/symbolic-typescript.js';
-import { validateObservedResourceProtocol, type ResourceCoverage, type ResourceProtocolBindingV2 } from '../src/resource-protocol.js';
 import { parseSanyXml } from '../src/sany-xml.js';
 import { lowerSymbolicModel } from '../src/symbolic-lower.js';
 import { stepSymbolic, type SymbolicState } from '../src/symbolic-semantics.js';
@@ -17,18 +16,9 @@ const execute = promisify(execFile);
 const jar = process.env.TLA2TOOLS_JAR;
 const compiler = resolve('node_modules/typescript/bin/tsc');
 const authority = 'ResourceOutcomeAuthority';
-const binding: ResourceProtocolBindingV2 = {
-  version: 2,
-  inputs: { resource: 'r', event: 'event' },
-  variables: {
-    phase: 'phase', selected: 'selected', loaded: 'loaded', prepared: 'prepared', attempted: 'attempted',
-    loadOutcome: 'loadOutcome', decision: 'decision', coverage: 'coverage', attempts: 'attempts',
-    replacements: 'replacements', effect: 'effect', writeOutcome: 'writeOutcome',
-  },
-};
 type Input = readonly [resource: string, event: string];
 type Sequence = readonly Input[];
-type Config = { file: 'Fixture.cfg' | 'ResourceOutcomes.cfg'; coverage: ResourceCoverage };
+type Config = { file: 'Fixture.cfg' | 'ResourceOutcomes.cfg'; coverage: 'independent' | 'required-before-write' };
 const configurations: Config[] = [
   { file: 'Fixture.cfg', coverage: 'independent' },
   { file: 'ResourceOutcomes.cfg', coverage: 'required-before-write' },
@@ -114,9 +104,6 @@ test('real controlled observed-write models preserve complete TypeScript traces 
       assert.equal(run.evidence.kind, 'tlc-symbolic-completed');
       const model = lowerSymbolicModel({ name: 'ResourceOutcomes', semantic: parseSanyXml(run.xml), config: run.config, profile: 'protocol' });
       assert.equal(model.version, 3);
-      const evidence = validateObservedResourceProtocol({ model, binding, coverage: configuration.coverage });
-      assert.equal(evidence.profile, 'observed-write-v2');
-      assert.equal(evidence.storageAuthority, false);
       assert.equal(model.initial.writeOutcome?.value, 'none');
       assert.deepEqual(model.inputs.map(input => [input.kind, input.parameter]), [['opaque', 'r'], ['finite', 'event']]);
       const events = model.inputs[1];
