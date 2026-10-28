@@ -8,8 +8,8 @@
       "name": "specification-guided-development",
       "source": {
         "source": "archive",
-        "url": "https://github.com/KimSeogyu/specification-guided-development/releases/download/v0.3.0-alpha.1/specification-guided-development-claude-code-0.3.0-alpha.1-darwin-arm64.zip",
-        "sha256": "b17ff15ae4506b1b3f3599ea64f3fd82cec012abbffed9f63f48b805ef6000c1"
+        "url": "https://github.com/KimSeogyu/specification-guided-development/releases/download/v0.3.0-alpha.2/specification-guided-development-claude-code-0.3.0-alpha.2-darwin-arm64.zip",
+        "sha256": "6783fc561f7c3a5ee43650c60df646a48f951423683497ec4ec567054a5c8f2d"
       }
     }
   ]
