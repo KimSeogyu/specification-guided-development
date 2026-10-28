@@ -118,7 +118,6 @@ Its npm scripts invoke `node node_modules/typescript/bin/tsc` explicitly.
 The generated checker uses that same native compiler through `typescript/unstable/sync` and `typescript/unstable/ast`.
 The native API provides the AST and resolved module symbols used by the supported source checks.
 These entry points are unstable, so the emitted package pins `typescript` to exactly `7.0.2`.
-The [TypeScript 7.0 announcement](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/#running-side-by-side-with-typescript-60) distinguishes the unavailable stable legacy API.
 The generated checker does not claim that its native API is stable or that source checks replace application type checking.
 The native API terminates its child process on close and can write `context canceled` to stderr during shutdown.
 Read the checker's JSON diagnostics and exit status to determine the result.

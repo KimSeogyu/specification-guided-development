@@ -28,7 +28,7 @@ export function createServer(): McpServer {
   const detail = z.enum(['summary', 'full']).default('summary').describe('Return the build summary by default, or the complete automaton IR with full. Inspect also returns the complete IR.');
   const absolutePath = z.string().refine(isAbsolute, 'Supply an absolute path.');
   server.registerTool('sgd_check_contracts', {
-    description: 'Compare controlled v3/v4 contract models against supplied baseline sources and publish managed evidence. Check required properties, baseline behavior, and declared composition. Required unsupported native obligations fail. Return a scoped summary; this does not establish independently selected acceptance, a preservation CI gate, or native application authority. Check mode retains previously published logs.',
+    description: 'Compare controlled v3/v4 models with a supplied baseline. Check properties, behavior, and composition; reject unsupported required native obligations. This does not establish acceptance, a CI gate, or native application authority. Check mode retains published logs.',
     inputSchema: z.object({
       project: absolutePath.describe('Absolute path to the candidate contract-system project JSON.'),
       baseline: absolutePath.describe('Absolute path to the supplied baseline contract-system project JSON.'),
@@ -38,20 +38,20 @@ export function createServer(): McpServer {
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   }, args => guarded(() => buildContractComparison(args)));
   server.registerTool('sgd_update_status', {
-    description: 'Compare the running SGD runtime with public release metadata. Select stable releases, or alpha.N releases and stable promotions. Report matching archive metadata without downloading archives. Unknown results do not block modeling. This does not inspect installed plugins or the desktop app.',
+    description: 'Compare the running SGD runtime with stable or alpha release metadata. Report archive metadata without downloading it. This does not inspect installed plugins or the desktop app.',
     inputSchema: UpdateStatusInputSchema,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, args => guarded(() => checkUpdateStatus(args)));
   server.registerTool('sgd_model', {
-    description: 'Run TLC to completion and export the finite automaton. Return a summary with graph scope, completed checks, and evidence paths; detail full returns the complete IR. Execute only models the user authorized.',
+    description: 'Run TLC and export the finite automaton. Return a summary, or the complete IR with detail full. Execute only authorized models.',
     inputSchema: { ...paths, detail }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   }, ({ detail, ...args }) => guarded(async () => {
     const report = await buildProjectReport({ ...args, modelOnly: true });
     return detail === 'full' ? report.automaton : report.summary;
   }));
   server.registerTool('sgd_build', {
-    description: 'Run TLC and generate TypeScript artifacts. Return a summary with graph scope, completed checks, and evidence paths; detail full returns the complete IR. V4 symbolic-owned accepts disjoint data domains; V3 accepts one. These compile SANY equality/copy actions with a finite original-action TLC oracle. V2 generates finite state owners. V1 generates diagnostics.',
-    inputSchema: { ...paths, lean: absolutePath.optional().describe('Lean 4.35.0 executable. Required for v2 binding.domain TypeScript domain generation.'), check, detail }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    description: 'Run TLC and generate code or checks. V2 domains support TypeScript and Rust; Rust generation requires the pinned Rust formatter. V3 and V4 compile supported equality/copy inputs to TypeScript. V1 generates diagnostics. The default response summarizes graph scope and checks; detail full includes the complete IR.',
+    inputSchema: { ...paths, lean: absolutePath.optional().describe('Lean 4.35.0 executable. Required for v2 domain generation.'), check, detail }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   }, ({ detail, lean, ...args }) => guarded(async () => {
     const report = await buildProjectReport({ ...args, ...(lean === undefined ? {} : { lean }) });
     return detail === 'full' ? report.automaton : report.summary;

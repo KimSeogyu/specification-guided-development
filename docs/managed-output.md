@@ -14,8 +14,6 @@ Recovery first checks every recorded path. Each must match its recorded before o
 
 ## Explain stale output
 
-This report was introduced in alpha2 and is included in [v0.2.0-alpha.3](https://github.com/KimSeogyu/specification-guided-development/releases/tag/v0.2.0-alpha.3). Installed runtimes and pinned SDKs retain their packaged behavior until upgraded.
-
 A completed output comparison that fails with `TLC104` reports all differing artifacts. The CLI keeps its nonzero exit and JSON `error` string. MCP keeps `isError: true` and its JSON text `error`. Both add a `diagnostic` object with schema `sgd-stale-output-v1`.
 
 The diagnostic contains the following fields:
@@ -53,14 +51,14 @@ For an invariant or action-property violation, `nextAction` directs the caller t
 
 The runner keeps its error text and bounded output tail, but controlled TLC now uses framed `-tool` output. Raw log text and console prefixes such as `Error: Invariant` are not a compatibility contract. Callers must use the structured failure kind and exact invariant or property name rather than matching those prefixes. Stable diagnostic IDs, CLI exit status, and MCP `isError` remain available.
 
-A complete failure log and a counterexample file are not retained, and the diagnostic exposes no `tracePath`. JavaScript callers can import `TlcFailureError` and `TlcFailureDiagnosticSchema` from `dist/tlc-failure.js`. When a subprocess error exists, it remains available as `cause`. The legacy v1 runner accepts arbitrary JARs and keeps its existing error response without this controlled classification.
+A complete failure log and a counterexample file are not retained, and the diagnostic exposes no `tracePath`. JavaScript callers can import `TlcFailureError` and `TlcFailureDiagnosticSchema` from `dist/tlc-failure.js`. When a subprocess error exists, it remains available as `cause`. The v1 runner accepts arbitrary JARs and does not use this controlled classification.
 
 Classification does not authorize generation. Successful generation still requires normal process completion, an empty queue, no error or warning, stable inputs, a valid graph, and managed publication. Check-only runs retain their existing comparison behavior without publishing generated files. Fresh failure-log export and retained counterexamples remain separate work.
 
 ## Manual cases and limits
 
 - A live owner refuses concurrent generation. Use a separate output directory.
-- Legacy empty locks, incomplete owner metadata, unavailable process identity, different host/boot/namespace, and unsupported platforms require manual inspection. Do not delete a lock based on age.
+- Empty locks, incomplete owner metadata, unavailable process identity, different host/boot/namespace, and unsupported platforms require manual inspection. Do not delete a lock based on age.
 - Termination between lease-directory creation and owner metadata publication leaves a manual case. That owner has not published any generated file at that point.
 - Cleanup removes only the recorded control files and empty directories. Edited or unrelated retirement data is preserved for inspection.
 

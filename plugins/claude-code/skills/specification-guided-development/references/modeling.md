@@ -272,7 +272,7 @@ A provenance-only write changes the full state and cannot use the square-action 
 
 Use a project with `"version": 4`, `"profile": "symbolic-owned"`, and the model's paths and generated class name.
 V4 emits symbolic IR version 2 with ordered `inputs`, a separate `next`, and named input origins.
-V3 keeps its original IR and single-input API and rejects this arity.
+V3 uses the single-input IR and rejects this arity.
 Both profiles reject dependent ranges, opaque-domain enumeration, arithmetic, unsupported temporal properties, and incomplete simultaneous assignments.
 V4 also rejects repeated domains and more than three binders.
 

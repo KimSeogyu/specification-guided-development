@@ -15,15 +15,16 @@ ports, and source locations. They must not supply a second policy table.
 
 ## Select supported generation
 
-Use [domain generation](domain-code.md) for finite control with injected async
+Use [domain generation](domain-code.md) for finite control with injected
 ports. The generated owner admits the operation, observes its port outcome,
 and selects the modeled completion. Port implementations remain application
 code and must satisfy their declared effect contract.
 
 Use [symbolic inputs](symbolic-owned.md) or [independent inputs](product-inputs.md)
-when the requirement depends on actual equality/copy inputs. Use
-[retained operations](retained-operation.md) when a synchronous callback must
-return the original payload on every ordinary outcome.
+when the requirement depends on actual equality/copy inputs. For a synchronous
+Rust operation, a domain owner can retain a payload from construction through
+ordinary outcomes. The separate [TypeScript retained-operation profile](retained-operation.md)
+also returns the payload on refusal, success, or failure.
 
 Do not substitute a diagnostic declaration for owned runtime state. Imported
 DOT and v1 source checks do not establish executable provenance or complete

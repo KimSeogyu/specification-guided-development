@@ -18,9 +18,10 @@ SGD_LEAN_BINARY=/absolute/path/lean npm test
 
 Tests that require unavailable tools report skips. A skipped integration test
 is not evidence that its model, native tool, or generated program passed.
-Run generated TypeScript consumers to check admission, complete snapshots,
-rejection behavior, and actual port outcomes. Include negative cases that fail
-for the intended reason and regenerate after changing a model requirement.
+Run generated TypeScript and Rust consumers to check admission, complete
+snapshots, rejection behavior, and actual port outcomes. Include negative cases
+that fail for the intended reason and regenerate after changing a model requirement.
+Rust domain verification also requires Rust 1.92.0 and its matching rustfmt.
 
 Use the [domain guide](domain-code.md) for TLC and Lean protocol verification,
 and the [Bend evaluation](bend-evaluation.md) for the experimental pure core.
