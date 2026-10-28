@@ -91,8 +91,11 @@ command with the copied project path, then build the generated crate:
 cargo build --manifest-path generated/rust/Cargo.toml
 ```
 
-The generated crate has no dependencies and uses Rust 2021. The Rust toolchain
-must support return-position `impl Trait` in traits, available since Rust 1.75.
+The generated crate has no dependencies and uses Rust 2021. Generation and
+`build --check` require Rust 1.92.0 and its matching rustfmt on `PATH`. The
+build rejects a missing tool or a different version. The generated
+`rustfmt.toml` fixes formatting settings so `cargo fmt` preserves the generated
+Rust bytes when it uses the same toolchain.
 Add it to an application under a local dependency name, using the package name
 from the generated `rust/Cargo.toml`. For the unchanged Approval example:
 
@@ -148,6 +151,62 @@ borrows the owner mutably while its future runs. If that future is dropped after
 the start transition, or the port panics, the owner can remain pending. This
 profile does not provide cancellation recovery or eventual completion.
 
+### Synchronous ports and retained payload
+
+For a synchronous effect, implement `SyncPorts` instead of `Ports`. Its
+associated `Payload` is stored in the private owner at construction. Each port
+borrows the payload, receives a separate operation input, and returns a `Result`.
+The owner retains the payload when an operation is refused or completes. The
+returned `SyncOperation` contains the actual outcome and a snapshot.
+
+```rust
+use approval_domain::{ApprovalSyncDomain, OperationResult, PublicEvent, SyncPorts};
+
+struct Publisher;
+impl SyncPorts for Publisher {
+    type Payload = String;
+    type Port0Input = ();
+    type Port0Output = usize;
+    type Port0Error = String;
+
+    fn publisher(&mut self, payload: &String, _: ()) -> Result<usize, String> {
+        Ok(payload.len())
+    }
+}
+
+fn publish() {
+    let mut approval = ApprovalSyncDomain::new(Publisher, "report".to_owned());
+    approval.send(PublicEvent::from_model_name("Approve").unwrap()).unwrap();
+    let result = approval.publish(());
+    if let OperationResult::Completed { outcome, .. } = result.status() {
+        println!("{outcome:?}");
+    }
+    assert_eq!(approval.payload(), "report");
+    let (payload, _ports, _snapshot) = approval.into_parts();
+    assert_eq!(payload, "report");
+}
+```
+
+`into_parts` consumes the owner and ends its live-owner contract. A mutable
+`SyncPorts` implementation can hold a one-shot `FnOnce` writer. On ordinary
+returns, the owner retains the payload; a borrowed payload can still contain
+interior-mutability fields. Panic, abort, caller drop, unsafe code, and external
+effects are outside the retention guarantee.
+
+To bind this ownership to a modeled Boolean, add a `rust` field inside the
+project's `binding` object:
+
+```json
+"rust": { "retainedVariable": "resident" }
+```
+
+The named variable must be Boolean and true in every reachable graph state.
+The build rejects a missing variable, a different kind, or a false valuation.
+For this binding, the Rust target omits the non-retaining async owner. The
+binding describes one live Rust owner's residency. If the project also generates
+TypeScript, this binding does not attach the payload to the TypeScript owner. It
+does not prove payload content, durability, or application-wide ownership.
+
 ## Verification scope
 
 The build runs TLC and Lean before publishing output. `proof/` contains the
@@ -158,12 +217,12 @@ previous output intact.
 TLC checks the configured finite model. Lean proves the serial operation
 contract for its numeric graph. For Rust, the build also checks the emitted
 artifact against the graph and binding. Native tests exercise the generated
-TypeScript and Rust; the artifact checker, emitters, Rust compiler, and language
-runtimes are not formally proved. Injected adapters,
+TypeScript and Rust; the artifact checker, emitters, rustfmt, Rust compiler, and
+language runtimes are not formally proved. Injected adapters,
 external effects, and the adequacy of the application's model remain separate
 verification obligations.
 
-The contract covers one live object in a trusted JavaScript runtime. A new
+The contract covers one live object in a trusted language runtime. A new
 factory call creates a new owner. This profile provides no persistence, crash
 recovery, effect atomicity, timeout, cancellation, retry, or eventual completion.
 A port that never settles leaves its operation pending.

@@ -15,6 +15,10 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Install pinned Rust formatter
+        run: |
+          rustup toolchain install 1.92.0 --profile minimal --component rustfmt
+          echo 'RUSTUP_TOOLCHAIN=1.92.0' >> "$GITHUB_ENV"
       - run: npm ci
       - run: node scripts/fetch-tlc.mjs
       - name: Install pinned Lean for domain proof integration

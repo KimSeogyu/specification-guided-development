@@ -20,7 +20,7 @@ export type GraphSummary = z.infer<typeof GraphSummarySchema>;
 
 export const VerificationCheckSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('domain-protocol'), role: ModelRole,
-    scope: z.literal('per-live-owner-serial-async-ports'), proof: z.literal('lean4-kernel'),
+    scope: z.enum(['per-live-owner-serial-async-ports', 'per-live-owner-serial-ports']), proof: z.literal('lean4-kernel'),
     leanVersion: z.literal('4.35.0'), operations: z.array(z.string()),
     nativeBackend: z.literal('not-formally-verified') }).strict(),
   z.object({ kind: z.literal('retained-operation'), role: ModelRole,

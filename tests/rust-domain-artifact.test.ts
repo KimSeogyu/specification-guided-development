@@ -59,17 +59,46 @@ test('checks the emitted transition implementation and operation calls', () => {
   const input = { source: artifact.content, automaton: graph, domain, className: 'Approval' };
   assert.deepEqual(checkRustDomainArtifact(input).operationRoles, [[1, 2, 0]]);
   for (const modified of [
-    artifact.content.replace('state: INITIAL_STATE, revision: 0', 'state: 1, revision: 0'),
+    artifact.content.replace('state: INITIAL_STATE,\n            revision: 0', 'state: 1,\n            revision: 0'),
     artifact.content.replace('*action == event', '*action != event'),
-    artifact.content.replace('OPERATION_ROLES[0].1 } else { OPERATION_ROLES[0].2',
-      'OPERATION_ROLES[0].2 } else { OPERATION_ROLES[0].1'),
+    artifact.content.replace('OPERATION_ROLES[0].1', 'OPERATION_ROLES[0].2'),
     artifact.content.replace('<P as Ports>::writer(&self.ports, input).await', '<P as Ports>::other(&self.ports, input).await'),
-    artifact.content.replace('self.revision > u64::MAX - 2', 'self.revision > u64::MAX - 1'),
+    artifact.content.replace('self.machine.revision > u64::MAX - 2', 'self.machine.revision > u64::MAX - 1'),
     artifact.content.replace('VALUES_0)', 'VALUES_1)'),
     artifact.content.replace('Value::String("ready")', 'Value::String("wrong")'),
+    artifact.content.replace('pub const MODEL: &str = "Approval";', 'pub const MODEL: &str = "Other";'),
+    artifact.content.replace(`pub const MODEL_REVISION: &str = "${'a'.repeat(64)}";`, `pub const MODEL_REVISION: &str = "${'b'.repeat(64)}";`),
+    artifact.content.replace('&mut self.ports, &self.payload, input', '&mut self.ports, &self.payload, panic!()'),
+    artifact.content.replace('payload: P::Payload,', 'pub payload: P::Payload,'),
+    artifact.content.replace('snapshot: self.machine.read(),', 'snapshot: panic!(),'),
+    artifact.content.replace('(self.payload, self.ports, snapshot)', '(panic!(), self.ports, snapshot)'),
   ]) {
+    assert.notEqual(modified, artifact.content);
     assert.throws(() => checkRustDomainArtifact({ ...input, source: modified }), /TLC208/);
   }
+});
+
+test('retained binding requires resident state and hides the non-retaining facade', () => {
+  const resident: ExactFiniteAutomaton = {
+    ...graph, variables: [...graph.variables, { name: 'resident', kind: 'boolean' }],
+    nodes: graph.nodes.map(node => ({ ...node, values: { ...node.values, resident: { kind: 'boolean', value: true } } })),
+  };
+  const retainedVariable = 'resident';
+  const artifact = generateDomainRust({ automaton: resident, domain, className: 'Approval', retainedVariable })
+    .find(file => file.path === 'src/lib.rs');
+  assert.ok(artifact);
+  const input = { source: artifact.content, automaton: resident, domain, className: 'Approval', retainedVariable };
+  checkRustDomainArtifact(input);
+  for (const bypass of [
+    '\npub struct ApprovalDomain<P: Ports> {}\n',
+    '\nstruct ApprovalDomain<P: Ports> {}\n',
+    '\npub trait Ports {}\n',
+    '\nuse std::future::Future;\n',
+    '\npub async fn bypass() {}\n',
+  ]) assert.throws(() => checkRustDomainArtifact({ ...input, source: artifact.content + bypass }), /TLC208/);
+  const invalid = { ...resident, nodes: resident.nodes.map((node, i) => i === 2
+    ? { ...node, values: { ...node.values, resident: { kind: 'boolean' as const, value: false } } } : node) };
+  assert.throws(() => generateDomainRust({ automaton: invalid, domain, className: 'Approval', retainedVariable }), /TLC208/);
 });
 
 test('rejects a public-event mapping that exposes an operation action', () => {

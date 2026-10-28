@@ -30,6 +30,10 @@ test('Rust is supported only for finite domain bindings', async () => {
     const rustPath = join(root, 'rust-domain.json');
     await writeFile(rustPath, JSON.stringify(rustDomain));
     assert.deepEqual((await readProject(rustPath)).targets, ['typescript', 'rust']);
+    await writeFile(rustPath, JSON.stringify({ ...rustDomain, binding: { ...rustDomain.binding, rust: { retainedVariable: 'resident' } } }));
+    assert.equal((await readProject(rustPath)).version, 2);
+    await writeFile(rustPath, JSON.stringify({ ...rustDomain, targets: ['typescript'], binding: { ...rustDomain.binding, rust: { retainedVariable: 'resident' } } }));
+    await assert.rejects(readProject(rustPath), /Rust payload residency requires a Rust domain target/);
     for (const version of [5, 6]) {
       const path = join(root, 'retired.json');
       await writeFile(path, JSON.stringify({ ...common, version }));
